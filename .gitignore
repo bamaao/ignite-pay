@@ -1,0 +1,26 @@
+# Rust build artifacts
+target/
+
+# Python
+__pycache__/
+*.pyc
+*.pyd
+*.pdb
+*.egg-info/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+
+# Claude Code
+.claude/

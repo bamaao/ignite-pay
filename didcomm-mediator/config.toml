@@ -1,0 +1,11 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[mediator]
+# DID of the mediator (did:key or did:web)
+did = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+
+# In-memory storage limits
+max_queued_messages = 1000
+max_message_age_seconds = 86400

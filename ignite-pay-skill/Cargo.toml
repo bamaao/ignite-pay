@@ -1,0 +1,39 @@
+[package]
+name = "ignite_pay_rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["zouyccq@gmail.com"]
+description = "Web3 Agent Payment SDK with DIDComm and X402 support"
+
+[lib]
+# 必须声明为 cdylib 才能生成 .so 或 .pyd 文件供 Python 调用
+name = "ignite_pay_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+# PyO3 核心，使用 extension-module 特性
+pyo3 = { version = "0.20", features = ["extension-module"] }
+
+# 异步桥梁：让 Rust 的 tokio 运行在 Python 的 asyncio 循环中
+pyo3-asyncio = { version = "0.20", features = ["tokio-runtime"] }
+
+# 异步运行时
+tokio = { version = "1.0", features = ["full"] }
+
+# 静态全局变量，用于 Pub/Sub 模式的任务管理
+lazy_static = "1.4.0"
+
+# 序列化与反序列化（DIDComm 消息处理必备）
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# 唯一标识符（用于标记每一个支付请求任务）
+uuid = { version = "1.0", features = ["v4"] }
+
+# WebSocket 客户端（用于 DID-Common Mediator 连接）
+tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
+futures-util = "0.3"
+
+# --- 扩展建议（根据你之前的需求） ---
+# solana-sdk = "1.18"        # 处理 Solana 交易
+# didcomm = "0.6"            # 处理 DIDComm 协议封装
