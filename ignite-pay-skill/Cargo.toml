@@ -34,6 +34,7 @@ uuid = { version = "1.0", features = ["v4"] }
 tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3"
 
-# --- 扩展建议（根据你之前的需求） ---
-# solana-sdk = "1.18"        # 处理 Solana 交易
-# didcomm = "0.6"            # 处理 DIDComm 协议封装
+# DIDComm 加密与解密（JWE authcrypt）
+affinidi-messaging-didcomm = "0.13"
+base64 = "0.22"
+bs58 = "0.5"

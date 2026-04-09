@@ -1,4 +1,5 @@
 pub mod coordinate_mediation;
+pub mod peer_introduction;
 pub mod pickup;
 pub mod routing;
 
@@ -22,6 +23,8 @@ pub const BATCH_PICKUP: &str = "https://didcomm.org/messagepickup/3.0/batch-pick
 pub const BATCH: &str = "https://didcomm.org/messagepickup/3.0/batch";
 pub const LIVE_DELIVERY_REQUEST: &str =
     "https://didcomm.org/messagepickup/3.0/live-delivery-request";
+pub const PEER_INTRODUCTION: &str =
+    "https://didcomm.org/peer-did-discovery/1.0/discover";
 
 /// Dispatch an incoming DIDComm message to the appropriate protocol handler.
 ///
@@ -66,6 +69,9 @@ async fn route_message(msg: &Message, state: &AppState, session_did: Option<&str
             coordinate_mediation::handle_keylist_update(msg, state, session_did).await
         }
         FORWARD => routing::handle_forward(msg, state).await,
+        PEER_INTRODUCTION => {
+            peer_introduction::handle_peer_introduction(msg, state, session_did).await
+        }
         STATUS_REQUEST | LIVE_DELIVERY_REQUEST => {
             pickup::handle_status_request(msg, state, session_did).await
         }

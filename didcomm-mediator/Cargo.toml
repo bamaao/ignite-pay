@@ -38,3 +38,7 @@ uuid = { version = "1", features = ["v4"] }
 
 # Time
 chrono = "0.4"
+
+# Base58 decoding for did:ignite DID documents
+bs58 = "0.5"
+base64 = "0.22"

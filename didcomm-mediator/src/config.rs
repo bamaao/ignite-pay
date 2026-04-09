@@ -17,6 +17,16 @@ pub struct MediatorConfig {
     pub did: String,
     pub max_queued_messages: usize,
     pub max_message_age_seconds: u64,
+    #[serde(default)]
+    pub known_peers: Vec<KnownPeerConfig>,
+}
+
+/// A pre-configured peer whose keys are known at startup.
+#[derive(Debug, Deserialize, Clone)]
+pub struct KnownPeerConfig {
+    pub did: String,
+    pub key_agreement_kid: String,
+    pub key_agreement_public_base64: String,
 }
 
 impl Config {

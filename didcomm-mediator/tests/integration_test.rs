@@ -11,6 +11,7 @@ fn test_config() -> Config {
             did: "did:test:mediator".to_string(),
             max_queued_messages: 100,
             max_message_age_seconds: 3600,
+            known_peers: vec![],
         },
     }
 }
