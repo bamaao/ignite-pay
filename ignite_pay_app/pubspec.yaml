@@ -37,6 +37,8 @@ dependencies:
   rust_lib_ignite_pay_app:
     path: rust_builder
   flutter_rust_bridge: 2.12.0
+  google_fonts: ^6.2.1
+  lucide_icons: ^0.257.0
 
 dev_dependencies:
   flutter_test:

@@ -1,222 +1,963 @@
-// The original content is temporarily commented out to allow generating a self-contained demo - feel free to uncomment later.
-
-// import 'package:flutter/material.dart';
-// 
-// void main() {
-//   runApp(const MyApp());
-// }
-// 
-// class MyApp extends StatelessWidget {
-//   const MyApp({super.key});
-// 
-//   // This widget is the root of your application.
-//   @override
-//   Widget build(BuildContext context) {
-//     return MaterialApp(
-//       title: 'Flutter Demo',
-//       theme: ThemeData(
-//         // This is the theme of your application.
-//         //
-//         // TRY THIS: Try running your application with "flutter run". You'll see
-//         // the application has a purple toolbar. Then, without quitting the app,
-//         // try changing the seedColor in the colorScheme below to Colors.green
-//         // and then invoke "hot reload" (save your changes or press the "hot
-//         // reload" button in a Flutter-supported IDE, or press "r" if you used
-//         // the command line to start the app).
-//         //
-//         // Notice that the counter didn't reset back to zero; the application
-//         // state is not lost during the reload. To reset the state, use hot
-//         // restart instead.
-//         //
-//         // This works for code too, not just values: Most code changes can be
-//         // tested with just a hot reload.
-//         colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-//       ),
-//       home: const MyHomePage(title: 'Flutter Demo Home Page'),
-//     );
-//   }
-// }
-// 
-// class MyHomePage extends StatefulWidget {
-//   const MyHomePage({super.key, required this.title});
-// 
-//   // This widget is the home page of your application. It is stateful, meaning
-//   // that it has a State object (defined below) that contains fields that affect
-//   // how it looks.
-// 
-//   // This class is the configuration for the state. It holds the values (in this
-//   // case the title) provided by the parent (in this case the App widget) and
-//   // used by the build method of the State. Fields in a Widget subclass are
-//   // always marked "final".
-// 
-//   final String title;
-// 
-//   @override
-//   State<MyHomePage> createState() => _MyHomePageState();
-// }
-// 
-// class _MyHomePageState extends State<MyHomePage> {
-//   int _counter = 0;
-// 
-//   void _incrementCounter() {
-//     setState(() {
-//       // This call to setState tells the Flutter framework that something has
-//       // changed in this State, which causes it to rerun the build method below
-//       // so that the display can reflect the updated values. If we changed
-//       // _counter without calling setState(), then the build method would not be
-//       // called again, and so nothing would appear to happen.
-//       _counter++;
-//     });
-//   }
-// 
-//   @override
-//   Widget build(BuildContext context) {
-//     // This method is rerun every time setState is called, for instance as done
-//     // by the _incrementCounter method above.
-//     //
-//     // The Flutter framework has been optimized to make rerunning build methods
-//     // fast, so that you can just rebuild anything that needs updating rather
-//     // than having to individually change instances of widgets.
-//     return Scaffold(
-//       appBar: AppBar(
-//         // TRY THIS: Try changing the color here to a specific color (to
-//         // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-//         // change color while the other colors stay the same.
-//         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-//         // Here we take the value from the MyHomePage object that was created by
-//         // the App.build method, and use it to set our appbar title.
-//         title: Text(widget.title),
-//       ),
-//       body: Center(
-//         // Center is a layout widget. It takes a single child and positions it
-//         // in the middle of the parent.
-//         child: Column(
-//           // Column is also a layout widget. It takes a list of children and
-//           // arranges them vertically. By default, it sizes itself to fit its
-//           // children horizontally, and tries to be as tall as its parent.
-//           //
-//           // Column has various properties to control how it sizes itself and
-//           // how it positions its children. Here we use mainAxisAlignment to
-//           // center the children vertically; the main axis here is the vertical
-//           // axis because Columns are vertical (the cross axis would be
-//           // horizontal).
-//           //
-//           // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-//           // action in the IDE, or press "p" in the console), to see the
-//           // wireframe for each widget.
-//           mainAxisAlignment: .center,
-//           children: [
-//             const Text('You have pushed the button this many times:'),
-//             Text(
-//               '$_counter',
-//               style: Theme.of(context).textTheme.headlineMedium,
-//             ),
-//           ],
-//         ),
-//       ),
-//       floatingActionButton: FloatingActionButton(
-//         onPressed: _incrementCounter,
-//         tooltip: 'Increment',
-//         child: const Icon(Icons.add),
-//       ),
-//     );
-//   }
-// }
-// 
-
-// import 'package:flutter/material.dart';
-// import 'package:ignite_pay_app/src/rust/api/simple.dart';
-// import 'package:ignite_pay_app/src/rust/frb_generated.dart';
-
-// Future<void> main() async {
-//   await RustLib.init();
-//   runApp(const MyApp());
-// }
-
-// class MyApp extends StatelessWidget {
-//   const MyApp({super.key});
-
-//   @override
-//   Widget build(BuildContext context) {
-//     return MaterialApp(
-//       home: Scaffold(
-//         appBar: AppBar(title: const Text('flutter_rust_bridge quickstart')),
-//         body: Center(
-//           child: Text(
-//               'Action: Call Rust `greet("Tom")`\nResult: `${greet(name: "Tom")}`'),
-//         ),
-//       ),
-//     );
-//   }
-// }
-
+import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:ignite_pay_app/src/rust/api/simple.dart';
+import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/src/rust/frb_generated.dart';
+import 'package:ignite_pay_app/challenge_screen.dart';
+import 'package:ignite_pay_app/policy_screen.dart';
+import 'package:ignite_pay_app/vault_screen.dart';
 
+// ---------------------------------------------------------------------------
+// Theme Constants
+// ---------------------------------------------------------------------------
+const _kBackground = Color(0xFF0F0F1A);
+const _kSurfaceDark = Color(0xFF1A1A2E);
+const _kSurfaceMid = Color(0xFF16213E);
+const _kNeonCyan = Color(0xFF00F5FF);
+const _kNeonCyanDim = Color(0xFF00989F);
+const _kTextPrimary = Color(0xFFE8E8F0);
+const _kTextSecondary = Color(0xFF8A8AA0);
+const _kSuccess = Color(0xFF00E676);
+const _kPending = Color(0xFFFFB300);
+const _kIntercepted = Color(0xFFFF5252);
+const _kGlassBorder = Color(0x1AFFFFFF);
+
+// ---------------------------------------------------------------------------
+// Entry Point
+// ---------------------------------------------------------------------------
 Future<void> main() async {
-  // 1. 确保 Flutter 绑定初始化（异步 main 必备）
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // 2. 初始化 Rust 运行时
   await RustLib.init();
-  
-  runApp(const MyApp());
+  runApp(const SentinelApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+// ---------------------------------------------------------------------------
+// App Root
+// ---------------------------------------------------------------------------
+class SentinelApp extends StatelessWidget {
+  const SentinelApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      home: Scaffold(
-        appBar: AppBar(title: const Text('Ignite-Pay Agent Auth')),
-        body: const Center(
-          child: AuthButton(),
+      debugShowCheckedModeBanner: false,
+      title: 'Sentinel Dashboard',
+      theme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: _kBackground,
+        colorScheme: const ColorScheme.dark(
+          primary: _kNeonCyan,
+          surface: _kSurfaceDark,
+        ),
+        textTheme: GoogleFonts.interTextTheme(
+          ThemeData.dark().textTheme,
+        ),
+      ),
+      home: const SentinelDashboard(),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard Screen
+// ---------------------------------------------------------------------------
+class SentinelDashboard extends StatelessWidget {
+  const SentinelDashboard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          child: Column(
+            children: [
+              _DashboardHeader(),
+              SizedBox(height: 20),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      DIDCard(),
+                      SizedBox(height: 20),
+                      _QuickNavRow(),
+                      SizedBox(height: 20),
+                      TrustScoreGauge(
+                        spent: 0.42,
+                        limit: 1.0,
+                        spentLabel: '0.42 SOL',
+                        limitLabel: '1.00 SOL',
+                      ),
+                      SizedBox(height: 24),
+                      ActivityFeed(),
+                      SizedBox(height: 24),
+                      _AuthAction(),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class AuthButton extends StatefulWidget {
-  const AuthButton({super.key});
+// ---------------------------------------------------------------------------
+// Header
+// ---------------------------------------------------------------------------
+class _DashboardHeader extends StatelessWidget {
+  const _DashboardHeader();
 
   @override
-  State<AuthButton> createState() => _AuthButtonState();
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                gradient: const LinearGradient(
+                  colors: [_kNeonCyan, _kNeonCyanDim],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Icon(LucideIcons.shieldCheck, size: 20, color: _kBackground),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              'Sentinel',
+              style: GoogleFonts.inter(
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+                color: _kTextPrimary,
+                letterSpacing: -0.5,
+              ),
+            ),
+          ],
+        ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            GestureDetector(
+              onTap: () => openPolicyArchitect(context),
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: _kSurfaceMid.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: _kGlassBorder),
+                ),
+                child: const Icon(LucideIcons.settings2, size: 18, color: _kTextSecondary),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: _kSuccess.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: _kSuccess.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: const BoxDecoration(
+                      color: _kSuccess,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Mainnet',
+                    style: GoogleFonts.inter(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _kSuccess,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
 }
 
-class _AuthButtonState extends State<AuthButton> {
-  String _result = "等待签名...";
+// ---------------------------------------------------------------------------
+// Quick Nav Row (Vault & Policy shortcuts)
+// ---------------------------------------------------------------------------
+class _QuickNavRow extends StatelessWidget {
+  const _QuickNavRow();
 
-  // 处理点击逻辑
-  void _handleSign() async {
-    setState(() => _result = "签名中...");
-    try {
-      // 调用 Rust 接口
-      final grant = await signPayment(
-        merchantDid: "did:solana:example_merchant",
-        amount: BigInt.from(100000000),
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _QuickNavCard(
+            icon: LucideIcons.lock,
+            label: 'Vault',
+            subtitle: 'Keys & Identity',
+            gradientColors: [const Color(0xFF8B5CF6), const Color(0xFF6D28D9)],
+            onTap: () => openVaultIdentity(context),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _QuickNavCard(
+            icon: LucideIcons.shield,
+            label: 'Policies',
+            subtitle: 'Spending rules',
+            gradientColors: [_kNeonCyan, _kNeonCyanDim],
+            onTap: () => openPolicyArchitect(context),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _QuickNavCard extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final List<Color> gradientColors;
+  final VoidCallback onTap;
+
+  const _QuickNavCard({
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.gradientColors,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: _kSurfaceDark.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _kGlassBorder),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                gradient: LinearGradient(
+                  colors: gradientColors,
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: Icon(icon, size: 18, color: _kBackground),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: _kTextPrimary,
+                    ),
+                  ),
+                  Text(
+                    subtitle,
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      color: _kTextSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(LucideIcons.chevronRight, size: 16, color: _kTextSecondary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DID Identity Card (Glassmorphism)
+// ---------------------------------------------------------------------------
+class DIDCard extends StatefulWidget {
+  const DIDCard({super.key});
+
+  @override
+  State<DIDCard> createState() => _DIDCardState();
+}
+
+class _DIDCardState extends State<DIDCard> {
+  bool _copied = false;
+
+  static const _did = 'did:solana:6uWk2fVyMQ...BxYz';
+
+  void _copyToClipboard() {
+    Clipboard.setData(const ClipboardData(text: _did));
+    setState(() => _copied = true);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: _kSurfaceMid.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _kGlassBorder),
+        gradient: LinearGradient(
+          colors: [
+            _kSurfaceMid.withValues(alpha: 0.7),
+            _kSurfaceDark.withValues(alpha: 0.5),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(LucideIcons.fingerprint, size: 16, color: _kNeonCyan.withValues(alpha: 0.8)),
+              const SizedBox(width: 8),
+              Text(
+                'IDENTITY',
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: _kTextSecondary,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _did,
+                  style: GoogleFonts.jetBrainsMono(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: _kTextPrimary,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              _GlassIconButton(
+                icon: _copied ? LucideIcons.check : LucideIcons.copy,
+                onTap: _copyToClipboard,
+                isActive: _copied,
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              const _PulsatingDot(),
+              const SizedBox(width: 8),
+              Text(
+                'Connection Live',
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: _kSuccess.withValues(alpha: 0.9),
+                ),
+              ),
+              const Spacer(),
+              Text(
+                'Mediator: relay ignite',
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  color: _kTextSecondary,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pulsating Dot
+// ---------------------------------------------------------------------------
+class _PulsatingDot extends StatefulWidget {
+  const _PulsatingDot();
+
+  @override
+  State<_PulsatingDot> createState() => _PulsatingDotState();
+}
+
+class _PulsatingDotState extends State<_PulsatingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, child) {
+        return Container(
+          width: 9,
+          height: 9,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: _kSuccess,
+            boxShadow: [
+              BoxShadow(
+                color: _kSuccess.withValues(alpha: 0.4 + 0.4 * _ctrl.value),
+                blurRadius: 6 + 4 * _ctrl.value,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Trust Score / Daily Allowance Gauge
+// ---------------------------------------------------------------------------
+class TrustScoreGauge extends StatelessWidget {
+  final double spent;
+  final double limit;
+  final String spentLabel;
+  final String limitLabel;
+
+  const TrustScoreGauge({
+    super.key,
+    required this.spent,
+    required this.limit,
+    required this.spentLabel,
+    required this.limitLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final remaining = (limit - spent).clamp(0.0, limit);
+    final pct = spent / limit;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: _kSurfaceDark.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _kGlassBorder),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Icon(LucideIcons.gauge, size: 16, color: _kNeonCyan.withValues(alpha: 0.8)),
+              const SizedBox(width: 8),
+              Text(
+                'DAILY ALLOWANCE',
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: _kTextSecondary,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: 180,
+            height: 180,
+            child: CustomPaint(
+              painter: _RadialGaugePainter(progress: pct),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${(remaining * 100).toStringAsFixed(0)}%',
+                      style: GoogleFonts.inter(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w700,
+                        color: _kTextPrimary,
+                      ),
+                    ),
+                    Text(
+                      'Remaining',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: _kTextSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _GaugeLabel(value: spentLabel, label: 'Spent', color: _kNeonCyan),
+              const SizedBox(width: 32),
+              _GaugeLabel(value: limitLabel, label: 'Limit', color: _kTextSecondary),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GaugeLabel extends StatelessWidget {
+  final String value;
+  final String label;
+  final Color color;
+
+  const _GaugeLabel({
+    required this.value,
+    required this.label,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: GoogleFonts.jetBrainsMono(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: color,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: 11,
+            color: _kTextSecondary,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Radial Gauge Painter
+// ---------------------------------------------------------------------------
+class _RadialGaugePainter extends CustomPainter {
+  final double progress;
+
+  _RadialGaugePainter({required this.progress});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = (size.shortestSide / 2) - 14;
+    const strokeWidth = 10.0;
+
+    // Background track
+    final bgPaint = Paint()
+      ..color = _kSurfaceMid
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+    canvas.drawCircle(center, radius, bgPaint);
+
+    // Progress arc
+    if (progress > 0) {
+      final sweepAngle = 2 * pi * progress;
+      final rect = Rect.fromCircle(center: center, radius: radius);
+      final progressPaint = Paint()
+        ..shader = SweepGradient(
+          startAngle: -pi / 2,
+          endAngle: -pi / 2 + sweepAngle,
+          colors: const [_kNeonCyan, _kNeonCyanDim],
+          stops: const [0.0, 1.0],
+        ).createShader(rect)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth
+        ..strokeCap = StrokeCap.round;
+      canvas.drawArc(rect, -pi / 2, sweepAngle, false, progressPaint);
+    }
+
+    // Glow at the end of the progress arc
+    if (progress > 0 && progress < 1) {
+      final endAngle = -pi / 2 + 2 * pi * progress;
+      final glowOffset = Offset(
+        center.dx + radius * cos(endAngle),
+        center.dy + radius * sin(endAngle),
       );
-      setState(() => _result = "签名成功:\n${grant.signature}");
-    } catch (e) {
-      setState(() => _result = "错误: $e");
+      final glowPaint = Paint()
+        ..color = _kNeonCyan.withValues(alpha: 0.5)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
+      canvas.drawCircle(glowOffset, 6, glowPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RadialGaugePainter old) => old.progress != progress;
+}
+
+// ---------------------------------------------------------------------------
+// Activity Feed
+// ---------------------------------------------------------------------------
+class ActivityFeed extends StatelessWidget {
+  const ActivityFeed({super.key});
+
+  final List<_ActivityItem> _activities = const [
+    _ActivityItem(
+      merchant: 'ShopX Marketplace',
+      amount: '0.12 SOL',
+      time: '2m ago',
+      status: _ActivityStatus.success,
+      icon: LucideIcons.shoppingCart,
+    ),
+    _ActivityItem(
+      merchant: 'DeFi Staking',
+      amount: '0.30 SOL',
+      time: '15m ago',
+      status: _ActivityStatus.pending,
+      icon: LucideIcons.layers,
+    ),
+    _ActivityItem(
+      merchant: 'Unknown Merchant',
+      amount: '2.50 SOL',
+      time: '1h ago',
+      status: _ActivityStatus.intercepted,
+      icon: LucideIcons.shieldAlert,
+    ),
+    _ActivityItem(
+      merchant: 'NFT Mint',
+      amount: '0.05 SOL',
+      time: '3h ago',
+      status: _ActivityStatus.success,
+      icon: LucideIcons.image,
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(LucideIcons.activity, size: 16, color: _kNeonCyan.withValues(alpha: 0.8)),
+            const SizedBox(width: 8),
+            Text(
+              'RECENT ACTIVITY',
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: _kTextSecondary,
+                letterSpacing: 1.2,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        ..._activities.map((item) => _ActivityTile(item: item)),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Activity Model
+// ---------------------------------------------------------------------------
+enum _ActivityStatus { success, pending, intercepted }
+
+class _ActivityItem {
+  final String merchant;
+  final String amount;
+  final String time;
+  final _ActivityStatus status;
+  final IconData icon;
+
+  const _ActivityItem({
+    required this.merchant,
+    required this.amount,
+    required this.time,
+    required this.status,
+    required this.icon,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Activity Tile
+// ---------------------------------------------------------------------------
+class _ActivityTile extends StatelessWidget {
+  final _ActivityItem item;
+
+  const _ActivityTile({required this.item});
+
+  Color get _statusColor => switch (item.status) {
+        _ActivityStatus.success => _kSuccess,
+        _ActivityStatus.pending => _kPending,
+        _ActivityStatus.intercepted => _kIntercepted,
+      };
+
+  String get _statusLabel => switch (item.status) {
+        _ActivityStatus.success => 'Success',
+        _ActivityStatus.pending => 'Pending',
+        _ActivityStatus.intercepted => 'Intercepted',
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: _kSurfaceDark.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _kGlassBorder),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: _statusColor.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(item.icon, size: 18, color: _statusColor),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.merchant,
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: _kTextPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    item.time,
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      color: _kTextSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  item.amount,
+                  style: GoogleFonts.jetBrainsMono(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: _kTextPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                _StatusBadge(color: _statusColor, label: _statusLabel),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Status Badge
+// ---------------------------------------------------------------------------
+class _StatusBadge extends StatelessWidget {
+  final Color color;
+  final String label;
+
+  const _StatusBadge({required this.color, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Text(
+        label,
+        style: GoogleFonts.inter(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Glass Icon Button (shadcn-inspired)
+// ---------------------------------------------------------------------------
+class _GlassIconButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool isActive;
+
+  const _GlassIconButton({
+    required this.icon,
+    required this.onTap,
+    this.isActive = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: isActive
+              ? _kSuccess.withValues(alpha: 0.15)
+              : _kSurfaceMid.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isActive
+                ? _kSuccess.withValues(alpha: 0.3)
+                : _kGlassBorder,
+          ),
+        ),
+        child: Icon(
+          icon,
+          size: 16,
+          color: isActive ? _kSuccess : _kTextSecondary,
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Auth Action (launches X402 Challenge)
+// ---------------------------------------------------------------------------
+class _AuthAction extends StatelessWidget {
+  const _AuthAction();
+
+  Future<void> _openChallenge(BuildContext context) async {
+    final result = await showX402Challenge<String>(context);
+    if (result != null && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: result == 'authorized' ? _kSuccess : _kIntercepted,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          content: Text(
+            result == 'authorized' ? 'Payment authorized' : 'Payment declined',
+            style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Text(_result, textAlign: TextAlign.center),
-        const SizedBox(height: 20),
-        ElevatedButton(
-          onPressed: _handleSign,
-          child: const Text("模拟支付授权"),
+    return GestureDetector(
+      onTap: () => _openChallenge(context),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [_kNeonCyan, _kNeonCyanDim],
+          ),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: _kNeonCyan.withValues(alpha: 0.25),
+              blurRadius: 16,
+              spreadRadius: 2,
+            ),
+          ],
         ),
-      ],
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(LucideIcons.zap, size: 18, color: _kBackground),
+            const SizedBox(width: 8),
+            Text(
+              'Authorize Payment',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: _kBackground,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
