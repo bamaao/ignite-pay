@@ -36,8 +36,74 @@ pub fn build_peer_introduction(from_did: &str, did_doc: &Value) -> Message {
     .from(from_did.to_string())
 }
 
+/// Build a payment authorization request message.
+/// Sent from the MCP server to the phone app via the mediator.
+pub fn build_authorization_request(
+    from_did: &str,
+    to_did: &str,
+    payment_id: &str,
+    merchant_did: &str,
+    amount: u64,
+    description: &str,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/payment-auth-request",
+        json!({
+            "payment_id": payment_id,
+            "merchant_did": merchant_did,
+            "amount": amount,
+            "description": description,
+        }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build a payment authorization response message.
+/// Sent from the phone app back to the MCP server.
+pub fn build_authorization_response(
+    from_did: &str,
+    to_did: &str,
+    payment_id: &str,
+    authorized: bool,
+    list_action: &str,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/payment-auth-response",
+        json!({
+            "payment_id": payment_id,
+            "authorized": authorized,
+            "list_action": list_action,
+        }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build a list-sync notification message.
+/// Sent from the MCP server to the phone after updating whitelist/blacklist.
+pub fn build_list_sync_notification(
+    from_did: &str,
+    to_did: &str,
+    list_type: &str,
+    action: &str,
+    entry_did: &str,
+    new_cid: &str,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/list-sync-notification",
+        json!({
+            "list_type": list_type,
+            "action": action,
+            "entry_did": entry_did,
+            "new_cid": new_cid,
+        }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
 /// Encrypt a DIDComm message using authcrypt (authenticated encryption).
-#[allow(dead_code)]
 /// Returns a JWE JSON string.
 pub fn pack_encrypted(
     agent: &DIDCommAgent,

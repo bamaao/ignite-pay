@@ -1,0 +1,40 @@
+[mediator]
+ws_url = "ws://127.0.0.1:8080/ws"
+# DID of the phone app to send authorization requests to
+phone_did = ""
+
+[storage]
+# sled database path
+path = "./data"
+
+[policy]
+# Auto-approve payments under this amount (in smallest unit)
+auto_approve_max = 0
+# Authorization timeout in seconds
+auth_timeout = 300
+
+[platform]
+# Platform DID that issues merchant VCs
+did = "did:ignite:zPlatformDIDPlaceholder"
+# Platform Ed25519 verifying key (base64 no-pad)
+verifying_key_b64 = ""
+
+[ipfs]
+# IPFS configuration (mock for development)
+mode = "mock"
+# Kubo RPC URL (only used when mode = "kubo")
+# kubo_url = "http://127.0.0.1:5001"
+
+[solana]
+# Solana RPC endpoint
+rpc_url = "https://api.devnet.solana.com"
+# Concurrent Merkle Tree address (deployed once, holds merchant DID hashes)
+tree_address = ""
+# Tree authority (platform keypair that controls the tree)
+tree_authority = ""
+# Helius DAS API endpoint for Merkle proof queries
+das_endpoint = ""
+# Payment mode: "self_funded" or "sponsored"
+pay_mode = "self_funded"
+# Relayer URL (only used when pay_mode = "sponsored")
+# relayer_url = ""

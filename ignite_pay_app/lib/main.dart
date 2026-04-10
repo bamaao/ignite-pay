@@ -7,6 +7,7 @@ import 'package:ignite_pay_app/src/rust/frb_generated.dart';
 import 'package:ignite_pay_app/challenge_screen.dart';
 import 'package:ignite_pay_app/policy_screen.dart';
 import 'package:ignite_pay_app/vault_screen.dart';
+import 'package:ignite_pay_app/services/didcomm_service.dart';
 
 // ---------------------------------------------------------------------------
 // Theme Constants
@@ -29,6 +30,11 @@ const _kGlassBorder = Color(0x1AFFFFFF);
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await RustLib.init();
+
+  // Initialize DID identity
+  final didService = DidcommService();
+  await didService.initialize();
+
   runApp(const SentinelApp());
 }
 
@@ -316,10 +322,10 @@ class DIDCard extends StatefulWidget {
 class _DIDCardState extends State<DIDCard> {
   bool _copied = false;
 
-  static const _did = 'did:solana:6uWk2fVyMQ...BxYz';
+  String get _did => DidcommService().did;
 
   void _copyToClipboard() {
-    Clipboard.setData(const ClipboardData(text: _did));
+    Clipboard.setData(ClipboardData(text: _did));
     setState(() => _copied = true);
     Future.delayed(const Duration(seconds: 2), () {
       if (mounted) setState(() => _copied = false);

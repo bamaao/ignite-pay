@@ -1,0 +1,49 @@
+[package]
+name = "ignite-pay-core"
+version = "0.1.0"
+edition = "2021"
+description = "Shared library for Ignite Pay DIDComm identity, messaging, and types"
+
+[dependencies]
+# DIDComm messaging
+affinidi-messaging-didcomm = "0.13"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Key encoding
+base64 = "0.22"
+bs58 = "0.5"
+
+# Crypto
+ed25519-dalek = { version = "2", features = ["std"] }
+
+# Async
+async-trait = "0.1"
+
+# Persistence
+sled = "0.34"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Misc
+uuid = { version = "1", features = ["v4"] }
+thiserror = "2"
+anyhow = "1"
+
+# HTTP client (for Kubo IPFS)
+reqwest = { version = "0.12", features = ["json", "multipart"], optional = true }
+
+# Solana integration (optional)
+ignite-pay-solana = { path = "../ignite-pay-solana", optional = true }
+
+[features]
+default = []
+kubo = ["reqwest"]
+solana = ["ignite-pay-solana"]
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }

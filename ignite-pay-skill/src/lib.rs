@@ -1,21 +1,20 @@
-mod didcomm;
-mod identity;
-
 use pyo3::prelude::*;
 use pyo3::exceptions::PyRuntimeError;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use lazy_static::lazy_static;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::connect_async;
 use serde_json::Value;
 
 use affinidi_messaging_didcomm::DIDCommAgent;
-use identity::{generate_ignite_did, build_did_document, identity_to_resolved};
+use affinidi_messaging_didcomm::identity::PrivateIdentity;
+use ignite_pay_core::{generate_ignite_did, build_did_document, identity_to_resolved};
+use ignite_pay_core::didcomm::{self, is_jwe};
 
-// --- 全局任务协调器 ---
+// --- Global task coordinator (keyed by payment_id) ---
 lazy_static! {
     static ref PENDING_TASKS: Arc<Mutex<HashMap<String, oneshot::Sender<bool>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -25,6 +24,7 @@ lazy_static! {
 struct IgnitePayCore {
     agent: Arc<Mutex<DIDCommAgent>>,
     our_did: String,
+    outgoing: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
 }
 
 #[pymethods]
@@ -37,14 +37,13 @@ impl IgnitePayCore {
         IgnitePayCore {
             agent: Arc::new(Mutex::new(agent)),
             our_did: did,
+            outgoing: Arc::new(Mutex::new(None)),
         }
     }
 
     /// Register mediator's resolved identity as a peer in the DIDComm agent.
     fn add_mediator_peer(&self, mediator_did: String) -> PyResult<()> {
-        // Generate a resolved identity for the mediator so we can encrypt to it.
-        // In production, this would come from DID resolution.
-        let mediator_identity = affinidi_messaging_didcomm::identity::PrivateIdentity::generate(&mediator_did);
+        let mediator_identity = PrivateIdentity::generate(&mediator_did);
         let resolved = identity_to_resolved(&mediator_identity);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -56,52 +55,93 @@ impl IgnitePayCore {
         Ok(())
     }
 
-    /// 启动后台 WebSocket 监听器
+    /// Start background WebSocket listener
     fn start_listener(&self, _py: Python, ws_url: String) -> PyResult<()> {
         let agent = self.agent.clone();
         let our_did = self.our_did.clone();
+        let outgoing = self.outgoing.clone();
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async move {
-                println!("DIDComm WebSocket 监听器启动: {} (DID: {})", ws_url, our_did);
-                real_ws_client(ws_url, agent, &our_did).await;
+                println!("DIDComm WebSocket listener starting: {} (DID: {})", ws_url, our_did);
+                real_ws_client(&ws_url, &agent, &our_did, outgoing).await;
             });
         });
         Ok(())
     }
 
-    /// 核心支付接口：Pub/Sub 模式
-    fn check_and_pay<'p>(&self, py: Python<'p>, merchant_did: String, _amount: u64) -> PyResult<&'p PyAny> {
+    /// Core payment interface: Pub/Sub pattern
+    fn check_and_pay<'p>(&self, py: Python<'p>, payment_id: String, merchant_did: String, amount: u64) -> PyResult<&'p PyAny> {
+        let outgoing = self.outgoing.clone();
+        let agent = self.agent.clone();
+        let our_did = self.our_did.clone();
         pyo3_asyncio::tokio::future_into_py(py, async move {
             let (tx, rx) = oneshot::channel();
             {
                 let mut tasks = PENDING_TASKS.lock().await;
-                tasks.insert(merchant_did.clone(), tx);
+                tasks.insert(payment_id.clone(), tx);
             }
 
-            println!("已发送授权请求给手机，等待商户 {} 的响应...", merchant_did);
+            // Build and send auth request via outgoing channel
+            let msg = didcomm::build_authorization_request(
+                &our_did,
+                &merchant_did,
+                &payment_id,
+                &merchant_did,
+                amount,
+                "Payment authorization request",
+            );
+
+            let jwe = {
+                let agent_guard = agent.lock().await;
+                match didcomm::pack_encrypted(&agent_guard, &msg, &our_did, &merchant_did) {
+                    Ok(jwe) => jwe,
+                    Err(e) => {
+                        drop(agent_guard);
+                        PENDING_TASKS.lock().await.remove(&payment_id);
+                        return Err(PyRuntimeError::new_err(format!("Encryption failed: {}", e)));
+                    }
+                }
+            };
+
+            // Send through outgoing WS channel
+            {
+                let outgoing_guard = outgoing.lock().await;
+                if let Some(sender) = outgoing_guard.as_ref() {
+                    if sender.send(jwe).is_err() {
+                        PENDING_TASKS.lock().await.remove(&payment_id);
+                        return Err(PyRuntimeError::new_err("WebSocket channel closed"));
+                    }
+                }
+            }
+
+            println!("Auth request sent for payment {}, waiting for response...", payment_id);
 
             match tokio::time::timeout(Duration::from_secs(300), rx).await {
                 Ok(Ok(true)) => {
-                    println!("收到授权信号，正在执行结算...");
                     let tx_sig = format!("tx_sig_{}", uuid::Uuid::new_v4());
                     Ok(tx_sig)
                 }
-                Ok(Ok(false)) => Err(PyRuntimeError::new_err("用户拒绝了支付授权")),
+                Ok(Ok(false)) => Err(PyRuntimeError::new_err("User rejected the payment authorization")),
                 Err(_) => {
-                    PENDING_TASKS.lock().await.remove(&merchant_did);
-                    Err(PyRuntimeError::new_err("授权超时，请重试"))
+                    PENDING_TASKS.lock().await.remove(&payment_id);
+                    Err(PyRuntimeError::new_err("Authorization timed out, please retry"))
                 }
-                _ => Err(PyRuntimeError::new_err("内部通信错误")),
+                _ => Err(PyRuntimeError::new_err("Internal communication error")),
             }
         })
     }
 }
 
 /// Reconnecting WebSocket client loop.
-async fn real_ws_client(ws_url: String, agent: Arc<Mutex<DIDCommAgent>>, our_did: &str) {
+async fn real_ws_client(
+    ws_url: &str,
+    agent: &Arc<Mutex<DIDCommAgent>>,
+    our_did: &str,
+    outgoing: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
+) {
     loop {
-        match connect_and_run(&ws_url, &agent, our_did).await {
+        match connect_and_run(ws_url, agent, our_did, &outgoing).await {
             Ok(()) => println!("Mediator disconnected, reconnecting..."),
             Err(e) => eprintln!("WS error: {}, reconnecting in 3s...", e),
         }
@@ -109,38 +149,42 @@ async fn real_ws_client(ws_url: String, agent: Arc<Mutex<DIDCommAgent>>, our_did
     }
 }
 
-/// Connect to mediator, perform plaintext handshake, then enter encrypted receive loop.
+type WsStream = tokio_tungstenite::WebSocketStream<
+    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+>;
+
+/// Connect to mediator, perform plaintext handshake, then enter bidirectional loop.
 async fn connect_and_run(
     ws_url: &str,
     agent: &Arc<Mutex<DIDCommAgent>>,
     our_did: &str,
+    outgoing: &Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (mut ws, _) = connect_async(ws_url).await?;
-    println!("已连接到 Mediator: {}", ws_url);
+    println!("Connected to Mediator: {}", ws_url);
 
     // --- Phase A: Plaintext handshake ---
 
-    // 1. mediate-request (plaintext)
+    // 1. mediate-request
     let req = didcomm::build_mediate_request(our_did);
     send_msg(&mut ws, serde_json::to_string(&req)?).await?;
-    println!("已发送 mediate-request (from: {})", our_did);
+    println!("Sent mediate-request (from: {})", our_did);
 
-    // Read mediate-grant
     let grant = read_msg(&mut ws).await?;
     let grant_v: Value = serde_json::from_str(&grant)?;
     if grant_v.get("type").and_then(|v| v.as_str())
         .map(|t| t.contains("mediate-grant"))
         .unwrap_or(false)
     {
-        println!("收到 mediate-grant");
+        println!("Received mediate-grant");
     } else {
-        eprintln!("预期 mediate-grant，收到: {}", grant);
+        eprintln!("Expected mediate-grant, got: {}", grant);
     }
 
-    // 2. keylist-update (plaintext)
+    // 2. keylist-update
     let kup = didcomm::build_keylist_update(our_did);
     send_msg(&mut ws, serde_json::to_string(&kup)?).await?;
-    println!("已发送 keylist-update");
+    println!("Sent keylist-update");
 
     let kl_resp = read_msg(&mut ws).await?;
     let kl_v: Value = serde_json::from_str(&kl_resp)?;
@@ -148,40 +192,58 @@ async fn connect_and_run(
         .map(|t| t.contains("keylist-update"))
         .unwrap_or(false)
     {
-        println!("收到 keylist-update-response，注册完成");
+        println!("Received keylist-update-response, registration complete");
     } else {
-        eprintln!("预期 keylist-update-response，收到: {}", kl_resp);
+        eprintln!("Expected keylist-update-response, got: {}", kl_resp);
     }
 
-    // 3. peer-introduction (plaintext) — send our DID document so mediator can encrypt to us
+    // 3. peer-introduction — send our DID document
     {
-        let agent_guard = agent.lock().await;
-        // Reconstruct identity info from agent for DID doc building
-        // We need the public keys; build from the agent's store
-        let did_doc = build_did_document_from_agent(our_did, &agent_guard);
+        let temp = PrivateIdentity::generate(our_did);
+        let did_doc = build_did_document(our_did, &temp);
         let intro = didcomm::build_peer_introduction(our_did, &did_doc);
         send_msg(&mut ws, serde_json::to_string(&intro)?).await?;
-        println!("已发送 peer-introduction (DID doc)");
+        println!("Sent peer-introduction (DID doc)");
     }
 
-    println!("Mediator 握手完成，正在监听加密消息...");
+    println!("Mediator handshake complete, entering bidirectional loop...");
 
-    // --- Phase B: Receive loop (encrypted + plaintext fallback) ---
-    while let Some(msg) = ws.next().await {
-        match msg {
-            Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
-                handle_incoming_message(&text, agent).await;
+    // Set up outgoing channel
+    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
+    {
+        let mut guard = outgoing.lock().await;
+        *guard = Some(out_tx);
+    }
+
+    // --- Phase B: Bidirectional loop using tokio::select! ---
+    loop {
+        tokio::select! {
+            // Handle incoming messages
+            msg = ws.next() => {
+                match msg {
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
+                        handle_incoming_message(&text, agent).await;
+                    }
+                    Some(Ok(_)) => {}
+                    Some(Err(e)) => return Err(e.into()),
+                    None => return Ok(()),
+                }
             }
-            Ok(_) => {}
-            Err(e) => return Err(e.into()),
+            // Handle outgoing messages
+            jwe = out_rx.recv() => {
+                match jwe {
+                    Some(msg) => {
+                        if let Err(e) = send_msg(&mut ws, msg).await {
+                            eprintln!("Failed to send outgoing message: {}", e);
+                            return Err(e);
+                        }
+                    }
+                    None => return Ok(()),
+                }
+            }
         }
     }
-    Ok(())
 }
-
-type WsStream = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
 
 async fn send_msg(
     ws: &mut WsStream,
@@ -207,7 +269,7 @@ async fn read_msg(
 /// Handle an incoming message: try JWE unpack first, then plaintext fallback.
 async fn handle_incoming_message(text: &str, agent: &Arc<Mutex<DIDCommAgent>>) {
     // Try encrypted unpack first
-    if didcomm::is_jwe(text) {
+    if is_jwe(text) {
         let agent_guard = agent.lock().await;
         match didcomm::unpack_message(&agent_guard, text, None) {
             Ok(msg) => {
@@ -226,60 +288,52 @@ async fn handle_incoming_message(text: &str, agent: &Arc<Mutex<DIDCommAgent>>) {
     let v: Value = match serde_json::from_str(text) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("无法解析消息: {}", e);
+            eprintln!("Cannot parse message: {}", e);
             return;
         }
     };
 
-    // Check if it's a DIDComm message with a body
+    // Check for auth response — use payment_id as key
     if let Some(body) = v.get("body") {
-        if let Some(merchant_did) = body.get("merchant_did").and_then(|v| v.as_str()) {
+        if let Some(payment_id) = body.get("payment_id").and_then(|v| v.as_str()) {
             let authorized = body.get("authorized").and_then(|v| v.as_bool()).unwrap_or(false);
-            resolve_pending(merchant_did, authorized).await;
+            resolve_pending(payment_id, authorized).await;
             return;
         }
     }
 
     // Direct authorization fields (legacy)
-    if let Some(merchant_did) = v.get("merchant_did").and_then(|v| v.as_str()) {
+    if let Some(payment_id) = v.get("payment_id").and_then(|v| v.as_str()) {
         let authorized = v.get("authorized").and_then(|v| v.as_bool()).unwrap_or(false);
-        resolve_pending(merchant_did, authorized).await;
+        resolve_pending(payment_id, authorized).await;
         return;
     }
 
-    println!("收到非授权消息: {}", text.chars().take(100).collect::<String>());
+    println!("Received non-auth message: {}", text.chars().take(100).collect::<String>());
 }
 
 /// Process an unpacked DIDComm Message (from JWE or plaintext).
 async fn process_inner_message(msg: &affinidi_messaging_didcomm::Message) {
-    // Extract authorization data from body
-    if let Some(merchant_did) = msg.body.get("merchant_did").and_then(|v| v.as_str()) {
-        let authorized = msg.body.get("authorized").and_then(|v| v.as_bool()).unwrap_or(false);
-        resolve_pending(merchant_did, authorized).await;
+    // Check for payment-auth-response type
+    if msg.typ.contains("payment-auth-response") {
+        if let Some(payment_id) = msg.body.get("payment_id").and_then(|v| v.as_str()) {
+            let authorized = msg.body.get("authorized").and_then(|v| v.as_bool()).unwrap_or(false);
+            resolve_pending(payment_id, authorized).await;
+        }
     } else {
-        println!("收到消息 type={}, 无授权数据", msg.typ);
+        println!("Received message type={}, no auth data", msg.typ);
     }
 }
 
-/// Resolve a pending payment task.
-async fn resolve_pending(merchant_did: &str, authorized: bool) {
+/// Resolve a pending payment task (keyed by payment_id).
+async fn resolve_pending(payment_id: &str, authorized: bool) {
     let mut tasks = PENDING_TASKS.lock().await;
-    if let Some(tx) = tasks.remove(merchant_did) {
-        println!("收到授权响应: {} -> {}", merchant_did, authorized);
+    if let Some(tx) = tasks.remove(payment_id) {
+        println!("Received auth response: {} -> {}", payment_id, authorized);
         let _ = tx.send(authorized);
     } else {
-        println!("收到未匹配的授权响应: {}", merchant_did);
+        println!("Received unmatched auth response: {}", payment_id);
     }
-}
-
-/// Build a DID Document using keys from the agent's local store.
-/// Since we can't extract PrivateIdentity from the agent, we reconstruct
-/// the public parts from the DID string (the keys are registered internally).
-fn build_did_document_from_agent(did: &str, _agent: &DIDCommAgent) -> Value {
-    // We generate a temporary identity with the same DID to get public keys.
-    // The agent already has the real private keys registered.
-    let temp = affinidi_messaging_didcomm::identity::PrivateIdentity::generate(did);
-    build_did_document(did, &temp)
 }
 
 #[pymodule]

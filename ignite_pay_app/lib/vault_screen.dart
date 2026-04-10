@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:ignite_pay_app/services/didcomm_service.dart';
 
 // ---------------------------------------------------------------------------
 // Vault Theme
@@ -178,7 +179,9 @@ class _IdentityHeroCardState extends State<_IdentityHeroCard>
   late final AnimationController _meshCtrl;
   bool _copied = false;
 
-  static const _did = 'did:solana:6uWk2fVyMQ3nZ9aBxYz7kP';
+  String get _did => DidcommService().did.isNotEmpty
+      ? DidcommService().did
+      : 'did:ignite:zInitializing...';
 
   @override
   void initState() {

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart';
+import 'package:ignite_pay_app/services/didcomm_service.dart';
 
 // ---------------------------------------------------------------------------
 // Challenge Theme
@@ -22,7 +23,7 @@ const _kSuccess = Color(0xFF00E676);
 // ---------------------------------------------------------------------------
 // Challenge Overlay Entry Point
 // ---------------------------------------------------------------------------
-Future<T?> showX402Challenge<T>(BuildContext context) {
+Future<T?> showX402Challenge<T>(BuildContext context, {AuthRequest? request}) {
   return Navigator.of(context).push<T>(
     PageRouteBuilder(
       opaque: false,
@@ -41,7 +42,7 @@ Future<T?> showX402Challenge<T>(BuildContext context) {
               child: child,
             );
           },
-          child: const _X402ChallengeScreen(),
+          child: _X402ChallengeScreen(request: request),
         );
       },
     ),
@@ -52,7 +53,9 @@ Future<T?> showX402Challenge<T>(BuildContext context) {
 // Challenge Screen
 // ---------------------------------------------------------------------------
 class _X402ChallengeScreen extends StatefulWidget {
-  const _X402ChallengeScreen();
+  final AuthRequest? request;
+
+  const _X402ChallengeScreen({this.request});
 
   @override
   State<_X402ChallengeScreen> createState() => _X402ChallengeScreenState();
@@ -63,6 +66,12 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   late final AnimationController _glowCtrl;
   String _authResult = '';
   bool _isAuthorizing = false;
+  String _listAction = 'none'; // "none", "whitelist", "blacklist"
+
+  String get _merchantDid => widget.request?.merchantDid ?? 'did:solana:shopx merchants';
+  int get _amount => widget.request?.amount ?? 500000000;
+  String get _paymentId => widget.request?.paymentId ?? '';
+  String get _description => widget.request?.description ?? 'Payment for services';
 
   @override
   void initState() {
@@ -86,9 +95,17 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
     });
     try {
       final grant = await signPayment(
-        merchantDid: 'did:solana:shopx merchants',
-        amount: BigInt.from(500000000),
+        merchantDid: _merchantDid,
+        amount: BigInt.from(_amount),
       );
+
+      // Send auth response via DidcommService
+      await DidcommService().sendAuthResponse(AuthResponseData(
+        paymentId: _paymentId,
+        authorized: true,
+        listAction: _listAction,
+      ));
+
       setState(() {
         _authResult = 'Authorized: ${grant.signature.substring(0, 24)}...';
       });
@@ -159,6 +176,11 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
                   const _AmountDisplay(),
                   const SizedBox(height: 20),
                   const _ReasonBlock(),
+                  const SizedBox(height: 16),
+                  _ListActionSelector(
+                    selected: _listAction,
+                    onChanged: (v) => setState(() => _listAction = v),
+                  ),
                   const Spacer(flex: 2),
                   if (_authResult.isNotEmpty) ...[
                     _ResultBanner(result: _authResult),
@@ -764,6 +786,119 @@ class _DeclineButton extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// List Action Selector
+// ---------------------------------------------------------------------------
+class _ListActionSelector extends StatelessWidget {
+  final String selected;
+  final ValueChanged<String> onChanged;
+
+  const _ListActionSelector({
+    required this.selected,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _kSurfaceDark.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _kGlassBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'LIST ACTION',
+            style: GoogleFonts.inter(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: _kTextSecondary,
+              letterSpacing: 1.0,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              _ListActionChip(
+                label: 'This time only',
+                value: 'none',
+                selectedValue: selected,
+                onTap: () => onChanged('none'),
+              ),
+              const SizedBox(width: 8),
+              _ListActionChip(
+                label: 'Whitelist',
+                value: 'whitelist',
+                selectedValue: selected,
+                color: _kSuccess,
+                onTap: () => onChanged('whitelist'),
+              ),
+              const SizedBox(width: 8),
+              _ListActionChip(
+                label: 'Blacklist',
+                value: 'blacklist',
+                selectedValue: selected,
+                color: _kDanger,
+                onTap: () => onChanged('blacklist'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ListActionChip extends StatelessWidget {
+  final String label;
+  final String value;
+  final String selectedValue;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _ListActionChip({
+    required this.label,
+    required this.value,
+    required this.selectedValue,
+    required this.onTap,
+    this.color = _kAmber,
+  });
+
+  bool get _isSelected => value == selectedValue;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: _isSelected ? color.withValues(alpha: 0.15) : _kSurfaceMid.withValues(alpha: 0.4),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: _isSelected ? color.withValues(alpha: 0.5) : _kGlassBorder,
+            ),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: _isSelected ? color : _kTextSecondary,
+              ),
+            ),
+          ),
         ),
       ),
     );

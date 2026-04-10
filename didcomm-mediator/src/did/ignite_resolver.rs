@@ -1,6 +1,4 @@
-use base64::Engine;
 use dashmap::DashMap;
-use affinidi_messaging_didcomm::crypto::key_agreement::PublicKeyAgreement;
 use affinidi_messaging_didcomm::identity::ResolvedIdentity;
 
 use crate::did::resolver::MediatorDidAgent;
@@ -40,54 +38,15 @@ impl IgniteDidRegistry {
 }
 
 /// Parse a DID Document JSON into a ResolvedIdentity for the `did:ignite` method.
-/// Extracts the keyAgreement key (X25519 public key base64) and
-/// optionally the verification key (Ed25519 public key multibase).
+/// Delegates to the shared ignite-pay-core implementation.
 pub fn parse_ignite_did_document(did: &str, doc: &serde_json::Value) -> Option<ResolvedIdentity> {
-    // Extract key agreement key
-    let ka_entry = doc.get("keyAgreement")?.as_array()?.first()?;
-    let ka_kid = ka_entry.get("id")?.as_str()?;
-    let ka_b64 = ka_entry.get("publicKeyBase64")?.as_str()?;
-    let ka_bytes = base64::engine::general_purpose::STANDARD_NO_PAD
-        .decode(ka_b64)
-        .ok()?;
-    if ka_bytes.len() != 32 {
-        return None;
-    }
-    let mut ka_arr = [0u8; 32];
-    ka_arr.copy_from_slice(&ka_bytes);
-
-    let mut resolved = ResolvedIdentity::new(
-        did.to_string(),
-        ka_kid.to_string(),
-        PublicKeyAgreement::X25519(ka_arr),
-    );
-
-    // Extract verification key (optional)
-    if let Some(vm) = doc.get("verificationMethod").and_then(|v| v.as_array()) {
-        for method in vm {
-            if let Some(pk_multibase) = method.get("publicKeyMultibase").and_then(|v| v.as_str()) {
-                if pk_multibase.starts_with('z') {
-                    // Decode base58btc, skip multicodec prefix (0xed 0x01)
-                    if let Ok(decoded) = bs58::decode(&pk_multibase[1..]).into_vec() {
-                        if decoded.len() == 34 && decoded[0] == 0xed && decoded[1] == 0x01 {
-                            let mut vk = [0u8; 32];
-                            vk.copy_from_slice(&decoded[2..34]);
-                            let kid = method.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                            resolved.signing_kid = Some(kid);
-                            resolved.verifying_key = Some(vk);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Some(resolved)
+    ignite_pay_core::parse_did_document(did, doc)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use affinidi_messaging_didcomm::crypto::key_agreement::PublicKeyAgreement;
 
     #[test]
     fn test_registry_register_and_resolve() {
