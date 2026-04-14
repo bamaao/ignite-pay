@@ -199,7 +199,7 @@ class _IdentityHeroCardState extends State<_IdentityHeroCard>
   }
 
   void _copyDid() {
-    Clipboard.setData(const ClipboardData(text: _did));
+    Clipboard.setData(ClipboardData(text: _did));
     widget.onCopy();
     setState(() => _copied = true);
     Future.delayed(const Duration(seconds: 2), () {

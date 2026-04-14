@@ -3,15 +3,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
 
-const _kBackground = Color(0xFF0F0F1A);
 const _kSurfaceDark = Color(0xFF1A1A2E);
-const _kSurfaceMid = Color(0xFF16213E);
 const _kTextPrimary = Color(0xFFE8E8F0);
 const _kTextSecondary = Color(0xFF8A8AA0);
 const _kSuccess = Color(0xFF00E676);
 const _kAmber = Color(0xFFFFB300);
 const _kDanger = Color(0xFFFF5252);
-const _kGlassBorder = Color(0x1AFFFFFF);
 
 /// Card showing a pending payment authorization request.
 class AuthRequestCard extends StatelessWidget {

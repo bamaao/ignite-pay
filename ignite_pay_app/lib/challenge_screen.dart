@@ -2,7 +2,6 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:ignite_pay_app/src/rust/api/simple.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
 
 // ---------------------------------------------------------------------------
@@ -576,7 +575,7 @@ class _SlideToAuthorizeState extends State<SlideToAuthorize>
   double _dragPosition = 0;
   bool _authorized = false;
   late final AnimationController _resetCtrl;
-  late final Animation<double> _resetAnim;
+  late Animation<double> _resetAnim;
 
   @override
   void initState() {
@@ -588,6 +587,9 @@ class _SlideToAuthorizeState extends State<SlideToAuthorize>
     _resetAnim = Tween<double>(begin: 0, end: 0).animate(
       CurvedAnimation(parent: _resetCtrl, curve: Curves.easeOutCubic),
     );
+    _resetCtrl.addListener(() {
+      if (mounted) setState(() => _dragPosition = _resetAnim.value);
+    });
   }
 
   @override
@@ -614,11 +616,6 @@ class _SlideToAuthorizeState extends State<SlideToAuthorize>
 
       _resetCtrl.forward(from: 0).then((_) {
         if (mounted) setState(() => _dragPosition = 0);
-      });
-
-      // Also update position during animation
-      _resetCtrl.addListener(() {
-        if (mounted) setState(() => _dragPosition = _resetAnim.value);
       });
     }
   }
