@@ -1,5 +1,10 @@
 # Rust build artifacts
 target/
+Cargo.lock
+
+# Sled database data
+did_registry_data/
+didcomm-router/registry_data/
 
 # Solana local validator ledger
 test-ledger/

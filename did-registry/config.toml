@@ -1,0 +1,16 @@
+[server]
+host = "0.0.0.0"
+port = 8081
+
+[solana]
+rpc_url = "https://api.devnet.solana.com"
+tree_address = ""
+tree_authority = ""
+payer_keypair_path = ""
+
+[indexer]
+das_endpoint = ""
+
+[auth]
+jwt_secret = "did-registry-secret"
+platform_public_key = ""

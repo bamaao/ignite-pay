@@ -1,0 +1,17 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[router]
+# DID of the router using did:ignite method
+did = "did:ignite:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+
+# In-memory storage limits
+max_queued_messages = 1000
+max_message_age_seconds = 86400
+
+# Pre-configured peers (keys registered at startup)
+# [[router.known_peers]]
+# did = "did:ignite:z6Mk..."
+# key_agreement_kid = "did:ignite:z6Mk...#key-agreement-1"
+# key_agreement_public_base64 = "..."

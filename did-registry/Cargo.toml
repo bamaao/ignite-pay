@@ -1,0 +1,50 @@
+[package]
+name = "did-registry"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ignite-pay-core = { path = "../ignite-pay-core", features = ["solana"] }
+ignite-pay-solana = { path = "../ignite-pay-solana" }
+
+# Web framework
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+borsh = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Config
+toml = "0.8"
+
+# Concurrency
+dashmap = "6"
+
+# Crypto
+sha2 = "0.10"
+bs58 = "0.5"
+hex = "0.4"
+ed25519-dalek = { version = "2", features = ["std"] }
+
+# Persistence
+sled = "0.34"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# JWT authentication
+jsonwebtoken = "9"
+
+# Solana
+solana-sdk = "2.1"
+solana-client = "2.1"
