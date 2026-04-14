@@ -1,6 +1,11 @@
 **基于 DIDComm V2 的 AI Agent 全链路通信方案**。
 
-它整合了 **FCM 信号唤醒**、**HTTPS 主动拉取**以及 **WebSocket 实时通信**，是一个专为高安全、跨国环境（Google Play & iOS）设计的生产级架构。
+它整合了 **FCM 信号唤醒**、**HTTPS 主动拉取**以及 **WebSocket 实时通信**，支持两条推送通道：
+
+* **海外用户**：FCM 信号唤醒 + HTTPS 主动拉取（省电，无需维持长连接）。
+* **中国用户**：WebSocket 在线直推 + 离线暂存 / 重连后 Pickup 拉取（中国大陆无法使用 FCM）。
+
+这是一个专为高安全、跨国环境（Google Play & iOS）设计的生产级架构。
 
 ---
 
@@ -16,7 +21,8 @@
 
 > **传输路径不对称说明**：
 > - **下行链路**（手机→MCP/Skill）：手机使用 HTTPS 提交指令（省电，无需维持长连接），服务端通过 WebSocket 实时推送给 MCP/Skill（MCP/Skill 常在线）。
-> - **上行链路**（MCP/Skill→手机）：MCP/Skill 通过 WebSocket 上报结果（实时性好），服务端通过 FCM 信号通知手机，手机再通过 HTTPS 拉取（避免手机维持长连接消耗电量）。
+> - **上行链路——海外用户**（MCP/Skill→手机）：MCP/Skill 通过 WebSocket 上报结果，服务端通过 FCM 信号通知手机，手机再通过 HTTPS 拉取（避免手机维持长连接消耗电量）。
+> - **上行链路——中国用户**（MCP/Skill→手机）：MCP/Skill 通过 WebSocket 上报结果，服务端检测用户 `push_channel=websocket`，若 WS 在线则直推 JWE；若离线则暂存，手机重连后通过 Message Pickup 3.0 拉取。
 
 ---
 
@@ -33,20 +39,34 @@
 │    │              │<─────────────│ - 消息暂存    │<──────────│DIDComm │ │
 │    │ FCM Listener │              │ - FCM 推送    │           │        │ │
 │    └──────────────┘              │ - WS 路由     │           └────────┘ │
-│         ↑                        └──────────────┘                      │
-│         │ FCM Signal                                                   │
-│    ┌──────────────┐                                                    │
-│    │ FCM / APNs   │<─────────────── FCM 推送 ──────────────────────     │
+│         ↑                        │               │                      │
+│         │ FCM Signal             │ - WS 直推*    │                      │
+│    ┌──────────────┐              └──────────────┘                      │
+│    │ FCM / APNs   │<─────────────── FCM 推送 (海外用户) ────────────    │
 │    └──────────────┘                                                    │
+│         ↑                                                              │
+│         │ WS 直推 (中国用户)*                                          │
+│    ┌──────────────┐                                                    │
+│    │ WS Listener  │<──── WS 在线直推 JWE / 离线暂存 Pickup ────────    │
+│    └──────────────┘                                                    │
+│                                                                         │
+│    * 中国用户: push_channel=websocket，无 FCM                           │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 
 消息流向:
 
-  下行 (手机→MCP/Skill):                  上行 (MCP/Skill→手机):
+  下行 (手机→MCP/Skill):                  上行 (MCP/Skill→手机) —— 海外:
     Flutter → HTTPS POST → Mediator       MCP/Skill → WebSocket Send → Mediator
     → WebSocket Forward → MCP/Skill       → Redis 暂存 → FCM Signal
     → DIDComm Unpack → 执行               → HTTPS GET → Flutter
+                                          → DIDComm Unpack → UI 更新
+
+                                         上行 (MCP/Skill→手机) —— 中国:
+                                          MCP/Skill → WebSocket Send → Mediator
+                                          → 检查 push_channel=websocket
+                                          → WS 在线: 直推 JWE → Flutter
+                                          → WS 离线: 暂存 → 重连 Pickup 拉取
                                           → DIDComm Unpack → UI 更新
 ```
 
@@ -115,8 +135,11 @@
 3.  **暂存与信号 (Server)**：
     * 服务端接收并存入缓存（Redis/DB），生成 `msg_id`。
     * 服务端根据 `agent_id` 查找绑定的用户，验证消息归属。
-    * 调用 **FCM** 发送 Data Message：`{"type": "SIGNAL", "msg_id": "uuid-123"}`。
-4.  **主动拉取 (Flutter)**：
+    * **海外用户**（`push_channel: "fcm"`）：调用 **FCM** 发送 Data Message：`{"type": "SIGNAL", "msg_id": "uuid-123"}`。
+    * **中国用户**（`push_channel: "websocket"`）：
+        - WS 在线：直接通过 WebSocket 将 JWE 推送至手机端。
+        - WS 离线：暂存消息，手机重连后通过 Message Pickup 3.0 协议 (`status-request` / `batch-pickup`) 拉取。
+4.  **主动拉取 (Flutter)** —— 仅海外 FCM 通道：
     * Flutter 收到 FCM 信号，发起请求：`GET /v1/sync/messages/uuid-123`。
 5.  **解密展示 (Flutter)**：获取 JWE 后，在本地 Isolate 中进行 DIDComm `Unpack`，校验成功后展示支付授权界面（金额、商家、描述）。
 6.  **用户授权 (Flutter)**：用户点击"授权"后，Flutter App 创建 Session Key：
@@ -169,7 +192,7 @@ Bearer Token 是用户登录后服务端签发的 JWT，包含 `user_did` 字段
 
 ### 5.4 批量同步机制 (兜底方案)
 
-为防止 FCM 信号丢失，App 在**回到前台**时必须调用：
+为防止 FCM 信号丢失或 WS 离线期间遗漏消息，App 在**回到前台**时必须调用：
 
 * **Endpoint**: `GET /v1/sync/list?after={last_read_id}&limit=100`
 * **作用**: 返回 `last_read_id` 之后所有未读的消息列表。
@@ -194,7 +217,9 @@ Bearer Token 是用户登录后服务端签发的 JWT，包含 `user_did` 字段
 
 * **安全存储**: 私钥必须存放在 `flutter_secure_storage`（Android 使用 KeyStore，iOS 使用 Keychain）。
 * **加解密性能**: 必须使用 **Rust FFI** 处理 DIDComm 逻辑。在 Flutter 中使用 `Worker Isolate` 调用，避免阻塞主线程导致动画掉帧。
-* **推送监听**: 需同时处理 `FirebaseMessaging.onMessage` (前台) 和 `FirebaseMessaging.onBackgroundMessage` (后台)。
+* **推送监听**:
+    * **海外用户**：需同时处理 `FirebaseMessaging.onMessage` (前台) 和 `FirebaseMessaging.onBackgroundMessage` (后台)。
+    * **中国用户**：维持与 Mediator 的 WebSocket 长连接，监听 `onWebSocketMessage` 实时接收 JWE。App 切后台时 WS 可能断开，回到前台后需自动重连并执行 Message Pickup (`status-request` / `batch-pickup`) 拉取离线期间暂存的消息。
 
 > **iOS 注意事项**：iOS 上 FCM 依赖 APNs，当 App 被 Force Quit 后推送可能延迟或无法送达。5.4 的批量同步机制是 iOS 端的必要兜底——App 回到前台时必须触发一次同步，确保不遗漏消息。
 
@@ -238,6 +263,13 @@ MCP/Skill 通过 DIDComm Mediator 协议（`coordinate-mediation/2.0`）建立�
 | MCP/Skill → Mediator | `keylist-update` | Coordinate Mediation 2.0 | 注册接收密钥 `{did}#key-1` |
 | MCP/Skill → Mediator | `forward` | Routing 2.0 | 转发 DIDComm 消息至目标 |
 | Mediator → MCP/Skill | JWE Message | DIDComm V2 | 投递加密消息 |
+| 手机 (中国) → Mediator | `mediate-request` | Coordinate Mediation 2.0 | 中国用户 WS 连接注册 |
+| 手机 (中国) → Mediator | `keylist-update` | Coordinate Mediation 2.0 | 注册用户 DID 接收密钥 |
+| Mediator → 手机 (中国) | JWE Message | DIDComm V2 | WS 在线直推加密消息 |
+| 手机 (中国) → Mediator | `status-request` | Message Pickup 3.0 | 查询离线期间暂存消息数量 |
+| Mediator → 手机 (中国) | `status` | Message Pickup 3.0 | 返回暂存消息计数 |
+| 手机 (中国) → Mediator | `batch-pickup` | Message Pickup 3.0 | 批量拉取离线暂存消息 |
+| Mediator → 手机 (中国) | `batch` | Message Pickup 3.0 | 返回批量消息 |
 
 > **路由机制**：Mediator 根据消息目标的 DID 查找已注册的 WebSocket 连接，将消息投递到对应的连接。未在线的客户端消息暂存至 Redis（7 天 TTL），客户端重连后通过 Message Pickup 3.0 协议拉取。
 
