@@ -1,7 +1,7 @@
 use anyhow::Result;
 use once_cell::sync::Lazy;
 use sha2::Digest;
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 
 use crate::api::identity::IdentityManager;
 use crate::api::notification::{DecryptedMessage, DidcommMessage};
@@ -37,8 +37,12 @@ pub fn initialize_identity(storage_path: String) -> Result<DidInfo> {
 
     // Store in global state for reuse
     {
-        let mut global = GLOBAL_IDENTITY.lock().unwrap();
-        *global = Some(IdentityManager::new(&storage_path)?);
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(async {
+            let mut global = GLOBAL_IDENTITY.lock().await;
+            *global = Some(IdentityManager::new(&storage_path)?);
+            Ok::<(), anyhow::Error>(())
+        })?;
     }
 
     Ok(DidInfo {
@@ -59,18 +63,21 @@ pub async fn connect_mediator(storage_path: String, ws_url: String) -> Result<()
 
     // Store in global state
     {
-        let mut global = GLOBAL_WS_CLIENT.lock().unwrap();
+        let mut global = GLOBAL_WS_CLIENT.lock().await;
         *global = Some(WsClient::new(&mgr));
     }
 
-    let client_guard = GLOBAL_WS_CLIENT.lock().unwrap();
-    if let Some(ref client) = *client_guard {
-        client.connect(&ws_url).await?;
+    // Connect (lock is released before await via the block scope)
+    {
+        let global = GLOBAL_WS_CLIENT.lock().await;
+        if let Some(ref client) = *global {
+            client.connect(&ws_url).await?;
+        }
     }
 
     // Store identity in global state
     {
-        let mut global = GLOBAL_IDENTITY.lock().unwrap();
+        let mut global = GLOBAL_IDENTITY.lock().await;
         *global = Some(mgr);
     }
 
@@ -79,7 +86,7 @@ pub async fn connect_mediator(storage_path: String, ws_url: String) -> Result<()
 
 /// Disconnect from the mediator.
 pub async fn disconnect_mediator() -> Result<()> {
-    let mut global = GLOBAL_WS_CLIENT.lock().unwrap();
+    let mut global = GLOBAL_WS_CLIENT.lock().await;
     *global = None;
     Ok(())
 }
@@ -95,7 +102,7 @@ pub async fn send_auth_response(
     list_label: Option<String>,
     list_max_amount: Option<u64>,
 ) -> Result<()> {
-    let global = GLOBAL_WS_CLIENT.lock().unwrap();
+    let global = GLOBAL_WS_CLIENT.lock().await;
     let client = global
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Not connected to mediator"))?;

@@ -1,10 +1,149 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:ignite_pay_app/src/rust/api/notification.dart';
+import 'package:ignite_pay_app/src/rust/api/session.dart';
+import 'package:ignite_pay_app/src/rust/api/simple.dart';
+import 'package:ignite_pay_app/src/rust/frb_generated.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// A mock implementation of [RustLibApi] that returns stub values
+/// without needing the real Rust FFI runtime.
+class _MockRustLibApi extends RustLibApi {
+  @override
+  Future<DidInfo> crateApiSimpleInitializeIdentity({
+    required String storagePath,
+  }) async =>
+      DidInfo(did: 'did:ignite:zPhone${DateTime.now().millisecondsSinceEpoch % 10000}', didDocJson: '{}');
+
+  @override
+  Future<void> crateApiSimpleConnectMediator({
+    required String storagePath,
+    required String wsUrl,
+  }) async {}
+
+  @override
+  Future<void> crateApiSimpleDisconnectMediator() async {}
+
+  @override
+  Future<void> crateApiSimpleSendAuthResponse({
+    required String storagePath,
+    required String paymentId,
+    required bool authorized,
+    required String listAction,
+    required String mcpDid,
+    SessionKeyInfo? sessionKeyInfo,
+    String? listLabel,
+    BigInt? listMaxAmount,
+  }) async {}
+
+  @override
+  Future<SessionKeyInfo> crateApiSimpleCreateSessionKeyForPayment({
+    required String storagePath,
+    required BigInt spendingLimit,
+    required PlatformInt64 durationSecs,
+  }) async =>
+      SessionKeyInfo(
+        ephemeralPubkey: 'mockPubkey',
+        ephemeralSecretKey: 'mockSecretKey',
+        expiresAt: DateTime.now().millisecondsSinceEpoch + durationSecs * 1000,
+        spendingLimit: spendingLimit,
+        scopes: ['sol:transfer'],
+        txSignature: null,
+        sessionPda: null,
+      );
+
+  @override
+  Future<String> crateApiSimpleAuthenticateWithMediator({
+    required String mediatorUrl,
+    required String did,
+  }) async =>
+      'mock_token';
+
+  @override
+  Future<DecryptedMessage> crateApiSimpleDecryptMessage({
+    required String storagePath,
+    required String jwe,
+  }) async =>
+      DecryptedMessage(
+        msgType: 'placeholder',
+        rawBody: jwe,
+      );
+
+  @override
+  Future<String> crateApiSimpleGetDid({required String storagePath}) async =>
+      'did:ignite:mock';
+
+  @override
+  Future<List<DidcommMessage>> crateApiSimplePullMessages({
+    required String mediatorUrl,
+    required String token,
+    String? afterId,
+    required int limit,
+  }) async =>
+      [];
+
+  @override
+  Future<AuthGrant> crateApiSimpleSignPayment({
+    required String merchantDid,
+    required BigInt amount,
+  }) async =>
+      AuthGrant(merchantDid: merchantDid, amount: amount, signature: 'mock_sig');
+
+  @override
+  Future<void> crateApiSimpleRegisterDeviceToken({
+    required String mediatorUrl,
+    required String authToken,
+    required String fcmToken,
+  }) async {}
+
+  @override
+  Future<SessionKeyInfo> crateApiSessionCreateSessionKey({
+    required String storagePath,
+    required String ownerPubkey,
+    required String targetProgram,
+    required List<String> scopes,
+    required BigInt spendingLimit,
+    required PlatformInt64 durationSecs,
+  }) async =>
+      SessionKeyInfo(
+        ephemeralPubkey: 'mockPubkey',
+        ephemeralSecretKey: 'mockSecretKey',
+        expiresAt: DateTime.now().millisecondsSinceEpoch + durationSecs * 1000,
+        spendingLimit: spendingLimit,
+        scopes: scopes,
+        txSignature: null,
+        sessionPda: null,
+      );
+
+  @override
+  Future<SessionKeyInfo> crateApiSessionCreateAndRegisterSessionKey({
+    required String storagePath,
+    required String rpcUrl,
+    required String ownerSecretKey,
+    required String targetProgram,
+    required List<String> scopes,
+    required BigInt spendingLimit,
+    required PlatformInt64 durationSecs,
+  }) async =>
+      SessionKeyInfo(
+        ephemeralPubkey: 'mockPubkey',
+        ephemeralSecretKey: 'mockSecretKey',
+        expiresAt: DateTime.now().millisecondsSinceEpoch + durationSecs * 1000,
+        spendingLimit: spendingLimit,
+        scopes: scopes,
+        txSignature: 'mock_tx_sig',
+        sessionPda: 'mock_pda',
+      );
+}
 
 void main() {
   group('DidcommService', () {
     late DidcommService service;
+
+    setUpAll(() {
+      RustLib.initMock(api: _MockRustLibApi());
+    });
 
     setUp(() {
       SharedPreferences.setMockInitialValues({});

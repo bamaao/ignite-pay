@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:ignite_pay_app/services/fcm_service.dart';
 import 'package:ignite_pay_app/services/mediator_api.dart';
+import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -127,14 +128,9 @@ class DidcommService extends ChangeNotifier {
       _mediatorWsUrl = prefs.getString('mediator_ws_url') ?? '';
       _mediatorHttpUrl = prefs.getString('mediator_http_url') ?? '';
 
-      // In production, this calls the Rust bridge:
-      // final info = await initializeIdentity(storagePath: storagePath);
-      // _did = info.did;
-      // _didDocJson = info.didDocJson;
-
-      // For now, use a placeholder until the bridge is regenerated
-      _did = 'did:ignite:zPhone${DateTime.now().millisecondsSinceEpoch % 10000}';
-      _didDocJson = '{}';
+      final info = await rust.initializeIdentity(storagePath: storagePath);
+      _did = info.did;
+      _didDocJson = info.didDocJson;
 
       _isInitialized = true;
       debugPrint('DID initialized: $_did');
@@ -157,8 +153,7 @@ class DidcommService extends ChangeNotifier {
     _api.setBaseUrl(_mediatorHttpUrl);
 
     try {
-      // In production, call Rust bridge:
-      // await connectMediator(storagePath: './phone_data', wsUrl: wsUrl);
+      await rust.connectMediator(storagePath: './phone_data', wsUrl: wsUrl);
 
       _isConnected = true;
       debugPrint('Connected to mediator: $wsUrl');
@@ -188,8 +183,7 @@ class DidcommService extends ChangeNotifier {
       _wsSubscription = null;
       await _wsChannel?.sink.close();
       _wsChannel = null;
-      // In production, call Rust bridge:
-      // await disconnectMediator();
+      await rust.disconnectMediator();
     } catch (_) {}
 
     _isConnected = false;
@@ -199,14 +193,18 @@ class DidcommService extends ChangeNotifier {
   /// Send an authorization response back to the MCP server.
   Future<void> sendAuthResponse(AuthResponseData response) async {
     try {
-      // In production, call Rust bridge:
-      // await sendAuthResponse(
-      //   storagePath: './phone_data',
-      //   paymentId: response.paymentId,
-      //   authorized: response.authorized,
-      //   listAction: response.listAction,
-      //   mcpDid: _pendingAuth?.merchantDid ?? '',
-      // );
+      await rust.sendAuthResponse(
+        storagePath: './phone_data',
+        paymentId: response.paymentId,
+        authorized: response.authorized,
+        listAction: response.listAction,
+        mcpDid: _pendingAuth?.merchantDid ?? '',
+        sessionKeyInfo: null,
+        listLabel: response.listLabel,
+        listMaxAmount: response.listMaxAmount != null
+            ? BigInt.from(response.listMaxAmount!)
+            : null,
+      );
 
       debugPrint(
           'Auth response: ${response.paymentId} -> ${response.authorized} (${response.listAction})');
@@ -230,28 +228,26 @@ class DidcommService extends ChangeNotifier {
     int? listMaxAmount,
   }) async {
     try {
-      // V2.0: Create session key via Rust bridge
-      // In production:
-      // final sessionKey = await createSessionKeyForPayment(
-      //   storagePath: './phone_data',
-      //   spendingLimit: spendingLimit,
-      //   durationSecs: durationSecs,
-      // );
-      // Then pass session key data to sendAuthResponse
+      final sessionKey = await rust.createSessionKeyForPayment(
+        storagePath: './phone_data',
+        spendingLimit: BigInt.from(spendingLimit),
+        durationSecs: durationSecs,
+      );
+      await rust.sendAuthResponse(
+        storagePath: './phone_data',
+        paymentId: paymentId,
+        authorized: authorized,
+        listAction: listAction,
+        mcpDid: _pendingAuth?.merchantDid ?? '',
+        sessionKeyInfo: sessionKey,
+        listLabel: listLabel,
+        listMaxAmount: listMaxAmount != null ? BigInt.from(listMaxAmount) : null,
+      );
 
       debugPrint(
           'V2.0 Auth response with session key: $paymentId -> $authorized '
           '(limit: $spendingLimit lamports, duration: ${durationSecs}s, '
           'action: $listAction)');
-
-      // Send auth response with session key data
-      await sendAuthResponse(AuthResponseData(
-        paymentId: paymentId,
-        authorized: authorized,
-        listAction: listAction,
-        listLabel: listLabel,
-        listMaxAmount: listMaxAmount,
-      ));
 
       _pendingAuth = null;
       notifyListeners();
@@ -266,14 +262,10 @@ class DidcommService extends ChangeNotifier {
     if (_mediatorHttpUrl.isEmpty) return;
 
     try {
-      // In production, call Rust bridge:
-      // _authToken = await authenticateWithMediator(
-      //   mediatorUrl: _mediatorHttpUrl,
-      //   did: _did,
-      // );
-
-      // For now, use the HTTP API directly
-      _authToken = await _api.authenticate(_did, 'placeholder');
+      _authToken = await rust.authenticateWithMediator(
+        mediatorUrl: _mediatorHttpUrl,
+        did: _did,
+      );
 
       if (_authToken != null) {
         await _pullAndDecryptMessages();
@@ -306,25 +298,21 @@ class DidcommService extends ChangeNotifier {
   /// Decrypt a JWE envelope and process the message.
   Future<void> _decryptAndProcess(String jweEnvelope) async {
     try {
-      // In production, call Rust bridge:
-      // final decrypted = await decryptMessage(
-      //   storagePath: './phone_data',
-      //   jwe: jweEnvelope,
-      // );
-      //
-      // final msg = DecryptedMsg(
-      //   msgType: decrypted.msgType,
-      //   paymentId: decrypted.paymentId,
-      //   merchantDid: decrypted.merchantDid,
-      //   amount: decrypted.amount,
-      //   description: decrypted.description,
-      //   rawBody: decrypted.rawBody,
-      // );
+      final decrypted = await rust.decryptMessage(
+        storagePath: './phone_data',
+        jwe: jweEnvelope,
+      );
 
-      // Placeholder until bridge is regenerated
       final msg = DecryptedMsg(
-        msgType: 'placeholder',
-        rawBody: jweEnvelope,
+        msgType: decrypted.msgType,
+        paymentId: decrypted.paymentId,
+        merchantDid: decrypted.merchantDid,
+        amount: decrypted.amount?.toInt(),
+        description: decrypted.description,
+        rawBody: decrypted.rawBody,
+        listCid: decrypted.listCid,
+        listType: decrypted.listType,
+        label: decrypted.label,
       );
 
       _messages.add(msg);

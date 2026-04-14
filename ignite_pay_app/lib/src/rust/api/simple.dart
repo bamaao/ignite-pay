@@ -4,8 +4,79 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
+import 'notification.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'session.dart';
 
+/// Initialize identity - generates or loads DID from storage.
+/// Returns the DID string and DID document JSON.
+Future<DidInfo> initializeIdentity({required String storagePath}) => RustLib
+    .instance
+    .api
+    .crateApiSimpleInitializeIdentity(storagePath: storagePath);
+
+/// Get the current DID from the initialized identity.
+Future<String> getDid({required String storagePath}) =>
+    RustLib.instance.api.crateApiSimpleGetDid(storagePath: storagePath);
+
+/// Connect to mediator WebSocket with auto-reconnect.
+Future<void> connectMediator({
+  required String storagePath,
+  required String wsUrl,
+}) => RustLib.instance.api.crateApiSimpleConnectMediator(
+  storagePath: storagePath,
+  wsUrl: wsUrl,
+);
+
+/// Disconnect from the mediator.
+Future<void> disconnectMediator() =>
+    RustLib.instance.api.crateApiSimpleDisconnectMediator();
+
+/// Send a payment authorization response back to the MCP server.
+Future<void> sendAuthResponse({
+  required String storagePath,
+  required String paymentId,
+  required bool authorized,
+  required String listAction,
+  required String mcpDid,
+  SessionKeyInfo? sessionKeyInfo,
+  String? listLabel,
+  BigInt? listMaxAmount,
+}) => RustLib.instance.api.crateApiSimpleSendAuthResponse(
+  storagePath: storagePath,
+  paymentId: paymentId,
+  authorized: authorized,
+  listAction: listAction,
+  mcpDid: mcpDid,
+  sessionKeyInfo: sessionKeyInfo,
+  listLabel: listLabel,
+  listMaxAmount: listMaxAmount,
+);
+
+/// Poll for messages via HTTPS (for FCM wake-up path).
+/// Returns a list of DIDComm message envelopes.
+Future<List<DidcommMessage>> pullMessages({
+  required String mediatorUrl,
+  required String token,
+  String? afterId,
+  required int limit,
+}) => RustLib.instance.api.crateApiSimplePullMessages(
+  mediatorUrl: mediatorUrl,
+  token: token,
+  afterId: afterId,
+  limit: limit,
+);
+
+/// Decrypt a JWE message using the local identity.
+Future<DecryptedMessage> decryptMessage({
+  required String storagePath,
+  required String jwe,
+}) => RustLib.instance.api.crateApiSimpleDecryptMessage(
+  storagePath: storagePath,
+  jwe: jwe,
+);
+
+/// Mock payment signing (placeholder for real signing).
 Future<AuthGrant> signPayment({
   required String merchantDid,
   required BigInt amount,
@@ -14,6 +85,39 @@ Future<AuthGrant> signPayment({
   amount: amount,
 );
 
+/// Create a local session key for payment authorization (V2.0).
+/// Returns session key info that should be sent to the MCP server via auth response.
+Future<SessionKeyInfo> createSessionKeyForPayment({
+  required String storagePath,
+  required BigInt spendingLimit,
+  required PlatformInt64 durationSecs,
+}) => RustLib.instance.api.crateApiSimpleCreateSessionKeyForPayment(
+  storagePath: storagePath,
+  spendingLimit: spendingLimit,
+  durationSecs: durationSecs,
+);
+
+/// Authenticate with the mediator and get a JWT token.
+Future<String> authenticateWithMediator({
+  required String mediatorUrl,
+  required String did,
+}) => RustLib.instance.api.crateApiSimpleAuthenticateWithMediator(
+  mediatorUrl: mediatorUrl,
+  did: did,
+);
+
+/// Register an FCM device token with the mediator.
+Future<void> registerDeviceToken({
+  required String mediatorUrl,
+  required String authToken,
+  required String fcmToken,
+}) => RustLib.instance.api.crateApiSimpleRegisterDeviceToken(
+  mediatorUrl: mediatorUrl,
+  authToken: authToken,
+  fcmToken: fcmToken,
+);
+
+/// Auth grant returned from payment signing.
 class AuthGrant {
   final String merchantDid;
   final BigInt amount;
@@ -37,4 +141,23 @@ class AuthGrant {
           merchantDid == other.merchantDid &&
           amount == other.amount &&
           signature == other.signature;
+}
+
+/// Return type for the DID identity info.
+class DidInfo {
+  final String did;
+  final String didDocJson;
+
+  const DidInfo({required this.did, required this.didDocJson});
+
+  @override
+  int get hashCode => did.hashCode ^ didDocJson.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DidInfo &&
+          runtimeType == other.runtimeType &&
+          did == other.did &&
+          didDocJson == other.didDocJson;
 }

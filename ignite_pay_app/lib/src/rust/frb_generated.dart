@@ -3,6 +3,8 @@
 
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
+import 'api/notification.dart';
+import 'api/session.dart';
 import 'api/simple.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -64,7 +66,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 1281707192;
+  int get rustContentHash => 504143308;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -76,6 +78,78 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
+  Future<String> crateApiSimpleAuthenticateWithMediator({
+    required String mediatorUrl,
+    required String did,
+  });
+
+  Future<void> crateApiSimpleConnectMediator({
+    required String storagePath,
+    required String wsUrl,
+  });
+
+  Future<SessionKeyInfo> crateApiSessionCreateAndRegisterSessionKey({
+    required String storagePath,
+    required String rpcUrl,
+    required String ownerSecretKey,
+    required String targetProgram,
+    required List<String> scopes,
+    required BigInt spendingLimit,
+    required PlatformInt64 durationSecs,
+  });
+
+  Future<SessionKeyInfo> crateApiSessionCreateSessionKey({
+    required String storagePath,
+    required String ownerPubkey,
+    required String targetProgram,
+    required List<String> scopes,
+    required BigInt spendingLimit,
+    required PlatformInt64 durationSecs,
+  });
+
+  Future<SessionKeyInfo> crateApiSimpleCreateSessionKeyForPayment({
+    required String storagePath,
+    required BigInt spendingLimit,
+    required PlatformInt64 durationSecs,
+  });
+
+  Future<DecryptedMessage> crateApiSimpleDecryptMessage({
+    required String storagePath,
+    required String jwe,
+  });
+
+  Future<void> crateApiSimpleDisconnectMediator();
+
+  Future<String> crateApiSimpleGetDid({required String storagePath});
+
+  Future<DidInfo> crateApiSimpleInitializeIdentity({
+    required String storagePath,
+  });
+
+  Future<List<DidcommMessage>> crateApiSimplePullMessages({
+    required String mediatorUrl,
+    required String token,
+    String? afterId,
+    required int limit,
+  });
+
+  Future<void> crateApiSimpleRegisterDeviceToken({
+    required String mediatorUrl,
+    required String authToken,
+    required String fcmToken,
+  });
+
+  Future<void> crateApiSimpleSendAuthResponse({
+    required String storagePath,
+    required String paymentId,
+    required bool authorized,
+    required String listAction,
+    required String mcpDid,
+    SessionKeyInfo? sessionKeyInfo,
+    String? listLabel,
+    BigInt? listMaxAmount,
+  });
+
   Future<AuthGrant> crateApiSimpleSignPayment({
     required String merchantDid,
     required BigInt amount,
@@ -91,6 +165,497 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
+  Future<String> crateApiSimpleAuthenticateWithMediator({
+    required String mediatorUrl,
+    required String did,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(mediatorUrl, serializer);
+          sse_encode_String(did, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 1,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleAuthenticateWithMediatorConstMeta,
+        argValues: [mediatorUrl, did],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleAuthenticateWithMediatorConstMeta =>
+      const TaskConstMeta(
+        debugName: "authenticate_with_mediator",
+        argNames: ["mediatorUrl", "did"],
+      );
+
+  @override
+  Future<void> crateApiSimpleConnectMediator({
+    required String storagePath,
+    required String wsUrl,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(wsUrl, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 2,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleConnectMediatorConstMeta,
+        argValues: [storagePath, wsUrl],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleConnectMediatorConstMeta =>
+      const TaskConstMeta(
+        debugName: "connect_mediator",
+        argNames: ["storagePath", "wsUrl"],
+      );
+
+  @override
+  Future<SessionKeyInfo> crateApiSessionCreateAndRegisterSessionKey({
+    required String storagePath,
+    required String rpcUrl,
+    required String ownerSecretKey,
+    required String targetProgram,
+    required List<String> scopes,
+    required BigInt spendingLimit,
+    required PlatformInt64 durationSecs,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(rpcUrl, serializer);
+          sse_encode_String(ownerSecretKey, serializer);
+          sse_encode_String(targetProgram, serializer);
+          sse_encode_list_String(scopes, serializer);
+          sse_encode_u_64(spendingLimit, serializer);
+          sse_encode_i_64(durationSecs, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 3,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_session_key_info,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSessionCreateAndRegisterSessionKeyConstMeta,
+        argValues: [
+          storagePath,
+          rpcUrl,
+          ownerSecretKey,
+          targetProgram,
+          scopes,
+          spendingLimit,
+          durationSecs,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionCreateAndRegisterSessionKeyConstMeta =>
+      const TaskConstMeta(
+        debugName: "create_and_register_session_key",
+        argNames: [
+          "storagePath",
+          "rpcUrl",
+          "ownerSecretKey",
+          "targetProgram",
+          "scopes",
+          "spendingLimit",
+          "durationSecs",
+        ],
+      );
+
+  @override
+  Future<SessionKeyInfo> crateApiSessionCreateSessionKey({
+    required String storagePath,
+    required String ownerPubkey,
+    required String targetProgram,
+    required List<String> scopes,
+    required BigInt spendingLimit,
+    required PlatformInt64 durationSecs,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(ownerPubkey, serializer);
+          sse_encode_String(targetProgram, serializer);
+          sse_encode_list_String(scopes, serializer);
+          sse_encode_u_64(spendingLimit, serializer);
+          sse_encode_i_64(durationSecs, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 4,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_session_key_info,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSessionCreateSessionKeyConstMeta,
+        argValues: [
+          storagePath,
+          ownerPubkey,
+          targetProgram,
+          scopes,
+          spendingLimit,
+          durationSecs,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionCreateSessionKeyConstMeta =>
+      const TaskConstMeta(
+        debugName: "create_session_key",
+        argNames: [
+          "storagePath",
+          "ownerPubkey",
+          "targetProgram",
+          "scopes",
+          "spendingLimit",
+          "durationSecs",
+        ],
+      );
+
+  @override
+  Future<SessionKeyInfo> crateApiSimpleCreateSessionKeyForPayment({
+    required String storagePath,
+    required BigInt spendingLimit,
+    required PlatformInt64 durationSecs,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_u_64(spendingLimit, serializer);
+          sse_encode_i_64(durationSecs, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 5,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_session_key_info,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleCreateSessionKeyForPaymentConstMeta,
+        argValues: [storagePath, spendingLimit, durationSecs],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleCreateSessionKeyForPaymentConstMeta =>
+      const TaskConstMeta(
+        debugName: "create_session_key_for_payment",
+        argNames: ["storagePath", "spendingLimit", "durationSecs"],
+      );
+
+  @override
+  Future<DecryptedMessage> crateApiSimpleDecryptMessage({
+    required String storagePath,
+    required String jwe,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(jwe, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 6,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_decrypted_message,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleDecryptMessageConstMeta,
+        argValues: [storagePath, jwe],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleDecryptMessageConstMeta =>
+      const TaskConstMeta(
+        debugName: "decrypt_message",
+        argNames: ["storagePath", "jwe"],
+      );
+
+  @override
+  Future<void> crateApiSimpleDisconnectMediator() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 7,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleDisconnectMediatorConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleDisconnectMediatorConstMeta =>
+      const TaskConstMeta(debugName: "disconnect_mediator", argNames: []);
+
+  @override
+  Future<String> crateApiSimpleGetDid({required String storagePath}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 8,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleGetDidConstMeta,
+        argValues: [storagePath],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleGetDidConstMeta =>
+      const TaskConstMeta(debugName: "get_did", argNames: ["storagePath"]);
+
+  @override
+  Future<DidInfo> crateApiSimpleInitializeIdentity({
+    required String storagePath,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 9,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_did_info,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleInitializeIdentityConstMeta,
+        argValues: [storagePath],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleInitializeIdentityConstMeta =>
+      const TaskConstMeta(
+        debugName: "initialize_identity",
+        argNames: ["storagePath"],
+      );
+
+  @override
+  Future<List<DidcommMessage>> crateApiSimplePullMessages({
+    required String mediatorUrl,
+    required String token,
+    String? afterId,
+    required int limit,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(mediatorUrl, serializer);
+          sse_encode_String(token, serializer);
+          sse_encode_opt_String(afterId, serializer);
+          sse_encode_u_32(limit, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 10,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_didcomm_message,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimplePullMessagesConstMeta,
+        argValues: [mediatorUrl, token, afterId, limit],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimplePullMessagesConstMeta => const TaskConstMeta(
+    debugName: "pull_messages",
+    argNames: ["mediatorUrl", "token", "afterId", "limit"],
+  );
+
+  @override
+  Future<void> crateApiSimpleRegisterDeviceToken({
+    required String mediatorUrl,
+    required String authToken,
+    required String fcmToken,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(mediatorUrl, serializer);
+          sse_encode_String(authToken, serializer);
+          sse_encode_String(fcmToken, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 11,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleRegisterDeviceTokenConstMeta,
+        argValues: [mediatorUrl, authToken, fcmToken],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleRegisterDeviceTokenConstMeta =>
+      const TaskConstMeta(
+        debugName: "register_device_token",
+        argNames: ["mediatorUrl", "authToken", "fcmToken"],
+      );
+
+  @override
+  Future<void> crateApiSimpleSendAuthResponse({
+    required String storagePath,
+    required String paymentId,
+    required bool authorized,
+    required String listAction,
+    required String mcpDid,
+    SessionKeyInfo? sessionKeyInfo,
+    String? listLabel,
+    BigInt? listMaxAmount,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(paymentId, serializer);
+          sse_encode_bool(authorized, serializer);
+          sse_encode_String(listAction, serializer);
+          sse_encode_String(mcpDid, serializer);
+          sse_encode_opt_box_autoadd_session_key_info(
+            sessionKeyInfo,
+            serializer,
+          );
+          sse_encode_opt_String(listLabel, serializer);
+          sse_encode_opt_box_autoadd_u_64(listMaxAmount, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 12,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleSendAuthResponseConstMeta,
+        argValues: [
+          storagePath,
+          paymentId,
+          authorized,
+          listAction,
+          mcpDid,
+          sessionKeyInfo,
+          listLabel,
+          listMaxAmount,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleSendAuthResponseConstMeta =>
+      const TaskConstMeta(
+        debugName: "send_auth_response",
+        argNames: [
+          "storagePath",
+          "paymentId",
+          "authorized",
+          "listAction",
+          "mcpDid",
+          "sessionKeyInfo",
+          "listLabel",
+          "listMaxAmount",
+        ],
+      );
+
+  @override
   Future<AuthGrant> crateApiSimpleSignPayment({
     required String merchantDid,
     required BigInt amount,
@@ -104,7 +669,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 1,
+            funcId: 13,
             port: port_,
           );
         },
@@ -150,9 +715,132 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool dco_decode_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as bool;
+  }
+
+  @protected
+  SessionKeyInfo dco_decode_box_autoadd_session_key_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_session_key_info(raw);
+  }
+
+  @protected
+  BigInt dco_decode_box_autoadd_u_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_u_64(raw);
+  }
+
+  @protected
+  DecryptedMessage dco_decode_decrypted_message(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
+    return DecryptedMessage(
+      msgType: dco_decode_String(arr[0]),
+      paymentId: dco_decode_opt_String(arr[1]),
+      merchantDid: dco_decode_opt_String(arr[2]),
+      amount: dco_decode_opt_box_autoadd_u_64(arr[3]),
+      description: dco_decode_opt_String(arr[4]),
+      listCid: dco_decode_opt_String(arr[5]),
+      action: dco_decode_opt_String(arr[6]),
+      targetDid: dco_decode_opt_String(arr[7]),
+      rawBody: dco_decode_String(arr[8]),
+      listType: dco_decode_opt_String(arr[9]),
+      label: dco_decode_opt_String(arr[10]),
+    );
+  }
+
+  @protected
+  DidInfo dco_decode_did_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return DidInfo(
+      did: dco_decode_String(arr[0]),
+      didDocJson: dco_decode_String(arr[1]),
+    );
+  }
+
+  @protected
+  DidcommMessage dco_decode_didcomm_message(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return DidcommMessage(
+      msgId: dco_decode_String(arr[0]),
+      jweEnvelope: dco_decode_String(arr[1]),
+      createdAt: dco_decode_i_64(arr[2]),
+    );
+  }
+
+  @protected
+  PlatformInt64 dco_decode_i_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dcoDecodeI64(raw);
+  }
+
+  @protected
+  List<String> dco_decode_list_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_String).toList();
+  }
+
+  @protected
+  List<DidcommMessage> dco_decode_list_didcomm_message(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_didcomm_message).toList();
+  }
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Uint8List;
+  }
+
+  @protected
+  String? dco_decode_opt_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
+  SessionKeyInfo? dco_decode_opt_box_autoadd_session_key_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_session_key_info(raw);
+  }
+
+  @protected
+  BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_u_64(raw);
+  }
+
+  @protected
+  SessionKeyInfo dco_decode_session_key_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    return SessionKeyInfo(
+      ephemeralPubkey: dco_decode_String(arr[0]),
+      ephemeralSecretKey: dco_decode_String(arr[1]),
+      expiresAt: dco_decode_i_64(arr[2]),
+      spendingLimit: dco_decode_u_64(arr[3]),
+      scopes: dco_decode_list_String(arr[4]),
+      txSignature: dco_decode_opt_String(arr[5]),
+      sessionPda: dco_decode_opt_String(arr[6]),
+    );
+  }
+
+  @protected
+  int dco_decode_u_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
   }
 
   @protected
@@ -165,6 +853,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   int dco_decode_u_8(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
+  }
+
+  @protected
+  void dco_decode_unit(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return;
   }
 
   @protected
@@ -195,10 +889,174 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool sse_decode_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
+  SessionKeyInfo sse_decode_box_autoadd_session_key_info(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_session_key_info(deserializer));
+  }
+
+  @protected
+  BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_u_64(deserializer));
+  }
+
+  @protected
+  DecryptedMessage sse_decode_decrypted_message(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_msgType = sse_decode_String(deserializer);
+    var var_paymentId = sse_decode_opt_String(deserializer);
+    var var_merchantDid = sse_decode_opt_String(deserializer);
+    var var_amount = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_description = sse_decode_opt_String(deserializer);
+    var var_listCid = sse_decode_opt_String(deserializer);
+    var var_action = sse_decode_opt_String(deserializer);
+    var var_targetDid = sse_decode_opt_String(deserializer);
+    var var_rawBody = sse_decode_String(deserializer);
+    var var_listType = sse_decode_opt_String(deserializer);
+    var var_label = sse_decode_opt_String(deserializer);
+    return DecryptedMessage(
+      msgType: var_msgType,
+      paymentId: var_paymentId,
+      merchantDid: var_merchantDid,
+      amount: var_amount,
+      description: var_description,
+      listCid: var_listCid,
+      action: var_action,
+      targetDid: var_targetDid,
+      rawBody: var_rawBody,
+      listType: var_listType,
+      label: var_label,
+    );
+  }
+
+  @protected
+  DidInfo sse_decode_did_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_did = sse_decode_String(deserializer);
+    var var_didDocJson = sse_decode_String(deserializer);
+    return DidInfo(did: var_did, didDocJson: var_didDocJson);
+  }
+
+  @protected
+  DidcommMessage sse_decode_didcomm_message(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_msgId = sse_decode_String(deserializer);
+    var var_jweEnvelope = sse_decode_String(deserializer);
+    var var_createdAt = sse_decode_i_64(deserializer);
+    return DidcommMessage(
+      msgId: var_msgId,
+      jweEnvelope: var_jweEnvelope,
+      createdAt: var_createdAt,
+    );
+  }
+
+  @protected
+  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getPlatformInt64();
+  }
+
+  @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <String>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_String(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<DidcommMessage> sse_decode_list_didcomm_message(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <DidcommMessage>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_didcomm_message(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
     return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  SessionKeyInfo? sse_decode_opt_box_autoadd_session_key_info(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_session_key_info(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_u_64(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  SessionKeyInfo sse_decode_session_key_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_ephemeralPubkey = sse_decode_String(deserializer);
+    var var_ephemeralSecretKey = sse_decode_String(deserializer);
+    var var_expiresAt = sse_decode_i_64(deserializer);
+    var var_spendingLimit = sse_decode_u_64(deserializer);
+    var var_scopes = sse_decode_list_String(deserializer);
+    var var_txSignature = sse_decode_opt_String(deserializer);
+    var var_sessionPda = sse_decode_opt_String(deserializer);
+    return SessionKeyInfo(
+      ephemeralPubkey: var_ephemeralPubkey,
+      ephemeralSecretKey: var_ephemeralSecretKey,
+      expiresAt: var_expiresAt,
+      spendingLimit: var_spendingLimit,
+      scopes: var_scopes,
+      txSignature: var_txSignature,
+      sessionPda: var_sessionPda,
+    );
+  }
+
+  @protected
+  int sse_decode_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint32();
   }
 
   @protected
@@ -214,15 +1072,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  int sse_decode_i_32(SseDeserializer deserializer) {
+  void sse_decode_unit(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getInt32();
   }
 
   @protected
-  bool sse_decode_bool(SseDeserializer deserializer) {
+  int sse_decode_i_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getUint8() != 0;
+    return deserializer.buffer.getInt32();
   }
 
   @protected
@@ -249,6 +1106,91 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_bool(bool self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_session_key_info(
+    SessionKeyInfo self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_session_key_info(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self, serializer);
+  }
+
+  @protected
+  void sse_encode_decrypted_message(
+    DecryptedMessage self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.msgType, serializer);
+    sse_encode_opt_String(self.paymentId, serializer);
+    sse_encode_opt_String(self.merchantDid, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.amount, serializer);
+    sse_encode_opt_String(self.description, serializer);
+    sse_encode_opt_String(self.listCid, serializer);
+    sse_encode_opt_String(self.action, serializer);
+    sse_encode_opt_String(self.targetDid, serializer);
+    sse_encode_String(self.rawBody, serializer);
+    sse_encode_opt_String(self.listType, serializer);
+    sse_encode_opt_String(self.label, serializer);
+  }
+
+  @protected
+  void sse_encode_did_info(DidInfo self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.did, serializer);
+    sse_encode_String(self.didDocJson, serializer);
+  }
+
+  @protected
+  void sse_encode_didcomm_message(
+    DidcommMessage self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.msgId, serializer);
+    sse_encode_String(self.jweEnvelope, serializer);
+    sse_encode_i_64(self.createdAt, serializer);
+  }
+
+  @protected
+  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putPlatformInt64(self);
+  }
+
+  @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_String(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_didcomm_message(
+    List<DidcommMessage> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_didcomm_message(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
     SseSerializer serializer,
@@ -256,6 +1198,60 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     serializer.buffer.putUint8List(self);
+  }
+
+  @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_session_key_info(
+    SessionKeyInfo? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_session_key_info(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_u_64(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_session_key_info(
+    SessionKeyInfo self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.ephemeralPubkey, serializer);
+    sse_encode_String(self.ephemeralSecretKey, serializer);
+    sse_encode_i_64(self.expiresAt, serializer);
+    sse_encode_u_64(self.spendingLimit, serializer);
+    sse_encode_list_String(self.scopes, serializer);
+    sse_encode_opt_String(self.txSignature, serializer);
+    sse_encode_opt_String(self.sessionPda, serializer);
+  }
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint32(self);
   }
 
   @protected
@@ -271,14 +1267,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_i_32(int self, SseSerializer serializer) {
+  void sse_encode_unit(void self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putInt32(self);
   }
 
   @protected
-  void sse_encode_bool(bool self, SseSerializer serializer) {
+  void sse_encode_i_32(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putUint8(self ? 1 : 0);
+    serializer.buffer.putInt32(self);
   }
 }

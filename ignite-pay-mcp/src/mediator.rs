@@ -293,7 +293,88 @@ async fn connect_and_run(
     send_msg(&mut ws, serde_json::to_string(&intro)?).await?;
     tracing::info!("Sent peer-introduction (DID doc)");
 
-    tracing::info!("Mediator handshake complete, entering bidirectional loop...");
+    tracing::info!("Mediator handshake complete, checking for queued messages...");
+
+    // --- Phase A2: Message Pickup 3.0 — pull offline messages ---
+
+    // Send status-request to learn how many messages are queued
+    let sr = didcomm::build_status_request(our_did);
+    send_msg(&mut ws, serde_json::to_string(&sr)?).await?;
+    tracing::info!("Sent status-request");
+
+    // Read status response
+    let status_text = read_msg_with_timeout(&mut ws, Duration::from_secs(5)).await;
+    match status_text {
+        Ok(text) => {
+            let sv: Value = serde_json::from_str(&text).unwrap_or_default();
+            if sv.get("type")
+                .and_then(|v| v.as_str())
+                .map(|t| t.contains("status"))
+                .unwrap_or(false)
+            {
+                let count = sv
+                    .get("body")
+                    .and_then(|b| b.get("message_count"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                tracing::info!("Mediator reports {} queued message(s)", count);
+
+                if count > 0 {
+                    // Request batch delivery of all queued messages
+                    let bp = didcomm::build_batch_pickup(our_did, count as usize);
+                    send_msg(&mut ws, serde_json::to_string(&bp)?).await?;
+                    tracing::info!("Sent batch-pickup (count: {})", count);
+
+                    // Read the batch response
+                    let batch_text = read_msg_with_timeout(&mut ws, Duration::from_secs(10)).await;
+                    match batch_text {
+                        Ok(batch_str) => {
+                            let bv: Value = serde_json::from_str(&batch_str).unwrap_or_default();
+                            if bv.get("type")
+                                .and_then(|v| v.as_str())
+                                .map(|t| t.contains("batch"))
+                                .unwrap_or(false)
+                            {
+                                if let Some(messages) = bv
+                                    .get("body")
+                                    .and_then(|b| b.get("messages"))
+                                    .and_then(|v| v.as_array())
+                                {
+                                    tracing::info!(
+                                        "Received batch of {} queued message(s), processing...",
+                                        messages.len()
+                                    );
+                                    for entry in messages {
+                                        if let Some(jwe) = entry.get("message").and_then(|m| m.as_str()) {
+                                            handle_incoming_message(jwe, agent, pending).await;
+                                        }
+                                    }
+                                }
+                            } else {
+                                tracing::warn!(
+                                    "Expected batch response, got: {}",
+                                    batch_str.chars().take(120).collect::<String>()
+                                );
+                            }
+                        }
+                        Err(_) => {
+                            tracing::warn!("Timeout waiting for batch response, proceeding to main loop");
+                        }
+                    }
+                }
+            } else {
+                tracing::debug!(
+                    "Non-status response during pickup phase: {}",
+                    text.chars().take(120).collect::<String>()
+                );
+            }
+        }
+        Err(_) => {
+            tracing::warn!("Timeout waiting for status response, proceeding to main loop");
+        }
+    }
+
+    tracing::info!("Entering bidirectional loop...");
 
     // --- Phase B: Bidirectional loop using tokio::select! ---
     loop {
@@ -521,4 +602,13 @@ async fn read_msg(ws: &mut WsStream) -> Result<String> {
         }
     }
     Err(anyhow::anyhow!("Connection closed"))
+}
+
+/// Read a single text message with a timeout.
+/// Returns `Err` on timeout or connection error.
+async fn read_msg_with_timeout(ws: &mut WsStream, timeout: Duration) -> Result<String> {
+    match tokio::time::timeout(timeout, read_msg(ws)).await {
+        Ok(result) => result,
+        Err(_) => Err(anyhow::anyhow!("Timeout reading message")),
+    }
 }

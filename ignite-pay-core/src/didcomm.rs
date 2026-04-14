@@ -37,6 +37,28 @@ pub fn build_peer_introduction(from_did: &str, did_doc: &Value) -> Message {
     .from(from_did.to_string())
 }
 
+/// Build a Message Pickup 3.0 `status-request` message.
+/// Asks the mediator how many messages are queued for this DID.
+pub fn build_status_request(from_did: &str) -> Message {
+    Message::new(
+        "https://didcomm.org/messagepickup/3.0/status-request",
+        json!({}),
+    )
+    .from(from_did.to_string())
+}
+
+/// Build a Message Pickup 3.0 `batch-pickup` message.
+/// Requests up to `count` queued messages from the mediator.
+pub fn build_batch_pickup(from_did: &str, count: usize) -> Message {
+    Message::new(
+        "https://didcomm.org/messagepickup/3.0/batch-pickup",
+        json!({
+            "count": count,
+        }),
+    )
+    .from(from_did.to_string())
+}
+
 /// Build a payment authorization request message.
 /// Sent from the MCP server to the phone app via the mediator.
 pub fn build_authorization_request(
