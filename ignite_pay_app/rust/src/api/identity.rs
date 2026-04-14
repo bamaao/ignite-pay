@@ -1,8 +1,8 @@
-use anyhow::Result;
-use ignite_pay_core::{generate_ignite_did, build_did_document};
-use ignite_pay_core::identity::{load_did, save_identity};
-use ignite_pay_core::didcomm;
 use affinidi_messaging_didcomm::identity::PrivateIdentity;
+use anyhow::Result;
+use ignite_pay_core::didcomm;
+use ignite_pay_core::identity::{load_did, save_identity};
+use ignite_pay_core::{build_did_document, generate_ignite_did};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -33,9 +33,7 @@ impl IdentityManager {
         };
 
         let did_doc = build_did_document(&did, &identity);
-        let (agent, _) = didcomm::create_agent(
-            PrivateIdentity::generate(&did),
-        );
+        let (agent, _) = didcomm::create_agent(PrivateIdentity::generate(&did));
 
         Ok(Self {
             did,

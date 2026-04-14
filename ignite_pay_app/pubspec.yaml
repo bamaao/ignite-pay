@@ -40,6 +40,22 @@ dependencies:
   google_fonts: ^6.2.1
   lucide_icons: ^0.257.0
 
+  # Firebase
+  firebase_core: ^3.0.0
+  firebase_messaging: ^15.0.0
+
+  # Local notifications (for background FCM)
+  flutter_local_notifications: ^18.0.0
+
+  # HTTP client
+  dio: ^5.4.0
+
+  # State management
+  provider: ^6.1.0
+
+  # Local storage
+  shared_preferences: ^2.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

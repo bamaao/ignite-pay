@@ -1149,9 +1149,10 @@ impl HtlcManager {
  │                                        │  2a. 服务商提交更优状态       │
  │                                        │  (如果服务商有更高 seq 的签名) │
  │                                        │  SubmitCounterState           │
- │                                        │  (Root, seq=55, sig_user)     │
+ │                                        │  (Root, seq=55, sig_a, sig_b) │
  │                                        │ ────────────────────────────>│
  │                                        │                     seq 55 > 50 ✓
+ │                                        │                     验证双签 ✓
  │                                        │                     更新 root & sequence
  │                                        │                              │
  │  或者                                   │                              │
@@ -1189,7 +1190,7 @@ impl HtlcManager {
  │                                        │                              │
  │  3. 用户可以提交更优状态（如果有）       │                              │
  │  SubmitCounterState                     │                              │
- │  (Root, seq=50, sig_provider)           │                              │
+ │  (Root, seq=50, sig_a, sig_b)           │                              │
  │ ──────────────────────────────────────────────────────────────────────>│
  │                                        │                     更新 root & sequence
  │                                        │                              │
@@ -1344,7 +1345,7 @@ pub enum ChannelStatus {
 | `OpenChannel` | 用户 | 用户单方质押 SPL Token 到 Vault，记录 `deposit_a`，初始化 `current_root = Root_init`（全部资金归用户的单叶子树），设置 `sequence = 0`，记录 `open_slot`。仅需用户签名，无需服务商预先签名 |
 | `CooperativeSettle` | 双方 | 双方提交最新 `(root, sequence, sig_a, sig_b)`，合约验证双方签名且 `sequence > on_chain.sequence` 后，将通道状态设为 `Settling`，设置 `settle_deadline = current_slot + CLAIM_WINDOW`。注意：此指令**不直接分配资金**，仅开启结算窗口 |
 | `TriggerChallenge` | 单方 | 提交 `(root, sequence, sig)` (己方签名)。前置条件：`current_slot >= open_slot + min_challenge_delay`。合约验证签名有效且 `sequence > on_chain.sequence`，将状态设为 `Challenged`，记录 `challenge_slot` |
-| `SubmitCounterState` | 对手方 | 挑战期内提交更新的 `(root, sequence, sig_counterparty)` 且 `sequence > on_chain.sequence`，合约更新 Root 和 Sequence |
+| `SubmitCounterState` | 对手方 | 挑战期内提交更新的 `(root, sequence, sig_a, sig_b)` 双签状态且 `sequence > on_chain.sequence`，合约验证双方签名后更新 Root 和 Sequence。双签要求确保只有双方共同同意的状态才能作为反证提交，防止任何一方单方面伪造状态 |
 | `SettleAfterTimeout` | 任何人 | 挑战期到期 (`current_slot > challenge_slot + challenge_duration`) 后触发，通道进入 `Settling` 状态，设置 `settle_deadline = current_slot + CLAIM_WINDOW` |
 | `Claim` | 叶子 owner 或其委托方 | **结算窗口内可用**：提交 `(leaf_index, leaf_data, merkle_proof)`，合约验证：(1) 通道状态为 `Settling`，(2) `current_slot <= settle_deadline`，(3) proof 在 `current_root` 中有效，(4) `leaf_data` 序列化哈希与 proof 中的 leaf_hash 一致，(5) `leaf_data.amount > 0` 且 `leaf_data.owner != Pubkey::default()`。验证通过后将 `leaf_data.amount` 从 Vault 转给 `leaf_data.owner` 的关联 Token Account，累加 `total_claimed`。注意：任何人都可以提交 Claim 交易（代付 gas），但资金只能转给叶子中记录的 `owner` |
 | `VerifyHTLC` | beneficiary 方 | **Challenged 或 Settling 状态**：受益方提交 `(leaf_index, merkle_proof, 原像 R)`，合约验证：(1) proof 在当前 Root 中有效，(2) 该叶子为 HTLC 类型，(3) SHA-256(R) == hash_lock，(4) current_slot <= timelock_slot，(5) 提交方 == beneficiary。验证通过后将该叶子金额加入 `total_claimed`，资金转给 `beneficiary`，叶子标记为已认领（通过链下 bitmap 追踪或独立 Claim 记录） |
@@ -1402,7 +1403,8 @@ fn verify_state_signature(
 
 **合约验证逻辑**：
 - `CooperativeSettle`：需要 `sig_a` + `sig_b` 双签
-- `TriggerChallenge` / `SubmitCounterState`：只需提交方单签
+- `TriggerChallenge`：只需提交方单签
+- `SubmitCounterState`：需要 `sig_a` + `sig_b` 双签（确保提交的状态是双方同意的最新状态，防止一方提交伪造或过期的单签状态）
 - 所有提交必须满足 `sequence > on_chain.sequence`（防回滚攻击）
 
 #### 服务商回签协议 (Provider Co-signing)
@@ -2082,3 +2084,233 @@ Hub_A                                Hub_B
 方案 3: 关闭旧通道，开新通道
   (最简单但成本最高)
 ```
+
+---
+
+## 11. FLOW-1/2/3/7 实现规范
+
+### 11.1 FLOW-3: 双向注资通道 (Dual-funded Channels)
+
+#### 11.1.1 fund_channel 方法
+
+```rust
+pub fn fund_channel(
+    &self,
+    state: &mut ChannelState,
+    provider_keypair: &Keypair,
+    deposit_b: u64,
+    provider_leaf_index: Option<usize>,  // None = 自动选择第一个空槽
+) -> Result<()>
+```
+
+**验证规则**:
+- 通道状态必须为 `Open`
+- `deposit_b` 当前为 0（尚未注资）
+- 签名者必须是通道的 provider
+- `deposit_b` 必须大于 0
+- 必须有可用的空叶子槽
+
+**执行流程**:
+1. 在 Merkle 树中选择一个空槽（自动或指定）
+2. 创建 provider 拥有的 Standard 叶子
+3. 通过 `sign_leaf_update` 签名更新
+4. 应用叶子更新到树中
+5. 更新 `deposit_b`、`total_deposited`（saturating_add）
+6. 持久化状态到 sled
+
+#### 11.1.2 construct_split_tree 扩展
+
+原实现要求所有非空叶子的 owner 必须是 user。FLOW-3 扩展为：
+- 允许叶子 owner 为 user 或 provider
+- 新增按方金额验证：`user_total == deposit_a`，`provider_total == deposit_b`
+- 总金额守恒仍然成立：`user_total + provider_total == total_deposited`
+
+#### 11.1.3 链上 FundChannel 指令
+
+SPL Token 流程：
+1. Provider 调用 `fund_channel` 指令
+2. 验证 signer == channel.provider_pubkey
+3. 通过 SPL Token CPI 将 deposit_b 从 source_vault 转入 vault_b
+4. 更新 ChannelAccount 的 deposit_b 和 total_deposited
+
+### 11.2 FLOW-7: 合规模块 (Compliance)
+
+#### 11.2.1 数据结构
+
+```rust
+SpendingLimit {
+    threshold: u64,      // 累计消费阈值
+    per_channel: u64,    // 单通道限额
+    window_slots: u64,   // 滚动窗口
+}
+
+TravelRuleData {
+    originator_id: Vec<u8>,
+    beneficiary_id: Vec<u8>,
+    amount: u64,
+    created_slot: u64,
+    channel_id: [u8; 32],
+    originator_jurisdiction: Vec<u8>,
+    beneficiary_jurisdiction: Vec<u8>,
+}
+
+ComplianceAction {
+    None | InsertMarker { compliance_hash, threshold }
+}
+```
+
+#### 11.2.2 ComplianceManager API
+
+| 方法 | 说明 |
+|------|------|
+| `new(db)` | 创建合规管理器 |
+| `init_channel_compliance(channel_id, limits)` | 初始化通道合规状态 |
+| `load_state(channel_id)` | 加载通道合规状态 |
+| `record_payment(channel_id, amount, slot, user, provider)` | 记录支付并检查阈值 |
+| `clear_hold(channel_id)` | 清除合规冻结 |
+| `record_audit(LeafUpdate)` | 记录审计日志 |
+| `get_audit_trail(channel_id)` | 获取审计轨迹 |
+| `create_compliance_leaf(hash)` | 创建合规标记叶子 |
+
+**Sled 键格式**:
+- `compliance:{hex(channel_id)}` → ChannelComplianceState
+- `audit:{hex(channel_id)}:{sequence}` → LeafUpdate
+
+#### 11.2.3 消费限额逻辑
+
+当 `cumulative_spent >= threshold` 时：
+1. 设置 `compliance_hold = true`
+2. 返回 `ComplianceAction::InsertMarker`
+3. 通道暂停，直到 `clear_hold` 被调用
+
+### 11.3 FLOW-2: 多跳路由 (Multi-hop Routing)
+
+#### 11.3.1 常量
+
+```rust
+pub const HOP_MARGIN: u64 = 1000;     // ~6.7 分钟每跳
+pub const MIN_TIMELOCK_BASE: u64 = 500 + 3 * HOP_MARGIN;  // 基础时间锁
+```
+
+#### 11.3.2 HubManager API
+
+| 方法 | 说明 |
+|------|------|
+| `new(db)` | 创建 Hub 管理器 |
+| `register_hub(HubLeaf)` | 注册 Hub |
+| `get_hub(did_hash)` | 查询 Hub |
+| `get_metrics(did_hash)` | 获取指标 |
+| `update_metrics(did_hash, HubMetrics)` | 更新指标 |
+| `list_hubs()` | 列出所有 Hub |
+| `compute_metrics_hash(metrics)` | 计算指标哈希 |
+
+**Sled 键格式**:
+- `hub:{hex(did_hash)}` → HubLeaf
+- `hub_metrics:{hex(did_hash)}` → HubMetrics
+
+#### 11.3.3 RouteService API
+
+| 方法 | 说明 |
+|------|------|
+| `new(hub_manager)` | 创建路由服务 |
+| `refresh_graph()` | 从 Hub 注册表刷新通道图 |
+| `discover_routes(req)` | 发现所有路由 |
+| `score_route(metrics, amount)` | 评分路由 |
+| `select_best_route(routes)` | 选择最佳路由 |
+
+**评分公式**: `0.3 * fee_score + 0.3 * latency_score + 0.4 * reliability_score`
+
+#### 11.3.4 MultiHopManager API
+
+| 方法 | 说明 |
+|------|------|
+| `new(db)` | 创建多跳管理器 |
+| `create_payment(hash_lock, preimage, hops_metadata, current_slot)` | 创建支付 |
+| `create_htlc_leaf_update(hop, sequence, prev_leaf, signer)` | 创建 HTLC 叶子更新 |
+| `reveal_preimage(payment_id, preimage)` | 揭示原像 |
+| `resolve_hop(payment_id, hop_index)` | 解析单跳 |
+| `check_expiry(payment_id, current_slot)` | 检查过期 |
+| `load_payment / persist_payment` | 持久化 |
+
+**时间锁公式**:
+```
+hop[i].timelock = base_timelock - i * HOP_MARGIN
+base_timelock = current_slot + MIN_TIMELOCK_BASE + (num_hops - 1) * HOP_MARGIN
+```
+
+**Sled 键格式**:
+- `multihop:{hex(payment_id)}` → MultiHopPayment
+
+### 11.4 FLOW-1: 链上 Solana 程序
+
+#### 11.4.1 程序结构
+
+```
+ignite-pay-program/
+├── Cargo.toml          (anchor-lang 0.30, anchor-spl 0.30)
+├── Anchor.toml
+└── src/
+    ├── lib.rs           (10 个指令入口)
+    ├── state.rs         (ChannelAccount, ChannelStatus)
+    ├── error.rs         (ChannelError 枚举)
+    ├── instructions/
+    │   ├── open_channel.rs
+    │   ├── fund_channel.rs
+    │   ├── cooperative_settle.rs
+    │   ├── trigger_challenge.rs
+    │   ├── submit_counter_state.rs
+    │   ├── settle_after_timeout.rs
+    │   ├── claim.rs
+    │   ├── verify_htlc.rs
+    │   ├── htlc_refund.rs
+    │   └── finalize_settlement.rs
+    └── utils/
+        └── merkle.rs    (verify_merkle_proof sorted-pair)
+```
+
+#### 11.4.2 ChannelAccount 布局
+
+| 字段 | 类型 | 大小 |
+|------|------|------|
+| discriminator | [u8; 8] | 8 |
+| channel_id | [u8; 32] | 32 |
+| user_pubkey | Pubkey | 32 |
+| provider_pubkey | Pubkey | 32 |
+| token_mint | Pubkey | 32 |
+| status | ChannelStatus (enum) | 1 + padding |
+| sequence | u64 | 8 |
+| current_root | [u8; 32] | 32 |
+| total_deposited | u64 | 8 |
+| open_slot | u64 | 8 |
+| challenge_slot | Option\<u64\> | 1 + 8 |
+| vault_a | Pubkey | 32 |
+| vault_b | Pubkey | 32 |
+| deposit_a | u64 | 8 |
+| deposit_b | u64 | 8 |
+| challenge_duration | u64 | 8 |
+| min_challenge_delay | u64 | 8 |
+| total_claimed | u64 | 8 |
+| settle_deadline | Option\<u64\> | 1 + 8 |
+| tree_depth | u32 | 4 |
+
+#### 11.4.3 指令签名
+
+| # | 指令 | 参数 | 账户 |
+|---|------|------|------|
+| 1 | open_channel | channel_id, deposit_a, tree_depth, open_slot, challenge_duration, min_challenge_delay, initial_root | channel (init), user_pubkey, provider_pubkey, token_mint, vault_a, vault_b, payer |
+| 2 | fund_channel | deposit_b | channel (mut), signer (provider), source_vault, vault_b |
+| 3 | cooperative_settle | sequence, root, settle_window, sig_a, sig_b | channel (mut), clock |
+| 4 | trigger_challenge | challenger_signature | channel (mut), challenger, clock |
+| 5 | submit_counter_state | sequence, root, sig_a, sig_b | channel (mut) |
+| 6 | settle_after_timeout | settle_window | channel (mut), clock |
+| 7 | claim | leaf_index, claim_amount, leaf_owner, leaf_hash, proof, claimer_signature | channel (mut), claimer, clock |
+| 8 | verify_htlc | leaf_index, preimage, hash_lock, leaf_amount, beneficiary, leaf_hash, proof, claimer_signature | channel (mut), claimer, clock |
+| 9 | htlc_refund | leaf_index, timelock_slot, leaf_amount, leaf_owner, leaf_hash, proof, claimer_signature | channel (mut), claimer, clock |
+| 10 | finalize_settlement | caller_signature | channel (mut), caller, vault_a, vault_b, escrow_vault, clock |
+
+#### 11.4.4 CPI 细节
+
+- **FundChannel**: SPL Token `transfer` CPI 从 provider source → vault_b
+- **FinalizeSettlement**: SPL Token `transfer` CPI 从 escrow → vault_a / vault_b（按比例）
+- **Ed25519 签名验证**: 通过 Solana ed25519_program 指令内省，在主指令之前执行
+- **Merkle 证明**: 使用 `hashv(&[min, max])` sorted-pair 模式验证

@@ -8,6 +8,7 @@ import 'package:ignite_pay_app/challenge_screen.dart';
 import 'package:ignite_pay_app/policy_screen.dart';
 import 'package:ignite_pay_app/vault_screen.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:provider/provider.dart';
 
 // ---------------------------------------------------------------------------
 // Theme Constants
@@ -21,6 +22,7 @@ const _kTextPrimary = Color(0xFFE8E8F0);
 const _kTextSecondary = Color(0xFF8A8AA0);
 const _kSuccess = Color(0xFF00E676);
 const _kPending = Color(0xFFFFB300);
+const _kAmber = Color(0xFFFFB300);
 const _kIntercepted = Color(0xFFFF5252);
 const _kGlassBorder = Color(0x1AFFFFFF);
 
@@ -35,7 +37,12 @@ Future<void> main() async {
   final didService = DidcommService();
   await didService.initialize();
 
-  runApp(const SentinelApp());
+  runApp(
+    ChangeNotifierProvider.value(
+      value: didService,
+      child: const SentinelApp(),
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -334,6 +341,8 @@ class _DIDCardState extends State<DIDCard> {
 
   @override
   Widget build(BuildContext context) {
+    final didService = DidcommService();
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -393,24 +402,34 @@ class _DIDCardState extends State<DIDCard> {
           const SizedBox(height: 16),
           Row(
             children: [
-              const _PulsatingDot(),
+              _ConnectionDot(connected: didService.isConnected),
               const SizedBox(width: 8),
               Text(
-                'Connection Live',
+                didService.isConnected ? 'Connection Live' : 'Disconnected',
                 style: GoogleFonts.inter(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
-                  color: _kSuccess.withValues(alpha: 0.9),
+                  color: (didService.isConnected ? _kSuccess : _kIntercepted).withValues(alpha: 0.9),
                 ),
               ),
               const Spacer(),
-              Text(
-                'Mediator: relay ignite',
-                style: GoogleFonts.inter(
-                  fontSize: 11,
-                  color: _kTextSecondary,
+              if (didService.pendingMessageCount > 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: _kPending.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: _kPending.withValues(alpha: 0.3)),
+                  ),
+                  child: Text(
+                    '${didService.pendingMessageCount} msg${didService.pendingMessageCount != 1 ? 's' : ''}',
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: _kPending,
+                    ),
+                  ),
                 ),
-              ),
             ],
           ),
         ],
@@ -420,16 +439,17 @@ class _DIDCardState extends State<DIDCard> {
 }
 
 // ---------------------------------------------------------------------------
-// Pulsating Dot
+// Connection Status Dot (pulsating when connected, static when not)
 // ---------------------------------------------------------------------------
-class _PulsatingDot extends StatefulWidget {
-  const _PulsatingDot();
+class _ConnectionDot extends StatefulWidget {
+  final bool connected;
+  const _ConnectionDot({required this.connected});
 
   @override
-  State<_PulsatingDot> createState() => _PulsatingDotState();
+  State<_ConnectionDot> createState() => _ConnectionDotState();
 }
 
-class _PulsatingDotState extends State<_PulsatingDot>
+class _ConnectionDotState extends State<_ConnectionDot>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
 
@@ -450,6 +470,19 @@ class _PulsatingDotState extends State<_PulsatingDot>
 
   @override
   Widget build(BuildContext context) {
+    final color = widget.connected ? _kSuccess : _kIntercepted;
+
+    if (!widget.connected) {
+      return Container(
+        width: 9,
+        height: 9,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: color,
+        ),
+      );
+    }
+
     return AnimatedBuilder(
       animation: _ctrl,
       builder: (context, child) {
@@ -458,10 +491,10 @@ class _PulsatingDotState extends State<_PulsatingDot>
           height: 9,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: _kSuccess,
+            color: color,
             boxShadow: [
               BoxShadow(
-                color: _kSuccess.withValues(alpha: 0.4 + 0.4 * _ctrl.value),
+                color: color.withValues(alpha: 0.4 + 0.4 * _ctrl.value),
                 blurRadius: 6 + 4 * _ctrl.value,
                 spreadRadius: 1,
               ),
@@ -906,11 +939,26 @@ class _GlassIconButton extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // Auth Action (launches X402 Challenge)
 // ---------------------------------------------------------------------------
-class _AuthAction extends StatelessWidget {
+class _AuthAction extends StatefulWidget {
   const _AuthAction();
 
-  Future<void> _openChallenge(BuildContext context) async {
-    final result = await showX402Challenge<String>(context);
+  @override
+  State<_AuthAction> createState() => _AuthActionState();
+}
+
+class _AuthActionState extends State<_AuthAction> {
+  Stream<AuthRequest>? _authStream;
+
+  @override
+  void initState() {
+    super.initState();
+    // Listen for auth requests from DidcommService
+    final didService = DidcommService();
+    _authStream = didService.authRequests;
+  }
+
+  Future<void> _openChallenge(BuildContext context, {AuthRequest? request}) async {
+    final result = await showX402Challenge<String>(context, request: request);
     if (result != null && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -930,40 +978,88 @@ class _AuthAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => _openChallenge(context),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [_kNeonCyan, _kNeonCyanDim],
-          ),
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: _kNeonCyan.withValues(alpha: 0.25),
-              blurRadius: 16,
-              spreadRadius: 2,
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+    return StreamBuilder<AuthRequest>(
+      stream: _authStream,
+      builder: (context, snapshot) {
+        // If we have a pending auth request, show a notification banner
+        final hasPending = snapshot.hasData || DidcommService().pendingAuth != null;
+
+        return Column(
           children: [
-            const Icon(LucideIcons.zap, size: 18, color: _kBackground),
-            const SizedBox(width: 8),
-            Text(
-              'Authorize Payment',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: _kBackground,
+            if (hasPending)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: GestureDetector(
+                  onTap: () {
+                    final request = DidcommService().pendingAuth ?? snapshot.data;
+                    _openChallenge(context, request: request);
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: _kAmber.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: _kAmber.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(LucideIcons.bell, size: 18, color: _kAmber),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Payment authorization requested',
+                            style: GoogleFonts.inter(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: _kAmber,
+                            ),
+                          ),
+                        ),
+                        const Icon(LucideIcons.chevronRight, size: 16, color: _kAmber),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            GestureDetector(
+              onTap: () => _openChallenge(context),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [_kNeonCyan, _kNeonCyanDim],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _kNeonCyan.withValues(alpha: 0.25),
+                      blurRadius: 16,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(LucideIcons.zap, size: 18, color: _kBackground),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Authorize Payment',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: _kBackground,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 }

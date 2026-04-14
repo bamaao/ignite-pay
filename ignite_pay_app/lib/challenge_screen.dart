@@ -66,12 +66,17 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   late final AnimationController _glowCtrl;
   String _authResult = '';
   bool _isAuthorizing = false;
-  String _listAction = 'none'; // "none", "whitelist", "blacklist"
+  String _listAction = 'none';
+  String _listLabel = '';
+  String _listMaxAmount = '';
 
   String get _merchantDid => widget.request?.merchantDid ?? 'did:solana:shopx merchants';
   int get _amount => widget.request?.amount ?? 500000000;
   String get _paymentId => widget.request?.paymentId ?? '';
   String get _description => widget.request?.description ?? 'Payment for services';
+
+  bool get _showLabelInput => _listAction == 'add_whitelist' || _listAction == 'add_blacklist';
+  bool get _showMaxAmountInput => _listAction == 'add_whitelist';
 
   @override
   void initState() {
@@ -91,23 +96,30 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   Future<void> _onAuthorize() async {
     setState(() {
       _isAuthorizing = true;
-      _authResult = 'Signing...';
+      _authResult = 'Creating session key...';
     });
     try {
-      final grant = await signPayment(
-        merchantDid: _merchantDid,
-        amount: BigInt.from(_amount),
-      );
+      // V2.0: Create a session key for this payment authorization.
+      // Spending limit is set to 10x the payment amount to allow multiple payments.
+      // Duration is 1 hour (3600 seconds).
+      final spendingLimit = _amount * 10;
+      final durationSecs = 3600;
 
-      // Send auth response via DidcommService
-      await DidcommService().sendAuthResponse(AuthResponseData(
+      // Send auth response with session key data via DidcommService
+      await DidcommService().sendAuthResponseWithSessionKey(
         paymentId: _paymentId,
         authorized: true,
         listAction: _listAction,
-      ));
+        spendingLimit: spendingLimit,
+        durationSecs: durationSecs,
+        listLabel: _showLabelInput && _listLabel.isNotEmpty ? _listLabel : null,
+        listMaxAmount: _showMaxAmountInput && _listMaxAmount.isNotEmpty
+            ? int.tryParse(_listMaxAmount)
+            : null,
+      );
 
       setState(() {
-        _authResult = 'Authorized: ${grant.signature.substring(0, 24)}...';
+        _authResult = 'Authorized with session key';
       });
       await Future.delayed(const Duration(milliseconds: 1200));
       if (mounted) Navigator.of(context).pop('authorized');
@@ -171,15 +183,21 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
                   const SizedBox(height: 16),
                   const _ChallengeHeader(),
                   const Spacer(flex: 1),
-                  const _MerchantCard(),
+                  _MerchantCard(merchantDid: _merchantDid),
                   const SizedBox(height: 28),
-                  const _AmountDisplay(),
+                  _AmountDisplay(amount: _amount),
                   const SizedBox(height: 20),
-                  const _ReasonBlock(),
+                  _ReasonBlock(description: _description),
                   const SizedBox(height: 16),
                   _ListActionSelector(
                     selected: _listAction,
                     onChanged: (v) => setState(() => _listAction = v),
+                    label: _listLabel,
+                    onLabelChanged: (v) => setState(() => _listLabel = v),
+                    maxAmount: _listMaxAmount,
+                    onMaxAmountChanged: (v) => setState(() => _listMaxAmount = v),
+                    showLabelInput: _showLabelInput,
+                    showMaxAmountInput: _showMaxAmountInput,
                   ),
                   const Spacer(flex: 2),
                   if (_authResult.isNotEmpty) ...[
@@ -259,7 +277,18 @@ class _ChallengeHeader extends StatelessWidget {
 // Merchant Profile Card
 // ---------------------------------------------------------------------------
 class _MerchantCard extends StatelessWidget {
-  const _MerchantCard();
+  final String? merchantDid;
+  const _MerchantCard({this.merchantDid});
+
+  String get _displayDid {
+    if (merchantDid != null && merchantDid!.isNotEmpty) {
+      if (merchantDid!.length > 24) {
+        return '${merchantDid!.substring(0, 16)}...${merchantDid!.substring(merchantDid!.length - 6)}';
+      }
+      return merchantDid!;
+    }
+    return 'did:solana:7kPx...mN3q';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -299,7 +328,7 @@ class _MerchantCard extends StatelessWidget {
                 Row(
                   children: [
                     Text(
-                      'ShopX Marketplace',
+                      'Merchant',
                       style: GoogleFonts.inter(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -333,18 +362,9 @@ class _MerchantCard extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  'shopx.io',
-                  style: GoogleFonts.inter(
-                    fontSize: 13,
-                    color: _kAmber,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
                 const SizedBox(height: 4),
                 Text(
-                  'did:solana:7kPx...mN3q',
+                  _displayDid,
                   style: GoogleFonts.jetBrainsMono(
                     fontSize: 11,
                     color: _kTextSecondary,
@@ -370,7 +390,17 @@ class _MerchantCard extends StatelessWidget {
 // Amount Display
 // ---------------------------------------------------------------------------
 class _AmountDisplay extends StatelessWidget {
-  const _AmountDisplay();
+  final int amount;
+  const _AmountDisplay({required this.amount});
+
+  /// Convert lamports to SOL.
+  String get _solAmount {
+    final sol = amount / 1000000000.0;
+    if (sol >= 1.0) {
+      return sol.toStringAsFixed(sol.truncateToDouble() == sol ? 0 : 2);
+    }
+    return sol.toStringAsFixed(4).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -392,7 +422,7 @@ class _AmountDisplay extends StatelessWidget {
           textBaseline: TextBaseline.alphabetic,
           children: [
             Text(
-              '0.5',
+              _solAmount,
               style: GoogleFonts.inter(
                 fontSize: 52,
                 fontWeight: FontWeight.w800,
@@ -411,14 +441,6 @@ class _AmountDisplay extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 6),
-        Text(
-          '\u2248 \$78.50 USD',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            color: _kTextSecondary,
-          ),
-        ),
       ],
     );
   }
@@ -428,7 +450,8 @@ class _AmountDisplay extends StatelessWidget {
 // Reason Block
 // ---------------------------------------------------------------------------
 class _ReasonBlock extends StatelessWidget {
-  const _ReasonBlock();
+  final String description;
+  const _ReasonBlock({required this.description});
 
   @override
   Widget build(BuildContext context) {
@@ -468,7 +491,7 @@ class _ReasonBlock extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Premium subscription renewal - 1 month plan. Invoice #INV-2025-0412.',
+                  description.isNotEmpty ? description : 'No description provided',
                   style: GoogleFonts.inter(
                     fontSize: 13,
                     color: _kTextPrimary.withValues(alpha: 0.85),
@@ -793,15 +816,27 @@ class _DeclineButton extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// List Action Selector
+// List Action Selector (V1.1 — extended with 6 actions + label/max_amount inputs)
 // ---------------------------------------------------------------------------
 class _ListActionSelector extends StatelessWidget {
   final String selected;
   final ValueChanged<String> onChanged;
+  final String label;
+  final ValueChanged<String> onLabelChanged;
+  final String maxAmount;
+  final ValueChanged<String> onMaxAmountChanged;
+  final bool showLabelInput;
+  final bool showMaxAmountInput;
 
   const _ListActionSelector({
     required this.selected,
     required this.onChanged,
+    required this.label,
+    required this.onLabelChanged,
+    required this.maxAmount,
+    required this.onMaxAmountChanged,
+    required this.showLabelInput,
+    required this.showMaxAmountInput,
   });
 
   @override
@@ -826,6 +861,7 @@ class _ListActionSelector extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
+          // Row 1: This time only + Add Whitelist + Add Blacklist
           Row(
             children: [
               _ListActionChip(
@@ -834,25 +870,114 @@ class _ListActionSelector extends StatelessWidget {
                 selectedValue: selected,
                 onTap: () => onChanged('none'),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               _ListActionChip(
                 label: 'Whitelist',
-                value: 'whitelist',
+                value: 'add_whitelist',
                 selectedValue: selected,
                 color: _kSuccess,
-                onTap: () => onChanged('whitelist'),
+                onTap: () => onChanged('add_whitelist'),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               _ListActionChip(
                 label: 'Blacklist',
-                value: 'blacklist',
+                value: 'add_blacklist',
                 selectedValue: selected,
                 color: _kDanger,
-                onTap: () => onChanged('blacklist'),
+                onTap: () => onChanged('add_blacklist'),
               ),
             ],
           ),
+          const SizedBox(height: 8),
+          // Row 2: Remove Whitelist + Remove Blacklist
+          Row(
+            children: [
+              _ListActionChip(
+                label: 'Remove WL',
+                value: 'remove_whitelist',
+                selectedValue: selected,
+                color: _kSuccess.withValues(alpha: 0.6),
+                onTap: () => onChanged('remove_whitelist'),
+              ),
+              const SizedBox(width: 6),
+              _ListActionChip(
+                label: 'Remove BL',
+                value: 'remove_blacklist',
+                selectedValue: selected,
+                color: _kDanger.withValues(alpha: 0.6),
+                onTap: () => onChanged('remove_blacklist'),
+              ),
+            ],
+          ),
+          // V1.1: Label input (shown for add_whitelist and add_blacklist)
+          if (showLabelInput) ...[
+            const SizedBox(height: 10),
+            _LabelInputField(
+              value: label,
+              onChanged: onLabelChanged,
+              hint: 'Label (e.g. "ShopX Marketplace")',
+            ),
+          ],
+          // V1.1: Max amount input (shown for add_whitelist only)
+          if (showMaxAmountInput) ...[
+            const SizedBox(height: 8),
+            _LabelInputField(
+              value: maxAmount,
+              onChanged: onMaxAmountChanged,
+              hint: 'Max amount (lamports, optional)',
+              keyboardType: TextInputType.number,
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Text input field for label and max amount
+// ---------------------------------------------------------------------------
+class _LabelInputField extends StatelessWidget {
+  final String value;
+  final ValueChanged<String> onChanged;
+  final String hint;
+  final TextInputType? keyboardType;
+
+  const _LabelInputField({
+    required this.value,
+    required this.onChanged,
+    required this.hint,
+    this.keyboardType,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: _kSurfaceMid.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _kGlassBorder),
+      ),
+      child: TextField(
+        onChanged: onChanged,
+        controller: TextEditingController(text: value)..selection = TextSelection.collapsed(offset: value.length),
+        style: GoogleFonts.inter(
+          fontSize: 12,
+          color: _kTextPrimary,
+        ),
+        decoration: InputDecoration(
+          border: InputBorder.none,
+          hintText: hint,
+          hintStyle: GoogleFonts.inter(
+            fontSize: 12,
+            color: _kTextSecondary.withValues(alpha: 0.5),
+          ),
+          isDense: true,
+          contentPadding: const EdgeInsets.only(top: 10),
+        ),
+        keyboardType: keyboardType,
       ),
     );
   }

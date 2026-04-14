@@ -1,6 +1,9 @@
 # Rust build artifacts
 target/
 
+# Solana local validator ledger
+test-ledger/
+
 # Python
 __pycache__/
 *.pyc

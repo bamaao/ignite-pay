@@ -56,6 +56,11 @@ did:ignite:z<multibase-base58btc>
     "type": "X25519KeyAgreementKey2020",
     "controller": "did:ignite:z6Mk...",
     "publicKeyBase64": "<base64-nopad(x25519_pubkey)>"
+  }],
+  "service": [{
+    "id": "did:ignite:z6Mk...#policy-list",
+    "type": "IgnitePolicyList",
+    "serviceEndpoint": "ipfs://<CID>"
   }]
 }
 ```
@@ -153,10 +158,28 @@ MCP Server 启动时通过 WebSocket 连接到 Mediator，执行三步明文握�
 | `amount` | 金额（最小单位） | `0` |
 | `recipient` | 收款方 | `"unknown"` |
 
+**X402 扩展头解析**（定义见 `ignite-pay-did-spl-account-compression.md` §4.2）：
+
+| 字段 | 用途 | 缺省值 |
+| :--- | :--- | :--- |
+| `x402-merchant-did` | 商家 `did:ignite` 标识符，用于黑白名单匹配 | 必填 |
+| `x402-payment-address` | 商家 Solana 收款地址 | 必填 |
+| `x402-merkle-context` | 链上 Merkle Tree 地址（可选，用于身份验证） | `null` |
+
 **决策流程**：
 
 ```
 收到 402
+  │
+  ├─ 提取 merchant_did (从 x402-merchant-did 扩展头)
+  │
+  ├─ 商家合法性验证 (详见 §4.5 / §4.9)
+  │    ├─ 查找商家 VC (从 402 响应附带或 IPFS CID 引用)
+  │    ├─ 验证 VC 签名 + 有效期 (平台公钥验证)
+  │    ├─ (链上层) 获取 Merkle Proof，本地验证 Proof + Leaf == Root
+  │    │
+  │    ├─ 验证失败 → 直接阻断，返回拒绝
+  │    └─ 验证通过 ↓
   │
   ├─ 黑名单命中 (merchant_did 在黑名单中) ?
   │    YES → 直接阻断，返回拒绝
@@ -179,7 +202,11 @@ MCP Server 启动时通过 WebSocket 连接到 Mediator，执行三步明文握�
   ├─ JWE 加密 (authcrypt) → 通过 Mediator 发送至手机端
   └─ 等待手机响应 (timeout: auth_timeout 秒)
        │
-       ├─ true  → 执行 Mock 支付，状态 → Executed
+       ├─ true  → 手机端已创建链上 Session Key
+       │    ├─ 从响应中提取 session_key_pubkey、chain_tx_signature
+       │    ├─ 保存 SessionKeyInfo 至 sled
+       │    ├─ 使用 Session Key 执行链上支付 (调用 ExecutePayment 合约)
+       │    └─ 状态 → Executed
        ├─ false → 状态 → Rejected
        └─ 超时  → 状态 → Expired
 ```
@@ -213,16 +240,64 @@ MCP Server 发送到手机端的 DIDComm 授权消息：
 | :--- | :--- | :--- | :--- |
 | `payment_id` | string | 是 | 对应的支付请求 UUID |
 | `authorized` | bool | 是 | 是否授权此次支付 |
-| `list_action` | string | 是 | 名单操作：`"add_whitelist"` / `"add_blacklist"` / `"none"` |
+| `session_key_pubkey` | string | 授权时必填 | 链上 Session Key 的 Base58 公钥（仅在 `authorized=true` 时存在） |
+| `session_key_tx_signature` | string | 授权时必填 | 注册 Session Key 的链上交易签名（仅在 `authorized=true` 时存在） |
+| `session_expires_at` | number | 授权时必填 | Session Key 过期时间（Unix 时间戳，仅在 `authorized=true` 时存在） |
+| `spending_limit` | number | 授权时必填 | Session Key 的单次/累计花费上限（lamports，仅在 `authorized=true` 时存在） |
+| `scopes` | string[] | 授权时必填 | Session Key 权限范围（如 `["sol:transfer"]`，仅在 `authorized=true` 时存在） |
+| `list_action` | string | 是 | 名单操作：`"add_whitelist"` / `"add_blacklist"` / `"remove_whitelist"` / `"remove_blacklist"` / `"none"` |
 | `list_label` | string | 否 | 用户自定义备注（如 `"ShopX Marketplace"`），`list_action` 非 `"none"` 时建议填写 |
 | `list_max_amount` | number | 否 | 对该商家的自动批准上限（最小单位），仅 `"add_whitelist"` 时有效 |
 
-### 4.4 Mock 支付执行
+> **Session Key 创建流程**：用户在手机端点击"授权"后，Flutter App 调用 Rust bridge 生成 Ed25519 临时密钥对，然后提交链上交易将 Session Key 注册到 Solana 合约（绑定 owner、spending_limit、scopes、expires_at）。链上交易确认后，将 session_key_pubkey 和 chain_tx_signature 通过 DIDComm 加密响应返回给 MCP/Skill。MCP/Skill 后续使用该 Session Key 代表用户执行链上支付，无需再次请求授权。
 
-当前阶段使用 Mock 支付，交易签名格式为：
+### 4.4 支付执行
+
+MCP/Skill 收到授权响应后，使用手机端创建的 Session Key 执行链上支付：
+
+**链上支付流程**：
 
 ```
-tx_mock_{payment_id}_{uuid_v4}
+MCP/Skill 收到 authorized=true + session_key_pubkey
+  │
+  ├─ 1. 验证 Session Key 链上状态
+  │    ├─ 查询链上 Session Key 注册信息
+  │    ├─ 验证 session_key_pubkey 与链上一致
+  │    ├─ 验证未过期 (current_slot < session_expires_at)
+  │    └─ 验证 spending_limit >= 本次支付金额
+  │
+  ├─ 2. 构建 ExecutePayment 交易
+  │    ├─ 使用 Session Key 签名支付指令
+  │    ├─ 附带商家 Merkle Proof（链上验证商家身份）
+  │    └─ 提交至 Solana 集群
+  │
+  ├─ 3. 合约验证并执行
+  │    ├─ 验证 Session Key 签名有效性
+  │    ├─ 验证 Session Key 未过期
+  │    ├─ 验证 spending_limit 未超限
+  │    ├─ 验证商家 Merkle Proof（SPL Account Compression）
+  │    ├─ 执行 SOL/SPL Token 转账
+  │    └─ 更新 Session Key 已花费金额
+  │
+  └─ 4. 更新 PaymentRequest 状态
+       ├─ 状态 → Executed
+       └─ 保存链上交易签名
+```
+
+**V0.1 阶段（当前）**：使用 Mock 支付，交易签名格式为 `tx_mock_{payment_id}_{uuid_v4}`。Session Key 在本地模拟创建，不涉及链上交易。
+
+**V1.0 阶段**：Session Key 通过 Solana 链上合约注册，MCP/Skill 使用真实的链上 Session Key 执行支付。
+
+**Session Key 生命周期**：
+
+```
+创建 (手机端)         使用 (MCP/Skill)          过期/关闭
+─────────────        ──────────────           ──────────────
+用户授权 →            MCP/Skill 执行支付 →      expires_at 到期 →
+  生成 Ed25519         用 Session Key           Session Key 失效
+  临时密钥对           签名链上交易              资金退回 owner
+  提交链上注册          多次使用直到              或用户主动关闭
+  返回给 MCP/Skill     额度/时间耗尽
 ```
 
 ### 4.5 平台签名与商家准入
@@ -375,11 +450,27 @@ tx_mock_{payment_id}_{uuid_v4}
   │    │    ├─ 异步上传: 合并名单 → JSON → IPFS → 获取新 CID
   │    │    └─ DIDComm V2 通知手机端新 CID
   │    │
+  │    ├─ "remove_whitelist"
+  │    │    ├─ 从 sled 本地缓存中移除匹配的白名单条目
+  │    │    ├─ 异步上传: 合并名单 → JSON → IPFS → 获取新 CID
+  │    │    └─ DIDComm V2 通知手机端新 CID
+  │    │
+  │    ├─ "remove_blacklist"
+  │    │    ├─ 从 sled 本地缓存中移除匹配的黑名单条目
+  │    │    ├─ 异步上传: 合并名单 → JSON → IPFS → 获取新 CID
+  │    │    └─ DIDComm V2 通知手机端新 CID
+  │    │
   │    └─ "none"
   │         └─ 无名单操作，仅处理支付授权结果
   │
   └─ 流程结束
 ```
+
+**一致性与容错保证**：
+
+* **写入顺序**：名单更新采用"先本地后远程"策略（先写 sled 缓存，再异步上传 IPFS）。若异步上传失败，sled 缓存仍保留最新数据，下次启动时从 DID Document 获取最新 CID 重新拉取。
+* **过期清理**：MCP/Skill 在每次查询名单时检查 `expires` 字段，已过期条目视为不存在。名单条目不会物理删除，仅在逻辑层面跳过。下次名单上传时，已过期条目会被过滤。
+* **CID 更新**：IPFS CID 更新采用"上传新 CID → 更新 DID Document service 端点 → 通知手机端"的顺序，确保任何时刻手机端可通过 DID Document 获取有效 CID。
 
 **通知消息**（MCP/Skill → 手机端）：
 
@@ -389,9 +480,65 @@ tx_mock_{payment_id}_{uuid_v4}
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | `list_cid` | string | IPFS 上新名单的 CID |
-| `action` | string | 执行的操作：`"add_whitelist"` / `"add_blacklist"` |
+| `action` | string | 执行的操作：`"add_whitelist"` / `"add_blacklist"` / `"remove_whitelist"` / `"remove_blacklist"` |
 | `target_did` | string | 被操作的商家 DID |
 | `timestamp` | string | 同步时间戳 (ISO 8601) |
+
+### 4.9 统一商家验证模型
+
+本节定义 VC 验证（本文档 §4.5）与 Merkle Proof 验证（`ignite-pay-did-spl-account-compression.md` §3.3）之间的协作关系。两者是 AND（与）关系，必须同时通过。
+
+**验证层次**：
+
+```
+收到 X402 待支付请求
+  │
+  ├─ 1. VC 签名验证 (本节 §4.5)
+  │    ├─ 从 402 响应提取商家 VC（直接嵌入或 IPFS CID 引用）
+  │    ├─ 使用内置平台公钥验证 Ed25519Signature2020 proof
+  │    ├─ 检查 VC expirationDate 未过期
+  │    └─ 失败 → 拒绝支付（商家无平台背书）
+  │
+  ├─ 2. 链上 Merkle Proof 验证 (compression 文档 §3.3 第一层)
+  │    ├─ 从索引器获取商家叶子节点 Merkle Proof
+  │    ├─ 本地计算 Proof + Leaf == Root
+  │    ├─ 检查 MerchantLeaf.status == 0 (active)
+  │    └─ 失败 → 拒绝支付（商家未上链或已吊销）
+  │
+  ├─ 3. 一致性校验
+  │    ├─ VC 中 credentialSubject.id 的 DID 公钥哈希 == 链上 merchant_did_hash
+  │    └─ 不一致 → 拒绝支付（身份不匹配）
+  │
+  └─ 全部通过 → 进入决策流程（§4.2 黑白名单/自动批准/手机授权）
+```
+
+**商家入驻端到端流程**（串联本节 §4.5 与 compression 文档 §3.1）：
+
+```
+商家                    平台                           链上                    商家/MCP/Skill
+────                    ────                           ────                    ──────────────
+生成 did:ignite 密钥对
+生成 Solana 收款密钥对
+提交 DID + 元数据  →
+                        审核通过
+                        ├─ 签发 VC (Ed25519Signature2020)
+                        ├─ 计算 MerchantLeaf:
+                        │    merchant_did_hash = SHA-256(DID_pubkey)
+                        │    active_pubkey = Solana 收款地址
+                        │    platform_vc_hash = SHA-256(canonical_json(VC))
+                        │    status = 0 (active)
+                        │
+                        ├─ 调用 update_leaf 上链  →  叶子节点插入
+                        │                          索引器生成 Proof
+                        │
+                        └─ 返回 VC 给商家  ←───────────────────────
+                                                         商家在 402 响应中附带 VC
+                                                         MCP/Skill 收到 402 后:
+                                                         1. 验证 VC 签名
+                                                         2. 验证 Merkle Proof
+                                                         3. 一致性校验
+                                                         → 通过后进入决策流程
+```
 
 ---
 
@@ -431,10 +578,10 @@ tx_mock_{payment_id}_{uuid_v4}
 | 阶段 | 内容 | 状态 |
 | :--- | :--- | :--- |
 | **V0.1** (当前) | `did:ignite` 本地身份 + DIDComm V2 通信 + Mock 支付 + MCP Server | ✅ 已实现 |
-| **V1.0** | 手机端接收 DIDComm 授权消息、返回授权结果；端到端授权链路打通 | 待开发 |
-| **V1.1** | 平台签名/VC 商家背书 + IPFS 黑白名单 + 手机端名单管理 + sled 本地缓存风控决策 | 待开发 |
-| **V2.0** | 接入 Solana 链上支付、ZK Compression 存储 DID | 待开发 |
+| **V1.0** | 手机端 DIDComm 授权链路 + Session Key 链上注册 + SPL Account Compression 商家上链 + 链上身份验证 | 待开发 |
+| **V1.1** | VC 商家背书 + IPFS 黑白名单 + 手机端名单管理 + sled 本地缓存风控决策 + 链上支付合约 | 待开发 |
+| **V2.0** | Solana 链上支付集成（Session Key 驱动） + 多链 DID 映射 | 待开发 |
 
 ---
 
-> **实现备注**：当前 V0.1 阶段专注于验证 `did:ignite` 身份模型与 DIDComm V2 加密通信的可行性。支付执行为 Mock 实现，手机端授权回调尚未接入。核心身份模块 (`identity.rs`) 与 DIDComm 模块 (`didcomm.rs`) 已在 `ignite-pay-skill` 和 `ignite-pay-mcp` 之间复用，为后续阶段提供稳定基础。
+> **实现备注**：当前 V0.1 阶段专注于验证 `did:ignite` 身份模型与 DIDComm V2 加密通信的可行性。支付执行为 Mock 实现，手机端授权回调尚未接入。Session Key 在 V1.0 阶段引入链上注册：手机端授权时创建链上 Session Key 合约，返回给 MCP/Skill 用于后续链上支付。核心身份模块 (`identity.rs`) 与 DIDComm 模块 (`didcomm.rs`) 已在 `ignite-pay-skill` 和 `ignite-pay-mcp` 之间复用，为后续阶段提供稳定基础。`ignite-pay-solana/src/session.rs` 中的 `SessionManager` 提供 Session Key 的本地管理（创建、查找、过期检查、额度追踪），V1.0 将扩展为链上注册。

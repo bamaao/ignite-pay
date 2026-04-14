@@ -11,9 +11,8 @@ use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::connect_async;
 
-type WsStream = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type WsStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Callback type for incoming auth requests.
 pub type AuthCallback = Box<dyn Fn(AuthRequest) + Send + Sync>;
@@ -68,12 +67,34 @@ impl WsClient {
 
     /// Send an authorization response back through the mediator.
     pub async fn send_auth_response(&self, response: &AuthResponse, mcp_did: &str) -> Result<()> {
-        let msg = didcomm::build_authorization_response(
+        // Build session key data if present
+        let session_key_data = if response.session_key_pubkey.is_some()
+            && response.session_key_secret_key.is_some()
+        {
+            Some(ignite_pay_core::didcomm::SessionKeyResponseData {
+                session_key_pubkey: response.session_key_pubkey.clone().unwrap_or_default(),
+                session_key_secret_key: response.session_key_secret_key.clone().unwrap_or_default(),
+                session_key_tx_signature: response
+                    .session_key_tx_signature
+                    .clone()
+                    .unwrap_or_default(),
+                session_expires_at: response.session_expires_at.unwrap_or(0),
+                spending_limit: response.spending_limit.unwrap_or(0),
+                scopes: response.scopes.clone().unwrap_or_default(),
+            })
+        } else {
+            None
+        };
+
+        let msg = didcomm::build_authorization_response_v1_1(
             &self.our_did,
             mcp_did,
             &response.payment_id,
             response.authorized,
             &response.list_action,
+            session_key_data.as_ref(),
+            response.list_label.as_deref(),
+            response.list_max_amount,
         );
 
         let jwe = {
@@ -84,7 +105,9 @@ impl WsClient {
 
         let outgoing_guard = self.outgoing.lock().await;
         if let Some(sender) = outgoing_guard.as_ref() {
-            sender.send(jwe).map_err(|_| anyhow::anyhow!("WS channel closed"))?;
+            sender
+                .send(jwe)
+                .map_err(|_| anyhow::anyhow!("WS channel closed"))?;
         }
 
         Ok(())
@@ -92,7 +115,8 @@ impl WsClient {
 
     /// Register a peer DID in the agent for encryption.
     pub async fn add_peer(&self, peer_did: &str) {
-        let peer_identity = affinidi_messaging_didcomm::identity::PrivateIdentity::generate(peer_did);
+        let peer_identity =
+            affinidi_messaging_didcomm::identity::PrivateIdentity::generate(peer_did);
         let resolved = ignite_pay_core::identity_to_resolved(&peer_identity);
         let mut agent = self.agent.lock().await;
         agent.add_peer(resolved);
@@ -116,7 +140,12 @@ async fn run_ws_loop(
 
     let grant = read_msg(&mut ws).await?;
     let grant_v: Value = serde_json::from_str(&grant)?;
-    if !grant_v.get("type").and_then(|v| v.as_str()).map(|t| t.contains("mediate-grant")).unwrap_or(false) {
+    if !grant_v
+        .get("type")
+        .and_then(|v| v.as_str())
+        .map(|t| t.contains("mediate-grant"))
+        .unwrap_or(false)
+    {
         tracing::warn!("Expected mediate-grant, got: {}", grant);
     }
 
@@ -125,7 +154,12 @@ async fn run_ws_loop(
 
     let kl_resp = read_msg(&mut ws).await?;
     let kl_v: Value = serde_json::from_str(&kl_resp)?;
-    if !kl_v.get("type").and_then(|v| v.as_str()).map(|t| t.contains("keylist-update")).unwrap_or(false) {
+    if !kl_v
+        .get("type")
+        .and_then(|v| v.as_str())
+        .map(|t| t.contains("keylist-update"))
+        .unwrap_or(false)
+    {
         tracing::warn!("Expected keylist-update-response, got: {}", kl_resp);
     }
 
@@ -186,13 +220,42 @@ async fn handle_message(
                             payment_id: pid.to_string(),
                             merchant_did: merchant.to_string(),
                             amount,
-                            description: msg.body.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            description: msg
+                                .body
+                                .get("description")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
                         };
                         let cb_guard = callback.lock().await;
                         if let Some(cb) = cb_guard.as_ref() {
                             cb(auth_req);
                         }
                     }
+                } else if msg.typ.contains("list-sync-notification") {
+                    // V1.1: Handle list sync notification
+                    let list_cid = msg
+                        .body
+                        .get("new_cid")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let action = msg
+                        .body
+                        .get("action")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let target_did = msg
+                        .body
+                        .get("entry_did")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    tracing::info!(
+                        "List sync notification: cid={}, action={}, target={}",
+                        list_cid,
+                        action,
+                        target_did
+                    );
+                    // TODO: Store/update local list cache from IPFS CID when IpfsClient is available
                 }
                 return;
             }
@@ -208,22 +271,51 @@ async fn handle_message(
         if let Some(body) = v.get("body") {
             if body.get("payment_id").is_some() {
                 let auth_req = AuthRequest {
-                    payment_id: body.get("payment_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    merchant_did: body.get("merchant_did").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    payment_id: body
+                        .get("payment_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    merchant_did: body
+                        .get("merchant_did")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     amount: body.get("amount").and_then(|v| v.as_u64()).unwrap_or(0),
-                    description: body.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    description: body
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                 };
                 let cb_guard = callback.lock().await;
                 if let Some(cb) = cb_guard.as_ref() {
                     cb(auth_req);
                 }
+            } else if v
+                .get("type")
+                .and_then(|v| v.as_str())
+                .map(|t| t.contains("list-sync-notification"))
+                .unwrap_or(false)
+            {
+                // V1.1: Handle plaintext list sync notification
+                let list_cid = body.get("new_cid").and_then(|v| v.as_str()).unwrap_or("");
+                let action = body.get("action").and_then(|v| v.as_str()).unwrap_or("");
+                let target_did = body.get("entry_did").and_then(|v| v.as_str()).unwrap_or("");
+                tracing::info!(
+                    "List sync notification (plaintext): cid={}, action={}, target={}",
+                    list_cid,
+                    action,
+                    target_did
+                );
             }
         }
     }
 }
 
 async fn send_msg(ws: &mut WsStream, msg: String) -> Result<()> {
-    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg.into())).await?;
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg.into()))
+        .await?;
     Ok(())
 }
 
