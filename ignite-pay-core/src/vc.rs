@@ -1,7 +1,16 @@
 use crate::types::{VerifiableCredential, VCProof};
+use crate::ipfs::IpfsClient;
 use anyhow::Result;
 use base64::Engine;
 use ed25519_dalek::{VerifyingKey, Signature};
+
+/// Resolve a Verifiable Credential from an IPFS CID.
+/// Downloads the JSON from IPFS and deserializes it as a VerifiableCredential.
+pub async fn resolve_vc_from_ipfs(ipfs: &dyn IpfsClient, cid: &str) -> Result<VerifiableCredential> {
+    let data = ipfs.download(cid).await?;
+    let vc: VerifiableCredential = serde_json::from_slice(&data)?;
+    Ok(vc)
+}
 
 /// Error type for VC verification failures.
 #[derive(Debug, thiserror::Error)]

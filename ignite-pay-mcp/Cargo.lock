@@ -2385,6 +2385,8 @@ dependencies = [
  "affinidi-messaging-didcomm",
  "anyhow",
  "base64 0.22.1",
+ "borsh 1.6.1",
+ "bs58",
  "chrono",
  "dashmap 6.1.0",
  "futures-util",

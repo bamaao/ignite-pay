@@ -1,6 +1,7 @@
 use crate::ipfs::IpfsClient;
-use crate::types::{MerchantListEntry, MerchantLists, WhitelistResult};
+use crate::types::{MerchantListEntry, MerchantLists, RiskControlDecision, WhitelistResult};
 use anyhow::Result;
+use chrono::Utc;
 use std::sync::Mutex;
 
 const WHITELIST_TREE: &str = "__whitelist__";
@@ -23,26 +24,51 @@ impl ListStore {
         }
     }
 
-    /// Check if a DID is on the blacklist.
+    /// Check if a DID is on the blacklist (with expiry check).
     pub fn is_blacklisted(&self, did: &str) -> Result<bool> {
         let tree = self.db.open_tree(BLACKLIST_TREE)?;
-        Ok(tree.contains_key(did)?)
+        if let Some(bytes) = tree.get(did)? {
+            let entry: MerchantListEntry = serde_json::from_slice(&bytes)?;
+            // Check if entry has expired
+            if let Some(expires) = entry.expires {
+                if expires < Utc::now() {
+                    return Ok(false); // Expired, not blacklisted
+                }
+            }
+            return Ok(true);
+        }
+        Ok(false)
     }
 
-    /// Check whitelist status for a DID and amount.
+    /// Check whitelist status for a DID and amount (with expiry check).
     pub fn check_whitelist(&self, did: &str, amount: u64) -> Result<WhitelistResult> {
         let tree = self.db.open_tree(WHITELIST_TREE)?;
         if let Some(bytes) = tree.get(did)? {
             let entry: MerchantListEntry = serde_json::from_slice(&bytes)?;
+            // Check if entry has expired
+            if let Some(expires) = entry.expires {
+                if expires < Utc::now() {
+                    return Ok(WhitelistResult {
+                        is_whitelisted: false,
+                        max_amount: None,
+                        label: None,
+                        expires_at: None,
+                    });
+                }
+            }
             let within_limit = entry.max_amount.map_or(true, |max| amount <= max);
             Ok(WhitelistResult {
                 is_whitelisted: within_limit,
                 max_amount: entry.max_amount,
+                label: entry.label,
+                expires_at: entry.expires,
             })
         } else {
             Ok(WhitelistResult {
                 is_whitelisted: false,
                 max_amount: None,
+                label: None,
+                expires_at: None,
             })
         }
     }
@@ -79,6 +105,29 @@ impl ListStore {
         tree.remove(did)?;
         tree.flush()?;
         Ok(())
+    }
+
+    /// Risk control check implementing the §4.2 decision flow (V1.1).
+    /// 1. Check blacklist (with expiry) -> Blocked
+    /// 2. Check whitelist (with expiry + max_amount) -> AutoApproved or NeedsAuth
+    /// 3. Default -> NeedsAuth
+    pub fn risk_check(&self, merchant_did: &str, amount: u64) -> Result<RiskControlDecision> {
+        // Step 1: Blacklist check (takes priority)
+        if self.is_blacklisted(merchant_did)? {
+            return Ok(RiskControlDecision::Blocked);
+        }
+
+        // Step 2: Whitelist check
+        let wl = self.check_whitelist(merchant_did, amount)?;
+        if wl.is_whitelisted {
+            return Ok(RiskControlDecision::AutoApproved {
+                max_amount: wl.max_amount,
+                label: wl.label,
+            });
+        }
+
+        // Step 3: Not on any list -> NeedsAuth
+        Ok(RiskControlDecision::NeedsAuth)
     }
 
     /// Get the current IPFS CID for the lists.
@@ -160,6 +209,8 @@ mod tests {
             name: Some(format!("Test {}", did)),
             max_amount: Some(1000),
             added_at: Utc::now(),
+            label: None,
+            expires: None,
         }
     }
 
@@ -236,5 +287,73 @@ mod tests {
 
         assert!(store2.check_whitelist("did:ignite:zGood", 100).unwrap().is_whitelisted);
         assert!(store2.is_blacklisted("did:ignite:zBad").unwrap());
+    }
+
+    #[test]
+    fn test_risk_check_blocked() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = sled::open(dir.path()).unwrap();
+        let store = ListStore::new(db);
+
+        store.add_to_blacklist(test_entry("did:ignite:zBad")).unwrap();
+        let decision = store.risk_check("did:ignite:zBad", 100).unwrap();
+        assert_eq!(decision, RiskControlDecision::Blocked);
+    }
+
+    #[test]
+    fn test_risk_check_auto_approved() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = sled::open(dir.path()).unwrap();
+        let store = ListStore::new(db);
+
+        let mut entry = test_entry("did:ignite:zGood");
+        entry.label = Some("ShopX".to_string());
+        store.add_to_whitelist(entry).unwrap();
+
+        let decision = store.risk_check("did:ignite:zGood", 500).unwrap();
+        assert_eq!(decision, RiskControlDecision::AutoApproved {
+            max_amount: Some(1000),
+            label: Some("ShopX".to_string()),
+        });
+    }
+
+    #[test]
+    fn test_risk_check_needs_auth() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = sled::open(dir.path()).unwrap();
+        let store = ListStore::new(db);
+
+        let decision = store.risk_check("did:ignite:zUnknown", 100).unwrap();
+        assert_eq!(decision, RiskControlDecision::NeedsAuth);
+    }
+
+    #[test]
+    fn test_risk_check_expired_blacklist() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = sled::open(dir.path()).unwrap();
+        let store = ListStore::new(db);
+
+        let mut entry = test_entry("did:ignite:zExpiredBad");
+        entry.expires = Some(Utc::now() - chrono::Duration::hours(1));
+        store.add_to_blacklist(entry).unwrap();
+
+        // Expired blacklist entry should not block
+        let decision = store.risk_check("did:ignite:zExpiredBad", 100).unwrap();
+        assert_eq!(decision, RiskControlDecision::NeedsAuth);
+    }
+
+    #[test]
+    fn test_risk_check_expired_whitelist() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = sled::open(dir.path()).unwrap();
+        let store = ListStore::new(db);
+
+        let mut entry = test_entry("did:ignite:zExpiredGood");
+        entry.expires = Some(Utc::now() - chrono::Duration::hours(1));
+        store.add_to_whitelist(entry).unwrap();
+
+        // Expired whitelist entry should not auto-approve
+        let decision = store.risk_check("did:ignite:zExpiredGood", 100).unwrap();
+        assert_eq!(decision, RiskControlDecision::NeedsAuth);
     }
 }

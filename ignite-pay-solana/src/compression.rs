@@ -53,10 +53,12 @@ impl CompressionService {
     pub fn compute_leaf_hash(leaf: &MerchantLeaf) -> [u8; 32] {
         let active_pubkey_bytes = leaf.active_pubkey.to_bytes();
         let slot_bytes = leaf.slot_updated.to_le_bytes();
+        let status_bytes = [leaf.status];
         hashv(&[
-            &leaf.merchant_did,
+            &leaf.merchant_did_hash,
             &active_pubkey_bytes,
             &leaf.platform_vc_hash,
+            &status_bytes,
             &slot_bytes,
         ])
         .to_bytes()
@@ -64,11 +66,7 @@ impl CompressionService {
 
     /// Add a merchant leaf to the Merkle tree by appending.
     /// Called by the platform authority.
-    pub async fn add_merchant(
-        &self,
-        payer: &Keypair,
-        leaf: &MerchantLeaf,
-    ) -> Result<Signature> {
+    pub async fn add_merchant(&self, payer: &Keypair, leaf: &MerchantLeaf) -> Result<Signature> {
         let leaf_hash = Self::compute_leaf_hash(leaf);
         let recent_blockhash = self
             .rpc_client
@@ -224,9 +222,10 @@ mod tests {
     #[test]
     fn test_compute_leaf_hash_deterministic() {
         let leaf = MerchantLeaf {
-            merchant_did: [1u8; 32],
+            merchant_did_hash: [1u8; 32],
             active_pubkey: Pubkey::new_unique(),
             platform_vc_hash: [2u8; 32],
+            status: crate::types::MERCHANT_STATUS_ACTIVE,
             slot_updated: 100,
         };
         let h1 = CompressionService::compute_leaf_hash(&leaf);
@@ -237,20 +236,43 @@ mod tests {
     #[test]
     fn test_compute_leaf_hash_different_inputs() {
         let leaf1 = MerchantLeaf {
-            merchant_did: [1u8; 32],
+            merchant_did_hash: [1u8; 32],
             active_pubkey: Pubkey::new_unique(),
             platform_vc_hash: [2u8; 32],
+            status: crate::types::MERCHANT_STATUS_ACTIVE,
             slot_updated: 100,
         };
         let leaf2 = MerchantLeaf {
-            merchant_did: [3u8; 32],
+            merchant_did_hash: [3u8; 32],
             active_pubkey: Pubkey::new_unique(),
             platform_vc_hash: [4u8; 32],
+            status: crate::types::MERCHANT_STATUS_REVOKED,
             slot_updated: 200,
         };
         let h1 = CompressionService::compute_leaf_hash(&leaf1);
         let h2 = CompressionService::compute_leaf_hash(&leaf2);
         assert_ne!(h1, h2, "Different leaves should produce different hashes");
+    }
+
+    #[test]
+    fn test_compute_leaf_hash_status_matters() {
+        let mut leaf1 = MerchantLeaf {
+            merchant_did_hash: [1u8; 32],
+            active_pubkey: Pubkey::new_unique(),
+            platform_vc_hash: [2u8; 32],
+            status: crate::types::MERCHANT_STATUS_ACTIVE,
+            slot_updated: 100,
+        };
+        let leaf2 = MerchantLeaf {
+            merchant_did_hash: leaf1.merchant_did_hash,
+            active_pubkey: leaf1.active_pubkey,
+            platform_vc_hash: leaf1.platform_vc_hash,
+            status: crate::types::MERCHANT_STATUS_SUSPENDED,
+            slot_updated: leaf1.slot_updated,
+        };
+        let h1 = CompressionService::compute_leaf_hash(&leaf1);
+        let h2 = CompressionService::compute_leaf_hash(&leaf2);
+        assert_ne!(h1, h2, "Status change should produce different hash");
     }
 
     #[test]
@@ -321,6 +343,9 @@ mod tests {
         let h2 = anchor_sighash("append");
         assert_eq!(h1, h2);
         let h3 = anchor_sighash("replace_leaf");
-        assert_ne!(h1, h3, "Different instruction names should have different sighashes");
+        assert_ne!(
+            h1, h3,
+            "Different instruction names should have different sighashes"
+        );
     }
 }

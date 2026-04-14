@@ -1,11 +1,13 @@
 use crate::error::{Result, SolanaError};
 use crate::session::{SessionKeypair, SessionManager};
+use crate::session_program::{self as session_prog, build_execute_payment_ix, derive_session_pda};
 use crate::types::{PayMode, PaymentResult};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signer;
 #[allow(deprecated)]
 use solana_sdk::system_instruction;
+use solana_sdk::transaction::Transaction;
 
 /// Main client for executing on-chain payments.
 pub struct IgnitePayClient {
@@ -53,7 +55,7 @@ impl IgnitePayClient {
         })
     }
 
-    /// Execute a SOL transfer using a session key.
+    /// Execute a SOL transfer using a session key via the on-chain session program.
     pub async fn execute_sol_transfer(
         &self,
         session: &SessionKeypair,
@@ -73,15 +75,28 @@ impl IgnitePayClient {
             });
         }
 
+        let program_id = session_prog::session_program_id();
+        let (session_pda, _) = derive_session_pda(
+            &session.session_data.owner,
+            &session.keypair.pubkey(),
+            &program_id,
+        );
+
+        let ix = build_execute_payment_ix(
+            &program_id,
+            &session_pda,
+            &session.keypair.pubkey(),
+            recipient,
+            amount_lamports,
+            "sol:transfer",
+        );
+
         let recent_blockhash = self
             .rpc_client
             .get_latest_blockhash()
             .map_err(|e| SolanaError::RpcError(e.to_string()))?;
 
-        let ix =
-            system_instruction::transfer(&session.keypair.pubkey(), recipient, amount_lamports);
-
-        let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
+        let tx = Transaction::new_signed_with_payer(
             &[ix],
             Some(&session.keypair.pubkey()),
             &[&session.keypair],
@@ -230,6 +245,55 @@ impl IgnitePayClient {
     /// Get a reference to the session manager.
     pub fn session_manager(&self) -> &SessionManager {
         &self.session_manager
+    }
+
+    /// Register a session key on-chain via the session program.
+    /// Creates the on-chain PDA and returns the session PDA address and tx signature.
+    pub async fn register_session_on_chain(
+        &self,
+        owner: &SessionKeypair,
+        ephemeral: &SessionKeypair,
+        target_program: &Pubkey,
+        expires_at: i64,
+        spending_limit: u64,
+        scopes: Vec<String>,
+    ) -> Result<(Pubkey, String)> {
+        let program_id = session_prog::session_program_id();
+        let (session_pda, _) = derive_session_pda(
+            &owner.keypair.pubkey(),
+            &ephemeral.keypair.pubkey(),
+            &program_id,
+        );
+
+        let ix = session_prog::build_register_session_ix(
+            &program_id,
+            &session_pda,
+            &owner.keypair.pubkey(),
+            &ephemeral.keypair.pubkey(),
+            target_program,
+            expires_at,
+            spending_limit,
+            scopes,
+        );
+
+        let recent_blockhash = self
+            .rpc_client
+            .get_latest_blockhash()
+            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
+
+        let tx = Transaction::new_signed_with_payer(
+            &[ix],
+            Some(&owner.keypair.pubkey()),
+            &[&owner.keypair, &ephemeral.keypair],
+            recent_blockhash,
+        );
+
+        let sig = self
+            .rpc_client
+            .send_and_confirm_transaction(&tx)
+            .map_err(|e| SolanaError::TransactionFailed(e.to_string()))?;
+
+        Ok((session_pda, sig.to_string()))
     }
 }
 

@@ -46,8 +46,9 @@ pub async fn handle_forward(msg: &Message, state: &AppState) -> Result<()> {
     }
 
     // Recipient offline or not registered — queue the message
+    let msg_id = uuid::Uuid::new_v4().to_string();
     let queued = QueuedMessage {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: msg_id.clone(),
         sender_did: msg
             .from
             .clone()
@@ -57,8 +58,16 @@ pub async fn handle_forward(msg: &Message, state: &AppState) -> Result<()> {
         queued_at: chrono::Utc::now(),
     };
 
-    state.message_store.enqueue(next_did, queued).await?;
+    state.message_store.store_for_user(next_did, queued).await?;
     info!("Queued message for offline recipient: {}", next_did);
+
+    // Send FCM push notification if device token is registered
+    if let Ok(Some(device_token)) = state.device_token_store.get_device_token(next_did).await {
+        match state.notification_sender.send_signal(&device_token, &msg_id).await {
+            Ok(()) => info!("Sent push notification for message {} to {}", msg_id, next_did),
+            Err(e) => warn!("Failed to send push notification: {}", e),
+        }
+    }
 
     Ok(())
 }

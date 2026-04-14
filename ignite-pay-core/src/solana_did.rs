@@ -106,4 +106,57 @@ impl SolanaDidBridge {
             .await?;
         Ok(lookup.is_some())
     }
+
+    /// Verify a merchant using a supplied Merkle proof (V1.1).
+    /// Verifies the supplied proof_nodes against the on-chain tree root.
+    pub async fn verify_merchant_with_proof(
+        &self,
+        merchant_did: &str,
+        leaf_index: u32,
+        proof_nodes: &[Vec<u8>],
+    ) -> Result<bool> {
+        let tree_address = self.compression.tree_address;
+
+        // Look up the merchant leaf to get the leaf hash
+        let lookup = self
+            .indexer
+            .find_merchant_leaf(&tree_address, merchant_did)
+            .await?;
+
+        let (found_leaf_index, leaf) = match lookup {
+            Some((idx, leaf)) => (idx, leaf),
+            None => return Ok(false),
+        };
+
+        // Verify the leaf index matches
+        if found_leaf_index != leaf_index {
+            tracing::warn!(
+                "Leaf index mismatch: expected {}, found {}",
+                leaf_index,
+                found_leaf_index
+            );
+            return Ok(false);
+        }
+
+        // Get the Merkle proof from indexer to obtain the root
+        let full_proof = self
+            .indexer
+            .get_merkle_proof(&tree_address, leaf_index)
+            .await?;
+
+        // If no proof nodes supplied, fail
+        if proof_nodes.is_empty() {
+            tracing::warn!("No proof nodes supplied for verification");
+            return Ok(false);
+        }
+
+        // Verify locally using the supplied proof nodes against the on-chain root
+        let verified = self.compression.verify_proof_locally(
+            &full_proof.leaf_hash,
+            proof_nodes,
+            &full_proof.root,
+        );
+
+        Ok(verified)
+    }
 }

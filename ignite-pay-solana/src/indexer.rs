@@ -58,9 +58,9 @@ impl IndexerClient {
             .get("root")
             .and_then(|v| v.as_str())
             .ok_or_else(|| SolanaError::IndexerError("No root in proof response".into()))?;
-        let root = bs58::decode(root_str).into_vec().map_err(|e| {
-            SolanaError::IndexerError(format!("Failed to decode root: {}", e))
-        })?;
+        let root = bs58::decode(root_str)
+            .into_vec()
+            .map_err(|e| SolanaError::IndexerError(format!("Failed to decode root: {}", e)))?;
         let mut root_bytes = [0u8; 32];
         root_bytes.copy_from_slice(&root[..32]);
 
@@ -87,9 +87,9 @@ impl IndexerClient {
             .or_else(|| result.get("leaf"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| SolanaError::IndexerError("No leaf hash in response".into()))?;
-        let leaf_hash_vec = bs58::decode(leaf_hash_str).into_vec().map_err(|e| {
-            SolanaError::IndexerError(format!("Failed to decode leaf hash: {}", e))
-        })?;
+        let leaf_hash_vec = bs58::decode(leaf_hash_str)
+            .into_vec()
+            .map_err(|e| SolanaError::IndexerError(format!("Failed to decode leaf hash: {}", e)))?;
         let mut leaf_hash = [0u8; 32];
         leaf_hash.copy_from_slice(&leaf_hash_vec[..32]);
 
@@ -149,9 +149,9 @@ impl IndexerClient {
             .and_then(|v| v.as_str())
             .ok_or_else(|| SolanaError::IndexerError("No root in response".into()))?;
 
-        let root_vec = bs58::decode(root_str).into_vec().map_err(|e| {
-            SolanaError::IndexerError(format!("Failed to decode root: {}", e))
-        })?;
+        let root_vec = bs58::decode(root_str)
+            .into_vec()
+            .map_err(|e| SolanaError::IndexerError(format!("Failed to decode root: {}", e)))?;
 
         let mut root = [0u8; 32];
         root.copy_from_slice(&root_vec[..32]);

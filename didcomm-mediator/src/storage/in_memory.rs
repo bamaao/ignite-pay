@@ -3,7 +3,7 @@ use dashmap::DashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use super::{KeylistStore, MessageStore, QueuedMessage};
+use super::{DeviceTokenStore, KeylistStore, MessageStore, QueuedMessage};
 
 // ── In-memory MessageStore ──────────────────────────────────────────────
 
@@ -63,6 +63,49 @@ impl MessageStore for InMemoryMessageStore {
         }
         Ok(())
     }
+
+    async fn store_for_user(&self, recipient_did: &str, msg: QueuedMessage) -> crate::error::Result<()> {
+        // store_for_user uses the same queue as enqueue — messages persist until explicitly removed.
+        let mut queue = self.queues.entry(recipient_did.to_string()).or_default();
+        if queue.len() >= self.max_queued {
+            queue.remove(0);
+        }
+        queue.push(msg);
+        Ok(())
+    }
+
+    async fn get_message(&self, recipient_did: &str, msg_id: &str) -> crate::error::Result<Option<QueuedMessage>> {
+        Ok(self
+            .queues
+            .get(recipient_did)
+            .and_then(|queue| queue.iter().find(|m| m.id == msg_id).cloned()))
+    }
+
+    async fn list_messages(
+        &self,
+        recipient_did: &str,
+        after_id: Option<&str>,
+        limit: usize,
+    ) -> crate::error::Result<Vec<QueuedMessage>> {
+        let queue = match self.queues.get(recipient_did) {
+            Some(q) => q,
+            None => return Ok(Vec::new()),
+        };
+
+        let messages: Vec<QueuedMessage> = match after_id {
+            Some(after) => {
+                let start = queue
+                    .iter()
+                    .position(|m| m.id == after)
+                    .map(|pos| pos + 1)
+                    .unwrap_or(0);
+                queue.iter().skip(start).take(limit).cloned().collect()
+            }
+            None => queue.iter().take(limit).cloned().collect(),
+        };
+
+        Ok(messages)
+    }
 }
 
 // ── In-memory KeylistStore ──────────────────────────────────────────────
@@ -108,7 +151,36 @@ impl KeylistStore for InMemoryKeylistStore {
     }
 }
 
+// ── In-memory DeviceTokenStore ─────────────────────────────────────────
+
+#[derive(Debug, Default)]
+pub struct InMemoryDeviceTokenStore {
+    /// user_did -> fcm_device_token
+    tokens: DashMap<String, String>,
+}
+
+impl InMemoryDeviceTokenStore {
+    pub fn new() -> Self {
+        Self {
+            tokens: DashMap::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl DeviceTokenStore for InMemoryDeviceTokenStore {
+    async fn register_device_token(&self, user_did: &str, fcm_token: &str) -> crate::error::Result<()> {
+        self.tokens.insert(user_did.to_string(), fcm_token.to_string());
+        Ok(())
+    }
+
+    async fn get_device_token(&self, user_did: &str) -> crate::error::Result<Option<String>> {
+        Ok(self.tokens.get(user_did).map(|v| v.value().clone()))
+    }
+}
+
 // ── Shared state type aliases ───────────────────────────────────────────
 
 pub type SharedMessageStore = Arc<dyn MessageStore>;
 pub type SharedKeylistStore = Arc<dyn KeylistStore>;
+pub type SharedDeviceTokenStore = Arc<dyn DeviceTokenStore>;

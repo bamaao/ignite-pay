@@ -1,10 +1,12 @@
 use crate::payment::{AuthResponse, PaymentRequest, PendingAuthStore};
 
-use affinidi_messaging_didcomm::DIDCommAgent;
 use affinidi_messaging_didcomm::identity::PrivateIdentity;
-use ignite_pay_core::{build_did_document, generate_ignite_did, identity_to_resolved, parse_did_document};
+use affinidi_messaging_didcomm::DIDCommAgent;
 use ignite_pay_core::didcomm::{self, is_jwe};
 use ignite_pay_core::identity::{load_did, save_identity};
+use ignite_pay_core::{
+    build_did_document, generate_ignite_did, identity_to_resolved, parse_did_document,
+};
 
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
@@ -14,9 +16,8 @@ use std::time::Duration;
 use tokio::sync::{mpsc, Mutex, Notify};
 use tokio_tungstenite::connect_async;
 
-type WsStream = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type WsStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Encapsulates the WebSocket connection to the DIDComm mediator.
 pub struct MediatorConnection {
@@ -57,9 +58,7 @@ impl MediatorConnection {
         };
 
         let did_doc = build_did_document(&did, &identity);
-        let (agent, _) = didcomm::create_agent(
-            PrivateIdentity::generate(&did),
-        );
+        let (agent, _) = didcomm::create_agent(PrivateIdentity::generate(&did));
 
         let (outgoing_tx, _outgoing_rx) = mpsc::unbounded_channel();
 
@@ -98,7 +97,16 @@ impl MediatorConnection {
         }
 
         tokio::spawn(async move {
-            real_ws_client(&ws_url, &agent, &our_did, &did_doc, connected, outgoing_rx, pending).await;
+            real_ws_client(
+                &ws_url,
+                &agent,
+                &our_did,
+                &did_doc,
+                connected,
+                outgoing_rx,
+                pending,
+            )
+            .await;
         });
 
         Ok(())
@@ -128,7 +136,8 @@ impl MediatorConnection {
         // Send the JWE through the outgoing channel
         {
             let sender = self.outgoing.lock().await;
-            sender.send(jwe.clone())
+            sender
+                .send(jwe.clone())
                 .map_err(|_| anyhow::anyhow!("WebSocket channel closed"))?;
         }
 
@@ -161,6 +170,47 @@ impl MediatorConnection {
         } else {
             tracing::warn!("Failed to parse DID document for peer: {}", did);
         }
+    }
+
+    /// Send a list-sync notification to the phone after list changes (V1.1).
+    pub async fn send_list_sync_notification(
+        &self,
+        phone_did: &str,
+        list_type: &str,
+        action: &str,
+        entry_did: &str,
+        new_cid: &str,
+    ) -> Result<String> {
+        let msg = didcomm::build_list_sync_notification(
+            &self.our_did,
+            phone_did,
+            list_type,
+            action,
+            entry_did,
+            new_cid,
+        );
+
+        let agent = self.agent.lock().await;
+        let jwe = didcomm::pack_encrypted(&agent, &msg, &self.our_did, phone_did)
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
+        drop(agent);
+
+        {
+            let sender = self.outgoing.lock().await;
+            sender
+                .send(jwe.clone())
+                .map_err(|_| anyhow::anyhow!("WebSocket channel closed"))?;
+        }
+
+        tracing::info!(
+            "List sync notification sent: {} {} for {} (cid={})",
+            action,
+            list_type,
+            entry_did,
+            new_cid
+        );
+
+        Ok(jwe)
     }
 }
 
@@ -309,10 +359,57 @@ async fn handle_incoming_message(
     // Check for auth response in body
     if let Some(body) = v.get("body") {
         if let Some(payment_id) = body.get("payment_id").and_then(|v| v.as_str()) {
-            let authorized = body.get("authorized").and_then(|v| v.as_bool()).unwrap_or(false);
-            let list_action = body.get("list_action").and_then(|v| v.as_str()).unwrap_or("none").to_string();
-            let merchant_did = body.get("merchant_did").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let response = AuthResponse { authorized, list_action, merchant_did };
+            let authorized = body
+                .get("authorized")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let list_action = body
+                .get("list_action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("none")
+                .to_string();
+            let merchant_did = body
+                .get("merchant_did")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let session_key_pubkey = body
+                .get("session_key_pubkey")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let session_key_secret_key = body
+                .get("session_key_secret_key")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let session_key_tx_signature = body
+                .get("session_key_tx_signature")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let session_expires_at = body.get("session_expires_at").and_then(|v| v.as_i64());
+            let spending_limit = body.get("spending_limit").and_then(|v| v.as_u64());
+            let scopes = body.get("scopes").and_then(|v| v.as_array()).map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            });
+            let list_label = body
+                .get("list_label")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let list_max_amount = body.get("list_max_amount").and_then(|v| v.as_u64());
+            let response = AuthResponse {
+                authorized,
+                list_action,
+                merchant_did,
+                session_key_pubkey,
+                session_key_secret_key,
+                session_key_tx_signature,
+                session_expires_at,
+                spending_limit,
+                scopes,
+                list_label,
+                list_max_amount,
+            };
             if pending.resolve(payment_id, response) {
                 tracing::info!("Resolved pending auth: {} -> {}", payment_id, authorized);
             }
@@ -334,12 +431,74 @@ async fn process_inner_message(
     // Check for payment-auth-response type
     if msg.typ.contains("payment-auth-response") {
         if let Some(payment_id) = msg.body.get("payment_id").and_then(|v| v.as_str()) {
-            let authorized = msg.body.get("authorized").and_then(|v| v.as_bool()).unwrap_or(false);
-            let list_action = msg.body.get("list_action").and_then(|v| v.as_str()).unwrap_or("none").to_string();
-            let merchant_did = msg.body.get("merchant_did").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let response = AuthResponse { authorized, list_action, merchant_did };
+            let authorized = msg
+                .body
+                .get("authorized")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let list_action = msg
+                .body
+                .get("list_action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("none")
+                .to_string();
+            let merchant_did = msg
+                .body
+                .get("merchant_did")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let session_key_pubkey = msg
+                .body
+                .get("session_key_pubkey")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let session_key_secret_key = msg
+                .body
+                .get("session_key_secret_key")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let session_key_tx_signature = msg
+                .body
+                .get("session_key_tx_signature")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let session_expires_at = msg.body.get("session_expires_at").and_then(|v| v.as_i64());
+            let spending_limit = msg.body.get("spending_limit").and_then(|v| v.as_u64());
+            let scopes = msg
+                .body
+                .get("scopes")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                });
+            let list_label = msg
+                .body
+                .get("list_label")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let list_max_amount = msg.body.get("list_max_amount").and_then(|v| v.as_u64());
+            let response = AuthResponse {
+                authorized,
+                list_action,
+                merchant_did,
+                session_key_pubkey,
+                session_key_secret_key,
+                session_key_tx_signature,
+                session_expires_at,
+                spending_limit,
+                scopes,
+                list_label,
+                list_max_amount,
+            };
             if pending.resolve(payment_id, response) {
-                tracing::info!("Resolved pending auth (encrypted): {} -> {}", payment_id, authorized);
+                tracing::info!(
+                    "Resolved pending auth (encrypted): {} -> {}",
+                    payment_id,
+                    authorized
+                );
             }
         }
     } else {
@@ -347,10 +506,7 @@ async fn process_inner_message(
     }
 }
 
-async fn send_msg(
-    ws: &mut WsStream,
-    msg: String,
-) -> Result<()> {
+async fn send_msg(ws: &mut WsStream, msg: String) -> Result<()> {
     ws.send(tokio_tungstenite::tungstenite::Message::Text(msg.into()))
         .await?;
     Ok(())

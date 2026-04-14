@@ -1,6 +1,7 @@
 pub mod config;
 pub mod did;
 pub mod error;
+pub mod notification;
 pub mod protocols;
 pub mod server;
 pub mod session;

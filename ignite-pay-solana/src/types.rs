@@ -4,15 +4,22 @@ use solana_sdk::pubkey::Pubkey;
 /// A leaf node in the Concurrent Merkle Tree storing merchant identity.
 #[derive(Debug, Clone, Serialize, Deserialize, borsh::BorshSerialize, borsh::BorshDeserialize)]
 pub struct MerchantLeaf {
-    /// SHA-256 hash of the DID string
-    pub merchant_did: [u8; 32],
-    /// Current active receiving public key
+    /// SHA-256 hash of the merchant DID public key (from did:ignite string)
+    pub merchant_did_hash: [u8; 32],
+    /// Current active receiving public key (Solana payment address)
     pub active_pubkey: Pubkey,
     /// SHA-256 hash of the platform Verifiable Credential
     pub platform_vc_hash: [u8; 32],
+    /// Merchant status: 0 = active, 1 = suspended, 2 = revoked
+    pub status: u8,
     /// Slot when this leaf was last updated
     pub slot_updated: u64,
 }
+
+/// Merchant status constants.
+pub const MERCHANT_STATUS_ACTIVE: u8 = 0;
+pub const MERCHANT_STATUS_SUSPENDED: u8 = 1;
+pub const MERCHANT_STATUS_REVOKED: u8 = 2;
 
 /// Session token data persisted locally.
 #[derive(Debug, Clone, Serialize, Deserialize, borsh::BorshSerialize, borsh::BorshDeserialize)]

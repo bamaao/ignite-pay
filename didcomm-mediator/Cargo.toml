@@ -41,3 +41,13 @@ uuid = { version = "1", features = ["v4"] }
 
 # Time
 chrono = "0.4"
+
+# JWT authentication
+jsonwebtoken = "9"
+
+# HTTP client (for FCM)
+reqwest = { version = "0.12", features = ["json"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+serde_json = "1"

@@ -3,29 +3,34 @@ mod payment;
 mod tools;
 
 use crate::mediator::MediatorConnection;
-use crate::payment::{AuthResponse, execute_mock_payment, PaymentRequest, PaymentStatus, PendingAuthStore};
-use crate::tools::{AuthorizationCheckInput, PaymentHistoryInput, X402ChallengeInput};
+use crate::payment::{
+    execute_mock_payment, AuthResponse, PaymentRequest, PaymentStatus, PendingAuthStore,
+};
+use crate::tools::{
+    AuthorizationCheckInput, CloseSessionInput, CreateSessionInput, PaymentHistoryInput,
+    SessionStatusInput, X402ChallengeInput,
+};
 
-use ignite_pay_core::types::VerifiableCredential;
+use base64::Engine;
+use ignite_pay_core::ipfs::IpfsClient;
 use ignite_pay_core::ipfs::MockIpfsClient;
 use ignite_pay_core::list_store::ListStore;
-use ignite_pay_core::types::MerchantListEntry;
 use ignite_pay_core::solana_did::SolanaDidBridge;
+use ignite_pay_core::types::MerchantListEntry;
+use ignite_pay_core::types::{RiskControlDecision, VerifiableCredential};
+use ignite_pay_core::vc::resolve_vc_from_ipfs;
 use ignite_pay_solana::payment::IgnitePayClient;
 use ignite_pay_solana::session::SessionKeypair;
-use ignite_pay_solana::types::PayMode;
 use ignite_pay_solana::solana_sdk::pubkey::Pubkey;
-use base64::Engine;
+use ignite_pay_solana::solana_sdk::signature::Keypair;
+use ignite_pay_solana::types::{PayMode, SessionTokenData};
 
 use rmcp::{
-    ServerHandler, ServiceExt,
-    handler::server::{
-        tool::ToolRouter,
-        wrapper::Parameters,
-    },
+    handler::server::{tool::ToolRouter, wrapper::Parameters},
     model::ServerCapabilities,
     tool, tool_handler, tool_router,
     transport::stdio,
+    ServerHandler, ServiceExt,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -123,8 +128,8 @@ impl SolanaConfig {
 }
 
 fn load_config() -> Result<Config, anyhow::Error> {
-    let config_path = std::env::var("IGNITE_PAY_CONFIG")
-        .unwrap_or_else(|_| "config.toml".to_string());
+    let config_path =
+        std::env::var("IGNITE_PAY_CONFIG").unwrap_or_else(|_| "config.toml".to_string());
     let content = std::fs::read_to_string(&config_path)?;
     let config: Config = toml::from_str(&content)?;
     Ok(config)
@@ -132,7 +137,12 @@ fn load_config() -> Result<Config, anyhow::Error> {
 
 // ── Payment Execution ──────────────────────────────────────────────────────
 
-/// Execute a payment using either real Solana on-chain transfer or mock payment.
+/// Execute a payment using a session key on Solana, or fall back to mock.
+///
+/// V2.0 flow:
+/// 1. If Solana client + session key available → real on-chain payment via session key
+/// 2. On failure → fall back to mock payment
+/// 3. If no Solana client or session → mock payment
 async fn execute_payment(
     solana_client: &Option<Arc<IgnitePayClient>>,
     payment: &PaymentRequest,
@@ -140,6 +150,12 @@ async fn execute_payment(
 ) -> String {
     match (solana_client, session) {
         (Some(client), Some(sess)) => {
+            tracing::info!(
+                "Executing on-chain payment: {} lamports to {} via session {}",
+                payment.amount,
+                payment.recipient,
+                sess.keypair.pubkey(),
+            );
             match client
                 .execute_payment(
                     &payment.recipient,
@@ -150,9 +166,16 @@ async fn execute_payment(
                 )
                 .await
             {
-                Ok(result) => result.signature,
+                Ok(result) => {
+                    tracing::info!(
+                        "On-chain payment succeeded: sig={}, slot={}",
+                        result.signature,
+                        result.slot
+                    );
+                    result.signature
+                }
                 Err(e) => {
-                    tracing::warn!("Solana payment failed, falling back to mock: {}", e);
+                    tracing::warn!("On-chain payment failed (falling back to mock): {}", e);
                     execute_mock_payment(payment)
                 }
             }
@@ -179,11 +202,15 @@ struct IgnitePayMcpServer {
     solana_client: Option<Arc<IgnitePayClient>>,
     // V2.0: On-chain DID verification
     solana_bridge: Option<Arc<SolanaDidBridge>>,
+    // V1.1: IPFS client for VC resolution and list sync
+    ipfs_client: Arc<Box<dyn IpfsClient>>,
 }
 
 #[tool_router]
 impl IgnitePayMcpServer {
-    #[tool(description = "Process an HTTP 402 payment challenge. Parses the x402 response, verifies on-chain merchant DID (if configured), requests authorization from the phone app, and executes real Solana payment upon approval.")]
+    #[tool(
+        description = "Process an HTTP 402 payment challenge. Parses the x402 response, verifies on-chain merchant DID (if configured), performs risk control checks (blacklist/whitelist), requests authorization from the phone app, and executes real Solana payment upon approval."
+    )]
     async fn process_x402_challenge(
         &self,
         Parameters(input): Parameters<X402ChallengeInput>,
@@ -217,14 +244,22 @@ impl IgnitePayMcpServer {
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(0);
-        let recipient = accepts
-            .get("recipient")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        let merchant_did = challenge
-            .get("provider_did")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
+
+        // Step A: Extract merchant_did from X402 headers (V1.1)
+        let merchant_did = input
+            .x402_merchant_did
+            .as_deref()
+            .or_else(|| challenge.get("provider_did").and_then(|v| v.as_str()))
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Use x402_payment_address as recipient if present (V1.1)
+        let recipient = input
+            .x402_payment_address
+            .as_deref()
+            .or_else(|| accepts.get("recipient").and_then(|v| v.as_str()))
+            .unwrap_or("unknown")
+            .to_string();
 
         let payment_id = uuid::Uuid::new_v4().to_string();
         let description = format!(
@@ -235,8 +270,8 @@ impl IgnitePayMcpServer {
         // 2. Create payment record
         let payment = PaymentRequest {
             id: payment_id.clone(),
-            recipient: recipient.to_string(),
-            merchant_did: merchant_did.to_string(),
+            recipient: recipient.clone(),
+            merchant_did: merchant_did.clone(),
             amount,
             token: token.to_string(),
             network: network.to_string(),
@@ -251,29 +286,80 @@ impl IgnitePayMcpServer {
             return format!("Error: Failed to save payment: {}", e);
         }
 
-        // 3.5 Verify VC if present and platform key configured
-        if let Some(vc_value) = challenge.get("verifiable_credential") {
-            if let (Some(vk_bytes), Ok(vc)) = (&self.platform_verifying_key, serde_json::from_value::<VerifiableCredential>(vc_value.clone())) {
+        // 3.5 Verify VC — inline or IPFS CID (V1.1)
+        let vc_verified = if let Some(vc_value) = challenge.get("verifiable_credential") {
+            // Inline VC path
+            if let (Some(vk_bytes), Ok(vc)) = (
+                &self.platform_verifying_key,
+                serde_json::from_value::<VerifiableCredential>(vc_value.clone()),
+            ) {
                 match vc.verify(vk_bytes, &self.platform_did) {
                     Ok(()) => {
                         tracing::info!("VC verified for merchant: {}", vc.credential_subject.id);
+                        true
                     }
                     Err(e) => {
-                        let _ = self.payments.update_status(&payment_id, &PaymentStatus::Rejected);
+                        let _ = self
+                            .payments
+                            .update_status(&payment_id, &PaymentStatus::Rejected);
                         return format!("Payment rejected: VC verification failed: {}", e);
                     }
                 }
+            } else {
+                false
             }
-        }
+        } else if let Some(cid) = &input.vc_ipfs_cid {
+            // V1.1: IPFS CID resolution path
+            match resolve_vc_from_ipfs(self.ipfs_client.as_ref(), cid).await {
+                Ok(vc) => {
+                    if let Some(vk_bytes) = &self.platform_verifying_key {
+                        match vc.verify(vk_bytes, &self.platform_did) {
+                            Ok(()) => {
+                                tracing::info!(
+                                    "VC (from IPFS) verified for merchant: {}",
+                                    vc.credential_subject.id
+                                );
+                                true
+                            }
+                            Err(e) => {
+                                let _ = self
+                                    .payments
+                                    .update_status(&payment_id, &PaymentStatus::Rejected);
+                                return format!(
+                                    "Payment rejected: VC verification failed (IPFS): {}",
+                                    e
+                                );
+                            }
+                        }
+                    } else {
+                        tracing::warn!(
+                            "VC from IPFS skipped: no platform verifying key configured"
+                        );
+                        false
+                    }
+                }
+                Err(e) => {
+                    let _ = self
+                        .payments
+                        .update_status(&payment_id, &PaymentStatus::Rejected);
+                    return format!("Payment rejected: failed to resolve VC from IPFS: {}", e);
+                }
+            }
+        } else {
+            false
+        };
+        let _ = vc_verified; // VC verified flag available for future use
 
         // 3.6 On-chain DID verification (V2.0 — if Solana configured)
         if let Some(bridge) = &self.solana_bridge {
-            match bridge.quick_verify(merchant_did).await {
+            match bridge.quick_verify(&merchant_did).await {
                 Ok(true) => {
                     tracing::info!("Merchant {} verified on-chain", merchant_did);
                 }
                 Ok(false) => {
-                    let _ = self.payments.update_status(&payment_id, &PaymentStatus::Rejected);
+                    let _ = self
+                        .payments
+                        .update_status(&payment_id, &PaymentStatus::Rejected);
                     return format!(
                         "Payment rejected: merchant {} not found on-chain",
                         merchant_did
@@ -285,9 +371,98 @@ impl IgnitePayMcpServer {
             }
         }
 
-        // 4. Check auto-approve
+        // 3.7 V1.1: Merkle proof verification from x402-merkle-context
+        if let Some(merkle_ctx_str) = &input.x402_merkle_context {
+            if let Some(bridge) = &self.solana_bridge {
+                match serde_json::from_str::<serde_json::Value>(merkle_ctx_str) {
+                    Ok(ctx) => {
+                        if let Some(leaf_index) = ctx.get("leaf_index").and_then(|v| v.as_u64()) {
+                            // Extract proof_nodes as array of base64 strings
+                            let proof_nodes_raw = ctx.get("proof_nodes").and_then(|v| v.as_array());
+                            let proof_nodes: Vec<Vec<u8>> = proof_nodes_raw
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|v| {
+                                            v.as_str().and_then(|s| {
+                                                base64::engine::general_purpose::STANDARD_NO_PAD
+                                                    .decode(s)
+                                                    .ok()
+                                            })
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+
+                            match bridge
+                                .verify_merchant_with_proof(
+                                    &merchant_did,
+                                    leaf_index as u32,
+                                    &proof_nodes,
+                                )
+                                .await
+                            {
+                                Ok(true) => {
+                                    tracing::info!(
+                                        "Merkle proof verified for merchant {}",
+                                        merchant_did
+                                    );
+                                }
+                                Ok(false) => {
+                                    let _ = self
+                                        .payments
+                                        .update_status(&payment_id, &PaymentStatus::Rejected);
+                                    return format!(
+                                        "Payment rejected: Merkle proof verification failed for {}",
+                                        merchant_did
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Merkle proof verification error (continuing): {}",
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse x402-merkle-context: {}", e);
+                    }
+                }
+            }
+        }
+
+        // Step C: V1.1 Risk control check (blacklist-first)
+        match self.list_store.risk_check(&merchant_did, amount) {
+            Ok(RiskControlDecision::Blocked) => {
+                let _ = self
+                    .payments
+                    .update_status(&payment_id, &PaymentStatus::Rejected);
+                return format!("Payment blocked: merchant {} is on blacklist", merchant_did);
+            }
+            Ok(RiskControlDecision::AutoApproved { max_amount, label }) => {
+                let session = self.get_active_session();
+                let tx_sig = execute_payment(&self.solana_client, &payment, &session).await;
+                let _ = self
+                    .payments
+                    .update_status(&payment_id, &PaymentStatus::Executed);
+                let _ = self.payments.set_tx_signature(&payment_id, &tx_sig);
+                let label_info = label.map(|l| format!(" ({})", l)).unwrap_or_default();
+                return format!(
+                    "Auto-approved payment (whitelisted{}). Tx: {}\nAmount: {} {}\nTo: {}",
+                    label_info, tx_sig, amount, token, recipient
+                );
+            }
+            Ok(RiskControlDecision::NeedsAuth) => {
+                // Continue to existing flow below
+            }
+            Err(e) => {
+                tracing::warn!("Risk check error (continuing to auth): {}", e);
+            }
+        }
+
+        // 4. Check auto-approve (global threshold)
         if self.auto_approve_max > 0 && amount <= self.auto_approve_max {
-            // Get session for Solana payment if available
             let session = self.get_active_session();
             let tx_sig = execute_payment(&self.solana_client, &payment, &session).await;
             if let Err(e) = self
@@ -299,10 +474,7 @@ impl IgnitePayMcpServer {
             if let Err(e) = self.payments.set_tx_signature(&payment_id, &tx_sig) {
                 return format!("Error: Failed to set tx signature: {}", e);
             }
-            return format!(
-                "Auto-approved payment (under threshold). Tx: {}",
-                tx_sig
-            );
+            return format!("Auto-approved payment (under threshold). Tx: {}", tx_sig);
         }
 
         // 5. Register pending auth and send request
@@ -315,11 +487,22 @@ impl IgnitePayMcpServer {
         {
             Ok(_) => {}
             Err(e) => {
-                self.pending.resolve(&payment_id, AuthResponse {
-                    authorized: false,
-                    list_action: "none".to_string(),
-                    merchant_did: String::new(),
-                });
+                self.pending.resolve(
+                    &payment_id,
+                    AuthResponse {
+                        authorized: false,
+                        list_action: "none".to_string(),
+                        merchant_did: String::new(),
+                        session_key_pubkey: None,
+                        session_key_secret_key: None,
+                        session_key_tx_signature: None,
+                        session_expires_at: None,
+                        spending_limit: None,
+                        scopes: None,
+                        list_label: None,
+                        list_max_amount: None,
+                    },
+                );
                 return format!("Error: Failed to send auth request: {}", e);
             }
         }
@@ -328,38 +511,26 @@ impl IgnitePayMcpServer {
         let timeout = Duration::from_secs(self.auth_timeout);
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(resp)) if resp.authorized => {
-                let session = self.get_active_session();
+                // Use session key from phone auth response if available, otherwise fall back to local session
+                let session = self
+                    .get_session_from_auth_response(&resp)
+                    .or_else(|| self.get_active_session());
                 let tx_sig = execute_payment(&self.solana_client, &payment, &session).await;
                 let _ = self
                     .payments
                     .update_status(&payment_id, &PaymentStatus::Executed);
                 let _ = self.payments.set_tx_signature(&payment_id, &tx_sig);
 
-                // Handle list_action if specified
-                if resp.list_action != "none" && !resp.merchant_did.is_empty() {
-                    let entry = MerchantListEntry {
-                        did: resp.merchant_did.clone(),
-                        name: None,
-                        max_amount: Some(amount),
-                        added_at: chrono::Utc::now(),
-                    };
-                    match resp.list_action.as_str() {
-                        "whitelist" => {
-                            if let Err(e) = self.list_store.add_to_whitelist(entry) {
-                                tracing::warn!("Failed to add to whitelist: {}", e);
-                            } else {
-                                tracing::info!("Added {} to whitelist", resp.merchant_did);
-                            }
-                        }
-                        "blacklist" => {
-                            if let Err(e) = self.list_store.add_to_blacklist(entry) {
-                                tracing::warn!("Failed to add to blacklist: {}", e);
-                            } else {
-                                tracing::info!("Added {} to blacklist", resp.merchant_did);
-                            }
-                        }
-                        _ => {}
-                    }
+                // Step D: V1.1 Extended list_action handling
+                if resp.list_action != "none" && !payment.merchant_did.is_empty() {
+                    self.handle_list_action(
+                        &resp.list_action,
+                        &payment.merchant_did,
+                        amount,
+                        resp.list_label.as_deref(),
+                        resp.list_max_amount,
+                    )
+                    .await;
                 }
 
                 format!(
@@ -380,11 +551,22 @@ impl IgnitePayMcpServer {
                 "Payment authorization failed (internal error).".to_string()
             }
             Err(_) => {
-                self.pending.resolve(&payment_id, AuthResponse {
-                    authorized: false,
-                    list_action: "none".to_string(),
-                    merchant_did: String::new(),
-                });
+                self.pending.resolve(
+                    &payment_id,
+                    AuthResponse {
+                        authorized: false,
+                        list_action: "none".to_string(),
+                        merchant_did: String::new(),
+                        session_key_pubkey: None,
+                        session_key_secret_key: None,
+                        session_key_tx_signature: None,
+                        session_expires_at: None,
+                        spending_limit: None,
+                        scopes: None,
+                        list_label: None,
+                        list_max_amount: None,
+                    },
+                );
                 let _ = self
                     .payments
                     .update_status(&payment_id, &PaymentStatus::Expired);
@@ -463,9 +645,217 @@ impl IgnitePayMcpServer {
             solana_status
         )
     }
+
+    #[tool(
+        description = "Create a local session key for testing/auto-approved payments. Returns the session key pubkey, spending limit, and expiry."
+    )]
+    async fn create_session(&self, Parameters(input): Parameters<CreateSessionInput>) -> String {
+        let client = match &self.solana_client {
+            Some(c) => c,
+            None => return "Error: Solana client not configured".to_string(),
+        };
+
+        let owner_pubkey = match input.owner_pubkey.parse::<Pubkey>() {
+            Ok(p) => p,
+            Err(e) => return format!("Error: Invalid owner pubkey: {}", e),
+        };
+
+        let target_program = solana_sdk::system_program::id();
+        let scopes = vec!["sol:transfer".to_string()];
+
+        match client.session_manager().create_session(
+            &owner_pubkey,
+            &target_program,
+            scopes.clone(),
+            input.spending_limit,
+            input.duration_secs,
+        ) {
+            Ok(session) => {
+                let expires_at = session.session_data.expires_at;
+                format!(
+                    "Session created.\nPubkey: {}\nSpending limit: {} lamports\nExpires at: {} (Unix)\nScopes: {:?}",
+                    session.keypair.pubkey(),
+                    input.spending_limit,
+                    expires_at,
+                    scopes,
+                )
+            }
+            Err(e) => format!("Error: Failed to create session: {}", e),
+        }
+    }
+
+    #[tool(
+        description = "Get the status of the current active session key (if any). Shows remaining spending limit and time until expiry."
+    )]
+    async fn get_session_status(
+        &self,
+        Parameters(input): Parameters<SessionStatusInput>,
+    ) -> String {
+        let client = match &self.solana_client {
+            Some(c) => c,
+            None => return "Error: Solana client not configured".to_string(),
+        };
+
+        let owner_pubkey = match input.owner_pubkey.parse::<Pubkey>() {
+            Ok(p) => p,
+            Err(e) => return format!("Error: Invalid owner pubkey: {}", e),
+        };
+
+        match client.session_manager().get_active_session(&owner_pubkey) {
+            Ok(Some(session)) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                let remaining = session
+                    .session_data
+                    .spending_limit
+                    .saturating_sub(session.session_data.current_spent);
+                let time_left = session.session_data.expires_at.saturating_sub(now);
+
+                format!(
+                    "Active session found.\nPubkey: {}\nSpent: {}/{} lamports\nRemaining: {} lamports\nTime left: {}s\nScopes: {:?}",
+                    session.keypair.pubkey(),
+                    session.session_data.current_spent,
+                    session.session_data.spending_limit,
+                    remaining,
+                    time_left,
+                    session.session_data.scopes,
+                )
+            }
+            Ok(None) => "No active session found for this owner.".to_string(),
+            Err(e) => format!("Error: {}", e),
+        }
+    }
+
+    #[tool(
+        description = "Close an active session key and optionally refund remaining SOL to the owner."
+    )]
+    async fn close_session(&self, Parameters(input): Parameters<CloseSessionInput>) -> String {
+        let client = match &self.solana_client {
+            Some(c) => c,
+            None => return "Error: Solana client not configured".to_string(),
+        };
+
+        let ephemeral_pubkey = match input.session_pubkey.parse::<Pubkey>() {
+            Ok(p) => p,
+            Err(e) => return format!("Error: Invalid session pubkey: {}", e),
+        };
+
+        match client
+            .session_manager()
+            .get_session_by_pubkey(&ephemeral_pubkey)
+        {
+            Ok(Some(session)) => {
+                if input.refund {
+                    let owner = match input.owner_pubkey.parse::<Pubkey>() {
+                        Ok(p) => p,
+                        Err(e) => return format!("Error: Invalid owner pubkey for refund: {}", e),
+                    };
+                    match client.close_session_refund(&session, &owner).await {
+                        Ok(()) => format!(
+                            "Session {} closed and remaining SOL refunded to {}.",
+                            ephemeral_pubkey, owner
+                        ),
+                        Err(e) => format!("Error closing session with refund: {}", e),
+                    }
+                } else {
+                    match client.session_manager().close_session(&ephemeral_pubkey) {
+                        Ok(()) => format!("Session {} closed (no refund).", ephemeral_pubkey),
+                        Err(e) => format!("Error closing session: {}", e),
+                    }
+                }
+            }
+            Ok(None) => format!("Session {} not found.", ephemeral_pubkey),
+            Err(e) => format!("Error: {}", e),
+        }
+    }
 }
 
 impl IgnitePayMcpServer {
+    /// Handle V1.1 extended list_action from phone auth response.
+    async fn handle_list_action(
+        &self,
+        action: &str,
+        merchant_did: &str,
+        amount: u64,
+        label: Option<&str>,
+        max_amount: Option<u64>,
+    ) {
+        let entry = MerchantListEntry {
+            did: merchant_did.to_string(),
+            name: None,
+            max_amount,
+            added_at: chrono::Utc::now(),
+            label: label.map(String::from),
+            expires: None,
+        };
+
+        let list_type = match action {
+            "whitelist" | "add_whitelist" => {
+                if let Err(e) = self.list_store.add_to_whitelist(entry) {
+                    tracing::warn!("Failed to add to whitelist: {}", e);
+                } else {
+                    tracing::info!("Added {} to whitelist", merchant_did);
+                }
+                "whitelist"
+            }
+            "blacklist" | "add_blacklist" => {
+                if let Err(e) = self.list_store.add_to_blacklist(entry) {
+                    tracing::warn!("Failed to add to blacklist: {}", e);
+                } else {
+                    tracing::info!("Added {} to blacklist", merchant_did);
+                }
+                "blacklist"
+            }
+            "remove_whitelist" => {
+                if let Err(e) = self.list_store.remove_from_whitelist(merchant_did) {
+                    tracing::warn!("Failed to remove from whitelist: {}", e);
+                } else {
+                    tracing::info!("Removed {} from whitelist", merchant_did);
+                }
+                "whitelist"
+            }
+            "remove_blacklist" => {
+                if let Err(e) = self.list_store.remove_from_blacklist(merchant_did) {
+                    tracing::warn!("Failed to remove from blacklist: {}", e);
+                } else {
+                    tracing::info!("Removed {} from blacklist", merchant_did);
+                }
+                "blacklist"
+            }
+            _ => return,
+        };
+
+        // Upload updated lists to IPFS and notify phone
+        match self
+            .list_store
+            .upload_to_ipfs(self.ipfs_client.as_ref())
+            .await
+        {
+            Ok(new_cid) => {
+                tracing::info!("Lists uploaded to IPFS: {}", new_cid);
+                // Send list-sync-notification to phone
+                if let Err(e) = self
+                    .mediator
+                    .send_list_sync_notification(
+                        &self.phone_did,
+                        list_type,
+                        action,
+                        merchant_did,
+                        &new_cid,
+                    )
+                    .await
+                {
+                    tracing::warn!("Failed to send list-sync-notification: {}", e);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to upload lists to IPFS: {}", e);
+            }
+        }
+    }
+
     /// Get active session from Solana client, if configured.
     fn get_active_session(&self) -> Option<SessionKeypair> {
         let owner = Pubkey::default();
@@ -475,6 +865,56 @@ impl IgnitePayMcpServer {
             .get_active_session(&owner)
             .ok()
             .flatten()
+    }
+
+    /// Construct a SessionKeypair from a phone-provided auth response.
+    /// Parses the base58 secret key into a Keypair, builds SessionTokenData,
+    /// and stores it in sled for reuse across payments.
+    fn get_session_from_auth_response(&self, resp: &AuthResponse) -> Option<SessionKeypair> {
+        let secret_key_b58 = resp.session_key_secret_key.as_ref()?;
+        let pubkey_b58 = resp.session_key_pubkey.as_ref()?;
+        let expires_at = resp.session_expires_at?;
+        let spending_limit = resp.spending_limit?;
+        let scopes = resp.scopes.clone()?;
+
+        // Decode the base58 secret key into a 64-byte keypair
+        let keypair_bytes = bs58::decode(secret_key_b58).into_vec().ok()?;
+        if keypair_bytes.len() != 64 {
+            tracing::warn!("Invalid session key length: {}", keypair_bytes.len());
+            return None;
+        }
+        let keypair_array: [u8; 64] = keypair_bytes.try_into().ok()?;
+        let keypair = Keypair::try_from(&keypair_array as &[u8]).ok()?;
+
+        // Verify the pubkey matches
+        let expected_pubkey = bs58::decode(pubkey_b58).into_vec().ok()?;
+        if keypair.pubkey().as_ref() != expected_pubkey.as_slice() {
+            tracing::warn!("Session key pubkey mismatch");
+            return None;
+        }
+
+        let session_data = SessionTokenData {
+            owner: Pubkey::default(), // MCP doesn't know the real owner; will use session key as payer
+            ephemeral_signer: keypair.pubkey(),
+            target_program: solana_sdk::system_program::id(),
+            expires_at,
+            spending_limit,
+            current_spent: 0,
+            scopes,
+        };
+
+        // Store in sled for reuse
+        if let Some(client) = &self.solana_client {
+            let key = format!("remote_session:{}", keypair.pubkey());
+            let mut value = borsh::to_vec(&session_data).unwrap_or_default();
+            value.extend_from_slice(&keypair.to_bytes());
+            let _ = client.session_manager().db().insert(key.as_bytes(), value);
+        }
+
+        Some(SessionKeypair {
+            keypair,
+            session_data,
+        })
     }
 }
 
@@ -513,9 +953,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Database opened at {}", config.storage.path);
 
     // Create mediator connection with identity persistence
-    let mediator = Arc::new(
-        MediatorConnection::new(&config.mediator.ws_url, &db)?
-    );
+    let mediator = Arc::new(MediatorConnection::new(&config.mediator.ws_url, &db)?);
 
     // Register phone as a peer
     if !config.mediator.phone_did.is_empty() {
@@ -599,6 +1037,7 @@ async fn main() -> anyhow::Result<()> {
         platform_verifying_key: config.platform.verifying_key_bytes(),
         solana_client,
         solana_bridge,
+        ipfs_client: Arc::new(Box::new(MockIpfsClient::new())),
     };
 
     tracing::info!("Starting MCP server on stdio...");

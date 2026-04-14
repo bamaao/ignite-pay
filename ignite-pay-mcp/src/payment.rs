@@ -125,6 +125,16 @@ pub struct AuthResponse {
     pub authorized: bool,
     pub list_action: String,
     pub merchant_did: String,
+    // V1.0: session key data from phone
+    pub session_key_pubkey: Option<String>,
+    pub session_key_secret_key: Option<String>,
+    pub session_key_tx_signature: Option<String>,
+    pub session_expires_at: Option<i64>,
+    pub spending_limit: Option<u64>,
+    pub scopes: Option<Vec<String>>,
+    // V1.1: list metadata
+    pub list_label: Option<String>,
+    pub list_max_amount: Option<u64>,
 }
 
 /// In-memory store for pending authorization requests with oneshot channels.
@@ -198,17 +208,39 @@ mod tests {
     fn test_pending_auth_store() {
         let store = PendingAuthStore::new();
         let rx = store.register("pay-1");
-        assert!(store.resolve("pay-1", AuthResponse {
-            authorized: true,
-            list_action: "none".to_string(),
-            merchant_did: String::new(),
-        }));
+        assert!(store.resolve(
+            "pay-1",
+            AuthResponse {
+                authorized: true,
+                list_action: "none".to_string(),
+                merchant_did: String::new(),
+                session_key_pubkey: None,
+                session_key_secret_key: None,
+                session_key_tx_signature: None,
+                session_expires_at: None,
+                spending_limit: None,
+                scopes: None,
+                list_label: None,
+                list_max_amount: None,
+            }
+        ));
         let resp = rx.blocking_recv().unwrap();
         assert!(resp.authorized);
-        assert!(!store.resolve("pay-1", AuthResponse {
-            authorized: false,
-            list_action: "none".to_string(),
-            merchant_did: String::new(),
-        }));
+        assert!(!store.resolve(
+            "pay-1",
+            AuthResponse {
+                authorized: false,
+                list_action: "none".to_string(),
+                merchant_did: String::new(),
+                session_key_pubkey: None,
+                session_key_secret_key: None,
+                session_key_tx_signature: None,
+                session_expires_at: None,
+                spending_limit: None,
+                scopes: None,
+                list_label: None,
+                list_max_amount: None,
+            }
+        ));
     }
 }

@@ -1,5 +1,6 @@
 use affinidi_messaging_didcomm::identity::PrivateIdentity;
 use affinidi_messaging_didcomm::{DIDCommAgent, Message, UnpackResult};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// Build a plaintext `mediate-request` message.
@@ -75,6 +76,110 @@ pub fn build_authorization_response(
             "authorized": authorized,
             "list_action": list_action,
         }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Session key data sent from phone to MCP in the V1.0 authorization response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionKeyResponseData {
+    /// Base58-encoded ephemeral public key.
+    pub session_key_pubkey: String,
+    /// Base58-encoded ephemeral secret key (seed) — needed by MCP to sign payments.
+    pub session_key_secret_key: String,
+    /// On-chain registration transaction signature.
+    pub session_key_tx_signature: String,
+    /// Unix timestamp when the session expires.
+    pub session_expires_at: i64,
+    /// Maximum spending limit in lamports.
+    pub spending_limit: u64,
+    /// Permission scopes (e.g., ["sol:transfer", "spl:transfer"]).
+    pub scopes: Vec<String>,
+}
+
+/// Build a V1.0 payment authorization response with optional session key data.
+/// Extends the base auth response with session key fields when authorized=true.
+/// Backward compatible: old fields are always present, new fields added only when session key data is provided.
+pub fn build_authorization_response_v1(
+    from_did: &str,
+    to_did: &str,
+    payment_id: &str,
+    authorized: bool,
+    list_action: &str,
+    session_key_data: Option<&SessionKeyResponseData>,
+) -> Message {
+    build_authorization_response_v1_inner(
+        from_did,
+        to_did,
+        payment_id,
+        authorized,
+        list_action,
+        session_key_data,
+        None,
+        None,
+    )
+}
+
+/// Build a V1.1 payment authorization response with optional session key data and list metadata.
+pub fn build_authorization_response_v1_1(
+    from_did: &str,
+    to_did: &str,
+    payment_id: &str,
+    authorized: bool,
+    list_action: &str,
+    session_key_data: Option<&SessionKeyResponseData>,
+    list_label: Option<&str>,
+    list_max_amount: Option<u64>,
+) -> Message {
+    build_authorization_response_v1_inner(
+        from_did,
+        to_did,
+        payment_id,
+        authorized,
+        list_action,
+        session_key_data,
+        list_label,
+        list_max_amount,
+    )
+}
+
+fn build_authorization_response_v1_inner(
+    from_did: &str,
+    to_did: &str,
+    payment_id: &str,
+    authorized: bool,
+    list_action: &str,
+    session_key_data: Option<&SessionKeyResponseData>,
+    list_label: Option<&str>,
+    list_max_amount: Option<u64>,
+) -> Message {
+    let mut body = json!({
+        "payment_id": payment_id,
+        "authorized": authorized,
+        "list_action": list_action,
+    });
+
+    if let Some(sk) = session_key_data {
+        body["session_key_pubkey"] = json!(sk.session_key_pubkey);
+        body["session_key_secret_key"] = json!(sk.session_key_secret_key);
+        body["session_key_tx_signature"] = json!(sk.session_key_tx_signature);
+        body["session_expires_at"] = json!(sk.session_expires_at);
+        body["spending_limit"] = json!(sk.spending_limit);
+        body["scopes"] = json!(sk.scopes);
+    }
+
+    // V1.1: list metadata
+    if let Some(label) = list_label {
+        body["list_label"] = json!(label);
+    }
+    if let Some(max_amt) = list_max_amount {
+        body["list_max_amount"] = json!(max_amt);
+    }
+
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/payment-auth-response",
+        body,
     )
     .from(from_did.to_string())
     .to(vec![to_did.to_string()])

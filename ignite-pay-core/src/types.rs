@@ -51,6 +51,13 @@ pub struct MerchantListEntry {
     pub max_amount: Option<u64>,
     /// When this entry was added.
     pub added_at: DateTime<Utc>,
+    // V1.1:
+    /// User-assigned tag (e.g. "ShopX Marketplace").
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Entry expiry, None = never expires.
+    #[serde(default)]
+    pub expires: Option<DateTime<Utc>>,
 }
 
 /// Combined whitelist and blacklist structure for IPFS storage.
@@ -66,6 +73,25 @@ pub struct WhitelistResult {
     pub is_whitelisted: bool,
     /// The max_amount from the whitelist entry, if applicable.
     pub max_amount: Option<u64>,
+    // V1.1:
+    /// User-assigned label for this entry.
+    pub label: Option<String>,
+    /// When this entry expires, None = never expires.
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+/// Risk control decision for a payment request (V1.1).
+#[derive(Debug, Clone, PartialEq)]
+pub enum RiskControlDecision {
+    /// Merchant on blacklist (or expired VC).
+    Blocked,
+    /// Merchant on whitelist + within limit.
+    AutoApproved {
+        max_amount: Option<u64>,
+        label: Option<String>,
+    },
+    /// Not on any list, proceed to phone auth.
+    NeedsAuth,
 }
 
 /// A Verifiable Credential for merchant attestation.
@@ -130,5 +156,23 @@ mod tests {
         let back: MerchantLists = serde_json::from_str(&json).unwrap();
         assert!(back.whitelist.is_empty());
         assert!(back.blacklist.is_empty());
+    }
+
+    #[test]
+    fn test_merchant_list_entry_backward_compat() {
+        // Old JSON without label/expires should deserialize correctly
+        let old_json = r#"{"did":"did:ignite:zTest","name":"Test","max_amount":1000,"added_at":"2024-01-01T00:00:00Z"}"#;
+        let entry: MerchantListEntry = serde_json::from_str(old_json).unwrap();
+        assert_eq!(entry.did, "did:ignite:zTest");
+        assert!(entry.label.is_none());
+        assert!(entry.expires.is_none());
+    }
+
+    #[test]
+    fn test_merchant_list_entry_with_v11_fields() {
+        let json = r#"{"did":"did:ignite:zTest","name":"Test","max_amount":1000,"added_at":"2024-01-01T00:00:00Z","label":"ShopX","expires":"2025-12-31T23:59:59Z"}"#;
+        let entry: MerchantListEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.label.as_deref(), Some("ShopX"));
+        assert!(entry.expires.is_some());
     }
 }
