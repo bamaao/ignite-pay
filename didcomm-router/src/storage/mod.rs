@@ -40,11 +40,17 @@ pub trait MessageStore: Send + Sync {
     ) -> crate::error::Result<Vec<QueuedMessage>>;
 }
 
-/// Persistence for device tokens (FCM registration).
+/// Persistence for device tokens (FCM registration) and push channel preferences.
 #[async_trait]
 pub trait DeviceTokenStore: Send + Sync {
     async fn register_device_token(&self, user_did: &str, fcm_token: &str) -> crate::error::Result<()>;
     async fn get_device_token(&self, user_did: &str) -> crate::error::Result<Option<String>>;
+
+    /// Set the push channel preference for a user ("fcm" or "websocket").
+    async fn set_push_channel(&self, user_did: &str, channel: &str) -> crate::error::Result<()>;
+
+    /// Get the push channel preference for a user. Defaults to "fcm".
+    async fn get_push_channel(&self, user_did: &str) -> crate::error::Result<String>;
 }
 
 /// Keylist (routing-table) mapping: which recipient DIDs this router routes for.

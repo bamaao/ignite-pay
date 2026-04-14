@@ -210,20 +210,21 @@ pub async fn submit_command(
 /// Request body for registering a device token.
 #[derive(Debug, Deserialize)]
 pub struct RegisterTokenRequest {
-    pub fcm_token: String,
+    pub fcm_token: Option<String>,
+    /// Push channel preference: "fcm" or "websocket". Defaults to "fcm".
+    pub push_channel: Option<String>,
 }
 
-/// `POST /v1/devices/register-token` — Register FCM device token for push notifications.
+/// `POST /v1/devices/register-token` — Register FCM device token and/or push channel preference.
 pub async fn register_device_token(
     State(state): State<RouterState>,
     auth: AuthUser,
     axum::Json(req): axum::Json<RegisterTokenRequest>,
 ) -> impl IntoResponse {
-    if let Err(e) = state
-        .device_token_store
-        .register_device_token(&auth.did, &req.fcm_token)
-        .await
-    {
+    let channel = req.push_channel.as_deref().unwrap_or("fcm");
+
+    // Store push channel preference
+    if let Err(e) = state.device_token_store.set_push_channel(&auth.did, channel).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             axum::Json(serde_json::json!({ "error": e.to_string() })),
@@ -231,7 +232,24 @@ pub async fn register_device_token(
             .into_response();
     }
 
-    info!("Registered FCM token for {}", auth.did);
+    // Register FCM token if provided (FCM channel)
+    if let Some(ref fcm_token) = req.fcm_token {
+        if let Err(e) = state
+            .device_token_store
+            .register_device_token(&auth.did, fcm_token)
+            .await
+        {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+        info!("Registered FCM token for {} (channel: {})", auth.did, channel);
+    } else {
+        info!("Registered push channel '{}' for {}", channel, auth.did);
+    }
+
     StatusCode::OK.into_response()
 }
 

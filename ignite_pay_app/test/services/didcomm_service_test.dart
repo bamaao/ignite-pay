@@ -227,5 +227,59 @@ void main() {
         expect(received[2].paymentId, 'pay_2');
       });
     });
+
+    group('WS message handling', () {
+      test('handleAuthRequest processes payment-auth-request from WS', () {
+        // Simulate a WS message that triggers auth request
+        final request = AuthRequest(
+          paymentId: 'pay_ws_test',
+          merchantDid: 'did:test:merchant_ws',
+          amount: 5000,
+          description: 'WS test payment',
+        );
+
+        service.handleAuthRequest(request);
+        expect(service.pendingAuth, isNotNull);
+        expect(service.pendingAuth!.paymentId, 'pay_ws_test');
+        expect(service.messages.length, 0); // No messages until _decryptAndProcess is called
+      });
+
+      test('simulateAuthRequest works for WS path', () {
+        final request = AuthRequest(
+          paymentId: 'pay_ws_sim',
+          merchantDid: 'did:test:merchant_ws',
+          amount: 3000,
+          description: 'WS simulated payment',
+        );
+
+        service.simulateAuthRequest(request);
+        expect(service.pendingAuth, isNotNull);
+        expect(service.pendingAuth!.paymentId, 'pay_ws_sim');
+      });
+
+      test('multiple WS auth requests queue correctly', () async {
+        final received = <AuthRequest>[];
+        service.authRequests.listen((req) => received.add(req));
+
+        for (int i = 0; i < 5; i++) {
+          service.handleAuthRequest(AuthRequest(
+            paymentId: 'pay_ws_$i',
+            merchantDid: 'did:test:merchant',
+            amount: i * 1000,
+            description: 'WS payment $i',
+          ));
+        }
+
+        await Future.delayed(const Duration(milliseconds: 50));
+        expect(received.length, 5);
+        // Only the last one should be pending auth
+        expect(service.pendingAuth!.paymentId, 'pay_ws_4');
+      });
+
+      test('disconnect cleans up WS state', () async {
+        await service.disconnect();
+        expect(service.isConnected, isFalse);
+      });
+    });
   });
 }

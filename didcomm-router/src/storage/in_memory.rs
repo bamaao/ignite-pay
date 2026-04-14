@@ -157,12 +157,15 @@ impl KeylistStore for InMemoryKeylistStore {
 pub struct InMemoryDeviceTokenStore {
     /// user_did -> fcm_device_token
     tokens: DashMap<String, String>,
+    /// user_did -> push_channel ("fcm" or "websocket")
+    push_channels: DashMap<String, String>,
 }
 
 impl InMemoryDeviceTokenStore {
     pub fn new() -> Self {
         Self {
             tokens: DashMap::new(),
+            push_channels: DashMap::new(),
         }
     }
 }
@@ -176,6 +179,19 @@ impl DeviceTokenStore for InMemoryDeviceTokenStore {
 
     async fn get_device_token(&self, user_did: &str) -> crate::error::Result<Option<String>> {
         Ok(self.tokens.get(user_did).map(|v| v.value().clone()))
+    }
+
+    async fn set_push_channel(&self, user_did: &str, channel: &str) -> crate::error::Result<()> {
+        self.push_channels.insert(user_did.to_string(), channel.to_string());
+        Ok(())
+    }
+
+    async fn get_push_channel(&self, user_did: &str) -> crate::error::Result<String> {
+        Ok(self
+            .push_channels
+            .get(user_did)
+            .map(|v| v.value().clone())
+            .unwrap_or_else(|| "fcm".to_string()))
     }
 }
 
@@ -232,3 +248,113 @@ pub type SharedMessageStore = Arc<dyn MessageStore>;
 pub type SharedKeylistStore = Arc<dyn KeylistStore>;
 pub type SharedDeviceTokenStore = Arc<dyn DeviceTokenStore>;
 pub type SharedAgentBindingStore = Arc<dyn AgentBindingStore>;
+
+// ── Tests ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_device_token_store_basic() {
+        let store = InMemoryDeviceTokenStore::new();
+
+        // Initially no token
+        assert!(store.get_device_token("user1").await.unwrap().is_none());
+
+        // Register token
+        store
+            .register_device_token("user1", "fcm_token_123")
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_device_token("user1").await.unwrap(),
+            Some("fcm_token_123".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_push_channel_default_is_fcm() {
+        let store = InMemoryDeviceTokenStore::new();
+
+        // Default push channel is "fcm"
+        assert_eq!(
+            store.get_push_channel("user1").await.unwrap(),
+            "fcm".to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_push_channel_set_and_get_websocket() {
+        let store = InMemoryDeviceTokenStore::new();
+
+        store
+            .set_push_channel("user1", "websocket")
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_push_channel("user1").await.unwrap(),
+            "websocket".to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_push_channel_set_and_get_fcm() {
+        let store = InMemoryDeviceTokenStore::new();
+
+        store.set_push_channel("user1", "fcm").await.unwrap();
+        assert_eq!(
+            store.get_push_channel("user1").await.unwrap(),
+            "fcm".to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_push_channel_different_users() {
+        let store = InMemoryDeviceTokenStore::new();
+
+        store
+            .set_push_channel("user1", "websocket")
+            .await
+            .unwrap();
+        store.set_push_channel("user2", "fcm").await.unwrap();
+
+        assert_eq!(
+            store.get_push_channel("user1").await.unwrap(),
+            "websocket".to_string()
+        );
+        assert_eq!(
+            store.get_push_channel("user2").await.unwrap(),
+            "fcm".to_string()
+        );
+        // user3 has no channel set, defaults to fcm
+        assert_eq!(
+            store.get_push_channel("user3").await.unwrap(),
+            "fcm".to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_push_channel_overwrite() {
+        let store = InMemoryDeviceTokenStore::new();
+
+        store
+            .set_push_channel("user1", "fcm")
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_push_channel("user1").await.unwrap(),
+            "fcm".to_string()
+        );
+
+        // Overwrite to websocket
+        store
+            .set_push_channel("user1", "websocket")
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_push_channel("user1").await.unwrap(),
+            "websocket".to_string()
+        );
+    }
+}

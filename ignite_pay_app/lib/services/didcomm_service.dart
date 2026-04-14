@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:ignite_pay_app/services/fcm_service.dart';
 import 'package:ignite_pay_app/services/mediator_api.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 /// A payment authorization request from the MCP server.
 class AuthRequest {
@@ -77,6 +79,8 @@ class DidcommService extends ChangeNotifier {
   bool _isInitialized = false;
   String? _authToken;
   String? _lastPulledId;
+  WebSocketChannel? _wsChannel;
+  StreamSubscription? _wsSubscription;
 
   final List<DecryptedMsg> _messages = [];
   AuthRequest? _pendingAuth;
@@ -98,6 +102,20 @@ class DidcommService extends ChangeNotifier {
 
   /// Stream of incoming auth requests.
   Stream<AuthRequest> get authRequests => _authRequestController.stream;
+
+  /// Whether the current user is detected as a Chinese user based on locale.
+  /// Chinese users use WebSocket direct push instead of FCM.
+  bool get _isChineseUser {
+    final locale = SchedulerBinding.instance.platformDispatcher.locale;
+    final languageCode = locale.languageCode;
+    final countryCode = locale.countryCode;
+
+    // Check for zh_CN locale
+    if (languageCode == 'zh' && countryCode == 'CN') return true;
+    // Check for common Chinese time zones via locale script
+    if (locale.scriptCode == 'Hans') return true;
+    return false;
+  }
 
   /// Initialize DID identity (generates or loads from storage).
   Future<void> initialize({String storagePath = './phone_data'}) async {
@@ -149,8 +167,13 @@ class DidcommService extends ChangeNotifier {
       // Authenticate and pull any pending messages
       await _authenticateAndPull();
 
-      // Initialize FCM
-      await _initFcm();
+      if (_isChineseUser) {
+        // Chinese users: register websocket push channel, maintain WS long connection
+        await _initWebSocketChannel();
+      } else {
+        // Overseas users: use FCM for push notifications
+        await _initFcm();
+      }
     } catch (e) {
       debugPrint('Failed to connect to mediator: $e');
       _isConnected = false;
@@ -161,6 +184,10 @@ class DidcommService extends ChangeNotifier {
   /// Disconnect from the mediator.
   Future<void> disconnect() async {
     try {
+      _wsSubscription?.cancel();
+      _wsSubscription = null;
+      await _wsChannel?.sink.close();
+      _wsChannel = null;
       // In production, call Rust bridge:
       // await disconnectMediator();
     } catch (_) {}
@@ -320,6 +347,66 @@ class DidcommService extends ChangeNotifier {
     }
   }
 
+  /// Initialize WebSocket channel for Chinese users (direct push, no FCM).
+  Future<void> _initWebSocketChannel() async {
+    if (_authToken == null || _mediatorWsUrl.isEmpty) return;
+
+    try {
+      // Register websocket push channel preference with mediator
+      await _api.registerWebSocketChannel(_authToken!);
+
+      // Establish WS long connection for receiving messages directly
+      _wsChannel = WebSocketChannel.connect(Uri.parse(_mediatorWsUrl));
+
+      // Send identification message with DID so mediator can route to us
+      _wsChannel!.sink.add('{"from":"$_did","type":"identify"}');
+
+      _wsSubscription = _wsChannel!.stream.listen(
+        (data) {
+          if (data is String) {
+            _onWsMessage(data);
+          }
+        },
+        onError: (error) {
+          debugPrint('WS channel error: $error');
+          _reconnectWebSocket();
+        },
+        onDone: () {
+          debugPrint('WS channel closed, attempting reconnect');
+          _reconnectWebSocket();
+        },
+      );
+
+      debugPrint('WebSocket channel initialized for user $_did');
+    } catch (e) {
+      debugPrint('Failed to initialize WebSocket channel: $e');
+    }
+  }
+
+  /// Handle a message received directly via WebSocket.
+  void _onWsMessage(String jweEnvelope) {
+    debugPrint('WS message received (${jweEnvelope.length} bytes)');
+    // Decrypt and process the JWE directly
+    _decryptAndProcess(jweEnvelope);
+  }
+
+  /// Attempt to reconnect the WebSocket after a delay, pulling missed messages.
+  Future<void> _reconnectWebSocket() async {
+    _wsSubscription?.cancel();
+    _wsSubscription = null;
+    _wsChannel = null;
+
+    // Pull any messages that arrived while disconnected
+    await _pullAndDecryptMessages();
+
+    // Wait before reconnecting
+    await Future.delayed(const Duration(seconds: 3));
+
+    if (_isConnected && _isChineseUser) {
+      await _initWebSocketChannel();
+    }
+  }
+
   /// Initialize FCM for push notifications.
   Future<void> _initFcm() async {
     try {
@@ -365,6 +452,8 @@ class DidcommService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _wsSubscription?.cancel();
+    _wsChannel?.sink.close();
     _authRequestController.close();
     super.dispose();
   }

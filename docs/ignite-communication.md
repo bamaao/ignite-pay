@@ -243,7 +243,42 @@ MCP/Skill 通过 DIDComm Mediator 协议（`coordinate-mediation/2.0`）建立�
 
 ---
 
-## 9. 下一步行动建议
+## 9. 中国用户 WebSocket 通道
+
+### 9.1 背景
+
+中国大陆用户无法使用 Google FCM，当前"FCM 门铃 + HTTPS 拉取"模式不适用。需要为中国用户提供纯 WebSocket 通道：手机端维持与 Mediator 的 WS 长连接，消息直接通过 WS 实时推送。
+
+### 9.2 双通道架构
+
+```
+海外用户: MCP → WS → Mediator → FCM 信号 → 手机 HTTPS 拉取 (当前)
+中国用户: MCP → WS → Mediator → WS 直推 → 手机实时接收 (新增)
+```
+
+### 9.3 判断中国用户
+
+手机在注册时通过以下信号判断（任一命中即视为中国用户）：
+1. `Locale` 包含 `zh_CN` 或语言为 `zh` 且国家为 `CN`
+2. 时区为 `Asia/Shanghai`、`Asia/Chongqing` 等
+
+### 9.4 注册流程差异
+
+- **中国用户**: 注册 `push_channel: "websocket"`，不注册 FCM token
+- **海外用户**: 注册 `push_channel: "fcm"` + FCM token（不变）
+
+### 9.5 路由策略
+
+当需要向手机推送消息时：
+1. 查询用户的 `push_channel` 偏好
+2. `"websocket"`: 检查用户 WS session 是否在线
+   - 在线: 直接通过 WS 推送 JWE
+   - 离线: 存入 message queue（手机重连后通过 Pickup 协议拉取）
+3. `"fcm"`: 走现有 FCM 信号 + HTTPS 拉取逻辑
+
+---
+
+## 10. 下一步行动建议
 
 1.  **集成 Firebase**: 完成 Flutter 与 FCM 的基础对接。
 2.  **编写 FFI 桥接**: 封装 Rust 的 `didcomm-rs` 到 Flutter 可用的库。

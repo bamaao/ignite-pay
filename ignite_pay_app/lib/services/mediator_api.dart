@@ -93,7 +93,16 @@ class MediatorApi {
   Future<void> registerDeviceToken(String token, String fcmToken) async {
     await _dio.post(
       '/v1/devices/register-token',
-      data: {'fcm_token': fcmToken},
+      data: {'fcm_token': fcmToken, 'push_channel': 'fcm'},
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+  }
+
+  /// Register a WebSocket push channel preference (for Chinese users without FCM).
+  Future<void> registerWebSocketChannel(String token) async {
+    await _dio.post(
+      '/v1/devices/register-token',
+      data: {'push_channel': 'websocket'},
       options: Options(headers: {'Authorization': 'Bearer $token'}),
     );
   }

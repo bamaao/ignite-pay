@@ -157,6 +157,13 @@ void main() {
         await api.registerDeviceToken('tok', 'fcm_token_xyz');
       });
 
+      test('registerWebSocketChannel completes without error', () async {
+        mock.responses['POST /v1/devices/register-token'] = {'ok': true};
+        final api = _createApi();
+
+        await api.registerWebSocketChannel('tok');
+      });
+
       test('authenticate throws on server error', () async {
         mock.shouldFail = true;
         mock.errorCode = 500;
@@ -244,7 +251,16 @@ class _TestableMediatorApi extends MediatorApi {
   Future<void> registerDeviceToken(String token, String fcmToken) async {
     await _testDio.post(
       '/v1/devices/register-token',
-      data: {'fcm_token': fcmToken},
+      data: {'fcm_token': fcmToken, 'push_channel': 'fcm'},
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+  }
+
+  @override
+  Future<void> registerWebSocketChannel(String token) async {
+    await _testDio.post(
+      '/v1/devices/register-token',
+      data: {'push_channel': 'websocket'},
       options: Options(headers: {'Authorization': 'Bearer $token'}),
     );
   }

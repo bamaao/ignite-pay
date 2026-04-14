@@ -50,6 +50,9 @@ dependencies:
   # HTTP client
   dio: ^5.4.0
 
+  # WebSocket client (for Chinese user direct push channel)
+  web_socket_channel: ^3.0.0
+
   # State management
   provider: ^6.1.0
 

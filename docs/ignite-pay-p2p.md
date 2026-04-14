@@ -46,13 +46,33 @@
 
 ---
 
-## 4. 建立连接后的反向通知 (FCM)
+## 4. 建立连接后的反向通知
+
+### 4.1 海外用户 (FCM 通道)
+
 当本地 MCP 需要主动联系手机时，流程如下：
 
 1.  **本地加密**：MCP 使用私钥加密反馈消息 (JWM)。
 2.  **上传中继**：MCP 通过 WSS 或 HTTPS 将 JWM 发给云端 Mediator。
-3.  **信号触发**：云端 Mediator 存储 JWM，并调用 **FCM (或 JPush)** 向手机发送 `msg_id`。
+3.  **信号触发**：云端 Mediator 存储 JWM，并调用 **FCM** 向手机发送 `msg_id`。
 4.  **手机回拉**：手机收到通知，请求云端 Mediator 接口，拉取完整的加密包。
+
+### 4.2 中国用户 (WebSocket 直推通道)
+
+中国用户无法使用 FCM，采用 WebSocket 长连接直推：
+
+1.  **本地加密**：MCP 使用私钥加密反馈消息 (JWM)。
+2.  **上传中继**：MCP 通过 WSS 将 JWE 发给云端 Mediator。
+3.  **WS 直推**：Mediator 检查用户 WS session 是否在线：
+    - **在线**: 直接通过 WS 推送 JWE，手机实时接收。
+    - **离线**: JWE 存入 message queue，手机重连后通过 Pickup 协议拉取。
+4.  **手机处理**：手机直接解密 WS 收到的 JWE，无需额外拉取步骤。
+
+### 4.3 通道选择
+
+手机在注册时根据 locale/时区判断是否为中国用户：
+- **中国用户**: 注册 `push_channel: "websocket"`，维持 WS 长连接
+- **海外用户**: 注册 `push_channel: "fcm"` + FCM token
 
 ---
 

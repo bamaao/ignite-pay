@@ -107,7 +107,9 @@ fn is_jwe(text: &str) -> bool {
 ///
 /// When a registered MCP/Skill agent sends a JWE that is not a DIDComm protocol
 /// message (e.g. a payment-auth-request encrypted for the phone), the router
-/// should store it for the bound user and send an FCM push notification.
+/// routes based on the user's push channel preference:
+/// - "websocket": tries direct WS delivery, falls back to queue
+/// - "fcm" (default): stores and sends FCM signal
 async fn route_application_message(
     jwe: &str,
     state: &RouterState,
@@ -140,22 +142,68 @@ async fn route_application_message(
         queued_at: chrono::Utc::now(),
     };
 
-    // Store the message for the user to pull
-    state
-        .message_store
-        .store_for_user(&user_did, queued)
-        .await?;
+    // Determine push channel preference
+    let channel = state
+        .device_token_store
+        .get_push_channel(&user_did)
+        .await
+        .unwrap_or_else(|_| "fcm".to_string());
 
-    info!(
-        "Routed application message from agent {} to user {} (msg_id={})",
-        sender, user_did, msg_id
-    );
+    match channel.as_str() {
+        "websocket" => {
+            // Try direct WS delivery to the user
+            if state.sessions.is_online(&user_did) {
+                match state.sessions.send_to(&user_did, jwe) {
+                    Ok(()) => {
+                        info!(
+                            "WS direct push: agent {} -> user {} (msg_id={})",
+                            sender, user_did, msg_id
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "WS push failed for user {}, falling back to queue: {}",
+                            user_did, e
+                        );
+                    }
+                }
+            } else {
+                info!(
+                    "User {} offline (websocket channel), queuing message {}",
+                    user_did, msg_id
+                );
+            }
+            // Always store in queue as fallback
+            state.message_store.store_for_user(&user_did, queued).await?;
+        }
+        _ => {
+            // FCM mode: store for pull + send FCM signal
+            state
+                .message_store
+                .store_for_user(&user_did, queued)
+                .await?;
 
-    // Send FCM push notification if device token is registered
-    if let Ok(Some(device_token)) = state.device_token_store.get_device_token(&user_did).await {
-        match state.notification_sender.send_signal(&device_token, &msg_id).await {
-            Ok(()) => info!("Sent push notification for routed message {} to user {}", msg_id, user_did),
-            Err(e) => warn!("Failed to send push notification for routed message: {}", e),
+            info!(
+                "Routed application message from agent {} to user {} (msg_id={})",
+                sender, user_did, msg_id
+            );
+
+            // Send FCM push notification if device token is registered
+            if let Ok(Some(device_token)) =
+                state.device_token_store.get_device_token(&user_did).await
+            {
+                match state
+                    .notification_sender
+                    .send_signal(&device_token, &msg_id)
+                    .await
+                {
+                    Ok(()) => info!(
+                        "Sent push notification for routed message {} to user {}",
+                        msg_id, user_did
+                    ),
+                    Err(e) => warn!("Failed to send push notification for routed message: {}", e),
+                }
+            }
         }
     }
 
