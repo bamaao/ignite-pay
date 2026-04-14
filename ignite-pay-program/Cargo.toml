@@ -1,0 +1,21 @@
+[package]
+name = "ignite-pay-program"
+version = "0.1.0"
+edition = "2021"
+description = "On-chain Solana program for Ignite Pay state channel"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "1.0.0", features = ["idl-build"] }
+anchor-spl = { version = "1.0.0", features = ["idl-build"] }
+solana-program = "~2.2"
+ed25519-dalek = { version = "1", default-features = false, features = ["u64_backend"] }
+getrandom = { version = "0.1", features = ["dummy"] }
+
+[profile.release]
+overflow-checks = true
