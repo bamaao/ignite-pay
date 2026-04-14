@@ -35,14 +35,20 @@
 
 ### 第二步：手机端解析与发送请求 (Connection Request)
 1.  **扫码**：手机端解析二维码，获取 MCP 的 DID 和 **Mediator 的地址**。
-2.  **封包**：手机端生成 `Connection Request`，包含自己的 DID 和 **FCM Token**。
-3.  **加密**：使用 MCP 的公钥进行匿名加密 (Anoncrypt)。
-4.  **投递**：手机端将加密包 POST 给云端 Mediator。
+2.  **通道检测**：手机根据 `Locale` / 时区判断用户类型：
+    *   **中国用户** (`zh_CN`)：选择 `push_channel: "websocket"`，不提供 FCM Token。
+    *   **海外用户**：选择 `push_channel: "fcm"`，同时获取 FCM Token。
+3.  **封包**：手机端生成 `Connection Request`，包含自己的 DID、`push_channel` 偏好，以及（海外用户）FCM Token。
+4.  **加密**：使用 MCP 的公钥进行匿名加密 (Anoncrypt)。
+5.  **投递**：手机端将加密包 POST 给云端 Mediator。
 
 ### 第三步：中继转发与解密
 1.  **中继识别**：Mediator 收到请求，根据外层包裹识别出这是给 `mcp_local_001` 的，通过 WSS 转发给内网 MCP。
 2.  **解密验签**：本地 MCP 在内网环境下解密消息。
-3.  **存储绑定**：本地 MCP 将 `手机 DID` 与其 `FCM Token` 存入数据库，完成绑定。
+3.  **存储绑定**：本地 MCP 将 `手机 DID` 与其推送偏好存入数据库：
+    *   海外用户：绑定 `FCM Token`，`push_channel = "fcm"`。
+    *   中国用户：绑定 `push_channel = "websocket"`，无 FCM Token。
+4.  **WS 注册（中国用户）**：中国用户手机同时与 Mediator 建立 WebSocket 长连接，发送包含 DID 的身份标识消息，Mediator 将该连接与用户 DID 关联，后续消息可通过此连接直推。
 
 ---
 
@@ -99,13 +105,34 @@
 * 集成 `didcomm-rs` 等库处理解密逻辑。
 
 ### C. 手机端
-* 在 `Connection Request` 的 `body` 中务必包含字段：`{"push_token": "...", "provider": "jpush"}`。
+
+手机端在 `Connection Request` 的 `body` 中必须包含推送通道信息：
+
+```json
+// 海外用户
+{
+  "push_channel": "fcm",
+  "push_token": "<FCM device token>"
+}
+
+// 中国用户（无 FCM）
+{
+  "push_channel": "websocket"
+}
+```
+
+中国用户手机还需在连接建立后维持与 Mediator 的 WebSocket 长连接：
+* 连接建立时发送 `{"from": "<手机DID>", "type": "identify"}` 注册身份。
+* 通过心跳或业务消息维持连接活性。
+* 断连后自动重连，并调用 Pickup 协议补齐离线期间的消息。
 
 ---
 
 ## 7. 总结
-本方案通过 **“内网 MCP + 公网 Mediator”** 解决了私钥安全与公网可达性的矛盾。
+本方案通过 **"内网 MCP + 公网 Mediator"** 解决了私钥安全与公网可达性的矛盾。
 * **建立连接时**：手机根据二维码找 Mediator，Mediator 找本地。
-* **日常通信时**：本地找 Mediator，Mediator 通过 FCM “喊”手机，手机找 Mediator 拉取。
+* **日常通信时**：
+    * **海外用户**：本地找 Mediator，Mediator 通过 FCM 信号通知手机，手机回拉消息。
+    * **中国用户**：本地找 Mediator，Mediator 通过 WebSocket 直推消息到手机；手机离线时消息暂存队列，重连后自动拉取。
 
 这种架构是目前处理 **私有化 Agent 与 移动端交互** 的工业级标准。
