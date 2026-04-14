@@ -6,8 +6,9 @@ use crate::did::resolver::MediatorDidAgent;
 use crate::notification::NotificationSender;
 use crate::session::manager::SessionManager;
 use crate::storage::in_memory::{
-    InMemoryDeviceTokenStore, InMemoryKeylistStore, InMemoryMessageStore, SharedDeviceTokenStore,
-    SharedKeylistStore, SharedMessageStore,
+    InMemoryAgentBindingStore, InMemoryDeviceTokenStore, InMemoryKeylistStore,
+    InMemoryMessageStore, SharedAgentBindingStore, SharedDeviceTokenStore, SharedKeylistStore,
+    SharedMessageStore,
 };
 
 /// Shared application state accessible to all handlers.
@@ -21,6 +22,7 @@ pub struct AppState {
     pub ignite_registry: Arc<IgniteDidRegistry>,
     pub device_token_store: SharedDeviceTokenStore,
     pub notification_sender: Arc<dyn NotificationSender>,
+    pub agent_binding_store: SharedAgentBindingStore,
 }
 
 impl AppState {
@@ -32,6 +34,7 @@ impl AppState {
         let ignite_registry = Arc::new(IgniteDidRegistry::new());
         let device_token_store = Arc::new(InMemoryDeviceTokenStore::new());
         let notification_sender = Arc::new(crate::notification::NoopNotificationSender);
+        let agent_binding_store = Arc::new(InMemoryAgentBindingStore::new());
 
         Self {
             config,
@@ -42,6 +45,7 @@ impl AppState {
             ignite_registry,
             device_token_store,
             notification_sender,
+            agent_binding_store,
         }
     }
 }

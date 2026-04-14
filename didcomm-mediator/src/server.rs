@@ -13,10 +13,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health", get(health))
         // REST API v1
         .route("/v1/auth/token", post(transport::http::auth_token))
-        .route("/v1/sync/messages/{msg_id}", get(transport::http::get_message))
+        .route("/v1/sync/messages/:msg_id", get(transport::http::get_message))
         .route("/v1/sync/list", get(transport::http::list_messages))
-        .route("/v1/agents/{agent_id}/command", post(transport::http::submit_command))
         .route("/v1/devices/register-token", post(transport::http::register_device_token))
+        .route("/v1/agents/bind", post(transport::http::bind_agent))
+        .route("/v1/agents/:agent_id/command", post(transport::http::submit_command))
         .with_state(state)
 }
 

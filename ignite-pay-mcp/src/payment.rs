@@ -183,7 +183,26 @@ mod tests {
     #[test]
     fn test_payment_status_display() {
         assert_eq!(PaymentStatus::PendingAuth.to_string(), "pending_auth");
+        assert_eq!(PaymentStatus::Authorized.to_string(), "authorized");
         assert_eq!(PaymentStatus::Executed.to_string(), "executed");
+        assert_eq!(PaymentStatus::Rejected.to_string(), "rejected");
+        assert_eq!(PaymentStatus::Expired.to_string(), "expired");
+    }
+
+    #[test]
+    fn test_payment_status_serde_roundtrip() {
+        let statuses = vec![
+            PaymentStatus::PendingAuth,
+            PaymentStatus::Authorized,
+            PaymentStatus::Executed,
+            PaymentStatus::Rejected,
+            PaymentStatus::Expired,
+        ];
+        for s in &statuses {
+            let json = serde_json::to_string(s).unwrap();
+            let back: PaymentStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(*s, back);
+        }
     }
 
     #[test]
@@ -202,45 +221,224 @@ mod tests {
         };
         let tx = execute_mock_payment(&payment);
         assert!(tx.starts_with("tx_mock_test-123_"));
+        // Each call should produce a unique tx signature
+        let tx2 = execute_mock_payment(&payment);
+        assert_ne!(tx, tx2);
     }
 
     #[test]
-    fn test_pending_auth_store() {
+    fn test_pending_auth_store_resolve() {
         let store = PendingAuthStore::new();
         let rx = store.register("pay-1");
-        assert!(store.resolve(
-            "pay-1",
-            AuthResponse {
-                authorized: true,
-                list_action: "none".to_string(),
-                merchant_did: String::new(),
-                session_key_pubkey: None,
-                session_key_secret_key: None,
-                session_key_tx_signature: None,
-                session_expires_at: None,
-                spending_limit: None,
-                scopes: None,
-                list_label: None,
-                list_max_amount: None,
-            }
-        ));
+        assert!(store.resolve("pay-1", AuthResponse {
+            authorized: true,
+            list_action: "none".to_string(),
+            merchant_did: String::new(),
+            session_key_pubkey: None,
+            session_key_secret_key: None,
+            session_key_tx_signature: None,
+            session_expires_at: None,
+            spending_limit: None,
+            scopes: None,
+            list_label: None,
+            list_max_amount: None,
+        }));
         let resp = rx.blocking_recv().unwrap();
         assert!(resp.authorized);
-        assert!(!store.resolve(
-            "pay-1",
-            AuthResponse {
-                authorized: false,
-                list_action: "none".to_string(),
-                merchant_did: String::new(),
-                session_key_pubkey: None,
-                session_key_secret_key: None,
-                session_key_tx_signature: None,
-                session_expires_at: None,
-                spending_limit: None,
-                scopes: None,
-                list_label: None,
-                list_max_amount: None,
-            }
-        ));
+    }
+
+    #[test]
+    fn test_pending_auth_store_double_resolve() {
+        let store = PendingAuthStore::new();
+        let _rx = store.register("pay-1");
+        // First resolve succeeds
+        assert!(store.resolve("pay-1", AuthResponse {
+            authorized: true,
+            list_action: "none".to_string(),
+            merchant_did: String::new(),
+            session_key_pubkey: None,
+            session_key_secret_key: None,
+            session_key_tx_signature: None,
+            session_expires_at: None,
+            spending_limit: None,
+            scopes: None,
+            list_label: None,
+            list_max_amount: None,
+        }));
+        // Second resolve returns false (already consumed)
+        assert!(!store.resolve("pay-1", AuthResponse {
+            authorized: false,
+            list_action: "none".to_string(),
+            merchant_did: String::new(),
+            session_key_pubkey: None,
+            session_key_secret_key: None,
+            session_key_tx_signature: None,
+            session_expires_at: None,
+            spending_limit: None,
+            scopes: None,
+            list_label: None,
+            list_max_amount: None,
+        }));
+    }
+
+    #[test]
+    fn test_pending_auth_store_unknown_id() {
+        let store = PendingAuthStore::new();
+        assert!(!store.resolve("nonexistent", AuthResponse {
+            authorized: false,
+            list_action: "none".to_string(),
+            merchant_did: String::new(),
+            session_key_pubkey: None,
+            session_key_secret_key: None,
+            session_key_tx_signature: None,
+            session_expires_at: None,
+            spending_limit: None,
+            scopes: None,
+            list_label: None,
+            list_max_amount: None,
+        }));
+    }
+
+    #[test]
+    fn test_pending_auth_store_multiple_pending() {
+        let store = PendingAuthStore::new();
+        let rx1 = store.register("pay-1");
+        let mut rx2 = store.register("pay-2");
+        let rx3 = store.register("pay-3");
+
+        // Resolve out of order
+        assert!(store.resolve("pay-3", AuthResponse {
+            authorized: true,
+            list_action: "none".to_string(),
+            merchant_did: String::new(),
+            session_key_pubkey: None,
+            session_key_secret_key: None,
+            session_key_tx_signature: None,
+            session_expires_at: None,
+            spending_limit: None,
+            scopes: None,
+            list_label: None,
+            list_max_amount: None,
+        }));
+        assert!(store.resolve("pay-1", AuthResponse {
+            authorized: false,
+            list_action: "whitelist".to_string(),
+            merchant_did: "did:ignite:zMerchant".to_string(),
+            session_key_pubkey: None,
+            session_key_secret_key: None,
+            session_key_tx_signature: None,
+            session_expires_at: None,
+            spending_limit: None,
+            scopes: None,
+            list_label: None,
+            list_max_amount: None,
+        }));
+
+        assert!(!rx1.blocking_recv().unwrap().authorized);
+        assert!(rx3.blocking_recv().unwrap().authorized);
+        // rx2 is still pending
+        assert!(rx2.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_payment_store_crud() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PaymentStore::new(dir.path().to_str().unwrap()).unwrap();
+
+        let payment = PaymentRequest {
+            id: "crud-1".to_string(),
+            recipient: "wallet_xyz".to_string(),
+            merchant_did: "did:ignite:zMerchant".to_string(),
+            amount: 5000,
+            token: "SOL".to_string(),
+            network: "solana".to_string(),
+            description: "test crud".to_string(),
+            status: PaymentStatus::PendingAuth,
+            created_at: Utc::now(),
+            tx_signature: None,
+        };
+
+        // Save
+        store.save_payment(&payment).unwrap();
+
+        // Get
+        let loaded = store.get_payment("crud-1").unwrap().unwrap();
+        assert_eq!(loaded.id, "crud-1");
+        assert_eq!(loaded.amount, 5000);
+        assert_eq!(loaded.status, PaymentStatus::PendingAuth);
+        assert!(loaded.tx_signature.is_none());
+
+        // Update status
+        store.update_status("crud-1", &PaymentStatus::Executed).unwrap();
+        let loaded = store.get_payment("crud-1").unwrap().unwrap();
+        assert_eq!(loaded.status, PaymentStatus::Executed);
+
+        // Set tx signature
+        store.set_tx_signature("crud-1", "sig_abc123").unwrap();
+        let loaded = store.get_payment("crud-1").unwrap().unwrap();
+        assert_eq!(loaded.tx_signature.as_deref(), Some("sig_abc123"));
+
+        // Get nonexistent
+        assert!(store.get_payment("nonexistent").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_payment_store_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PaymentStore::new(dir.path().to_str().unwrap()).unwrap();
+
+        // Create 5 payments
+        for i in 0..5 {
+            let payment = PaymentRequest {
+                id: format!("list-{}", i),
+                recipient: format!("wallet_{}", i),
+                merchant_did: "did:ignite:zMerchant".to_string(),
+                amount: i * 100,
+                token: "USDC".to_string(),
+                network: "solana".to_string(),
+                description: format!("payment {}", i),
+                status: PaymentStatus::PendingAuth,
+                created_at: Utc::now(),
+                tx_signature: None,
+            };
+            store.save_payment(&payment).unwrap();
+        }
+
+        // List with limit
+        let all = store.list_payments(10).unwrap();
+        assert_eq!(all.len(), 5);
+
+        let limited = store.list_payments(3).unwrap();
+        assert_eq!(limited.len(), 3);
+    }
+
+    #[test]
+    fn test_auth_response_with_session_data() {
+        let store = PendingAuthStore::new();
+        let rx = store.register("sess-1");
+        assert!(store.resolve("sess-1", AuthResponse {
+            authorized: true,
+            list_action: "whitelist".to_string(),
+            merchant_did: "did:ignite:zMerchant".to_string(),
+            session_key_pubkey: Some("base58_pubkey".to_string()),
+            session_key_secret_key: Some("base58_secret".to_string()),
+            session_key_tx_signature: Some("sig123".to_string()),
+            session_expires_at: Some(1700000000),
+            spending_limit: Some(100_000),
+            scopes: Some(vec!["sol:transfer".to_string()]),
+            list_label: Some("trusted".to_string()),
+            list_max_amount: Some(50_000),
+        }));
+
+        let resp = rx.blocking_recv().unwrap();
+        assert!(resp.authorized);
+        assert_eq!(resp.list_action, "whitelist");
+        assert_eq!(resp.merchant_did, "did:ignite:zMerchant");
+        assert_eq!(resp.session_key_pubkey.as_deref(), Some("base58_pubkey"));
+        assert_eq!(resp.session_key_secret_key.as_deref(), Some("base58_secret"));
+        assert_eq!(resp.spending_limit, Some(100_000));
+        assert_eq!(resp.scopes.as_deref(), Some(&["sol:transfer".to_string()][..]));
+        assert_eq!(resp.list_label.as_deref(), Some("trusted"));
+        assert_eq!(resp.list_max_amount, Some(50_000));
     }
 }

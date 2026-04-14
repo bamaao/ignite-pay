@@ -1,12 +1,8 @@
-mod mediator;
-mod payment;
-mod tools;
-
-use crate::mediator::MediatorConnection;
-use crate::payment::{
+use ignite_pay_mcp::mediator::MediatorConnection;
+use ignite_pay_mcp::payment::{
     execute_mock_payment, AuthResponse, PaymentRequest, PaymentStatus, PendingAuthStore,
 };
-use crate::tools::{
+use ignite_pay_mcp::tools::{
     AuthorizationCheckInput, CloseSessionInput, CreateSessionInput, PaymentHistoryInput,
     SessionStatusInput, X402ChallengeInput,
 };
@@ -23,6 +19,7 @@ use ignite_pay_solana::payment::IgnitePayClient;
 use ignite_pay_solana::session::SessionKeypair;
 use ignite_pay_solana::solana_sdk::pubkey::Pubkey;
 use ignite_pay_solana::solana_sdk::signature::Keypair;
+use ignite_pay_solana::solana_sdk::signer::Signer;
 use ignite_pay_solana::types::{PayMode, SessionTokenData};
 
 use rmcp::{
@@ -190,7 +187,7 @@ async fn execute_payment(
 struct IgnitePayMcpServer {
     tool_router: ToolRouter<Self>,
     mediator: Arc<MediatorConnection>,
-    payments: Arc<payment::PaymentStore>,
+    payments: Arc<ignite_pay_mcp::payment::PaymentStore>,
     pending: Arc<PendingAuthStore>,
     list_store: Arc<ListStore>,
     phone_did: String,
@@ -610,6 +607,7 @@ impl IgnitePayMcpServer {
     ) -> String {
         match self.payments.list_payments(input.limit) {
             Ok(payments) => {
+                let payments: Vec<_> = payments;
                 if payments.is_empty() {
                     return "No payments found.".to_string();
                 }
@@ -660,7 +658,7 @@ impl IgnitePayMcpServer {
             Err(e) => return format!("Error: Invalid owner pubkey: {}", e),
         };
 
-        let target_program = solana_sdk::system_program::id();
+        let target_program = ignite_pay_solana::solana_sdk::system_program::id();
         let scopes = vec!["sol:transfer".to_string()];
 
         match client.session_manager().create_session(
@@ -896,7 +894,7 @@ impl IgnitePayMcpServer {
         let session_data = SessionTokenData {
             owner: Pubkey::default(), // MCP doesn't know the real owner; will use session key as payer
             ephemeral_signer: keypair.pubkey(),
-            target_program: solana_sdk::system_program::id(),
+            target_program: ignite_pay_solana::solana_sdk::system_program::id(),
             expires_at,
             spending_limit,
             current_spent: 0,
@@ -962,7 +960,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Create payment store + pending auth store + list store
-    let payments = Arc::new(payment::PaymentStore::from_db(db));
+    let payments = Arc::new(ignite_pay_mcp::payment::PaymentStore::from_db(db));
     let pending = Arc::new(PendingAuthStore::new());
     let list_store = Arc::new(ListStore::new(payments.get_db()));
 

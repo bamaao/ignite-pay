@@ -55,3 +55,14 @@ pub trait KeylistStore: Send + Sync {
     async fn list_keys(&self, session_did: &str) -> crate::error::Result<HashSet<String>>;
     async fn resolve_session(&self, recipient_did: &str) -> crate::error::Result<Option<String>>;
 }
+
+/// Agent-to-user binding: maps an agent DID to the user DID that owns it.
+#[async_trait]
+pub trait AgentBindingStore: Send + Sync {
+    /// Bind an agent DID to a user did.
+    async fn bind(&self, agent_did: &str, user_did: &str) -> crate::error::Result<()>;
+    /// Look up the user DID that owns an agent.
+    async fn get_user_for_agent(&self, agent_did: &str) -> crate::error::Result<Option<String>>;
+    /// Look up all agent DIDs bound to a user.
+    async fn get_agents_for_user(&self, user_did: &str) -> crate::error::Result<Vec<String>>;
+}

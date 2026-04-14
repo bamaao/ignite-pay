@@ -179,8 +179,56 @@ impl DeviceTokenStore for InMemoryDeviceTokenStore {
     }
 }
 
+// ── In-memory AgentBindingStore ─────────────────────────────────────────
+
+#[derive(Debug, Default)]
+pub struct InMemoryAgentBindingStore {
+    /// agent_did -> user_did
+    agent_to_user: DashMap<String, String>,
+    /// user_did -> set of agent_dids
+    user_to_agents: DashMap<String, HashSet<String>>,
+}
+
+impl InMemoryAgentBindingStore {
+    pub fn new() -> Self {
+        Self {
+            agent_to_user: DashMap::new(),
+            user_to_agents: DashMap::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl super::AgentBindingStore for InMemoryAgentBindingStore {
+    async fn bind(&self, agent_did: &str, user_did: &str) -> crate::error::Result<()> {
+        self.agent_to_user
+            .insert(agent_did.to_string(), user_did.to_string());
+        self.user_to_agents
+            .entry(user_did.to_string())
+            .or_default()
+            .insert(agent_did.to_string());
+        Ok(())
+    }
+
+    async fn get_user_for_agent(&self, agent_did: &str) -> crate::error::Result<Option<String>> {
+        Ok(self
+            .agent_to_user
+            .get(agent_did)
+            .map(|v| v.value().clone()))
+    }
+
+    async fn get_agents_for_user(&self, user_did: &str) -> crate::error::Result<Vec<String>> {
+        Ok(self
+            .user_to_agents
+            .get(user_did)
+            .map(|agents| agents.value().iter().cloned().collect())
+            .unwrap_or_default())
+    }
+}
+
 // ── Shared state type aliases ───────────────────────────────────────────
 
 pub type SharedMessageStore = Arc<dyn MessageStore>;
 pub type SharedKeylistStore = Arc<dyn KeylistStore>;
 pub type SharedDeviceTokenStore = Arc<dyn DeviceTokenStore>;
+pub type SharedAgentBindingStore = Arc<dyn super::AgentBindingStore>;

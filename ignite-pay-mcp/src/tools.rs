@@ -74,3 +74,79 @@ pub struct CloseSessionInput {
     #[serde(default)]
     pub refund: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_x402_challenge_input_minimal() {
+        let json = r#"{"challenge_body":"{\"accepts\":[]}","phone_did":"did:ignite:zPhone"}"#;
+        let input: X402ChallengeInput = serde_json::from_str(json).unwrap();
+        assert_eq!(input.challenge_body, "{\"accepts\":[]}");
+        assert_eq!(input.phone_did, "did:ignite:zPhone");
+        assert!(input.x402_merchant_did.is_none());
+        assert!(input.x402_payment_address.is_none());
+        assert!(input.vc_ipfs_cid.is_none());
+    }
+
+    #[test]
+    fn test_x402_challenge_input_full() {
+        let json = r#"{
+            "challenge_body": "{\"accepts\":[{\"amount\":\"100\"}]}",
+            "phone_did": "did:ignite:zPhone",
+            "x402_merchant_did": "did:ignite:zMerchant",
+            "x402_payment_address": "wallet123",
+            "x402_merkle_context": "{\"leaf_index\":5}",
+            "vc_ipfs_cid": "bafyreiTest"
+        }"#;
+        let input: X402ChallengeInput = serde_json::from_str(json).unwrap();
+        assert_eq!(input.x402_merchant_did.as_deref(), Some("did:ignite:zMerchant"));
+        assert_eq!(input.x402_payment_address.as_deref(), Some("wallet123"));
+        assert_eq!(input.x402_merkle_context.as_deref(), Some("{\"leaf_index\":5}"));
+        assert_eq!(input.vc_ipfs_cid.as_deref(), Some("bafyreiTest"));
+    }
+
+    #[test]
+    fn test_payment_history_default_limit() {
+        let json = r#"{}"#;
+        let input: PaymentHistoryInput = serde_json::from_str(json).unwrap();
+        assert_eq!(input.limit, 10);
+    }
+
+    #[test]
+    fn test_payment_history_custom_limit() {
+        let json = r#"{"limit": 50}"#;
+        let input: PaymentHistoryInput = serde_json::from_str(json).unwrap();
+        assert_eq!(input.limit, 50);
+    }
+
+    #[test]
+    fn test_create_session_default_duration() {
+        let json = r#"{"owner_pubkey":"11111111111111111111111111111111","spending_limit":1000}"#;
+        let input: CreateSessionInput = serde_json::from_str(json).unwrap();
+        assert_eq!(input.duration_secs, 3600);
+        assert_eq!(input.spending_limit, 1000);
+    }
+
+    #[test]
+    fn test_create_session_custom_duration() {
+        let json = r#"{"owner_pubkey":"11111111111111111111111111111111","spending_limit":5000,"duration_secs":7200}"#;
+        let input: CreateSessionInput = serde_json::from_str(json).unwrap();
+        assert_eq!(input.duration_secs, 7200);
+    }
+
+    #[test]
+    fn test_close_session_no_refund() {
+        let json = r#"{"session_pubkey":"sess_pub","owner_pubkey":"owner_pub"}"#;
+        let input: CloseSessionInput = serde_json::from_str(json).unwrap();
+        assert!(!input.refund);
+    }
+
+    #[test]
+    fn test_close_session_with_refund() {
+        let json = r#"{"session_pubkey":"sess_pub","owner_pubkey":"owner_pub","refund":true}"#;
+        let input: CloseSessionInput = serde_json::from_str(json).unwrap();
+        assert!(input.refund);
+    }
+}

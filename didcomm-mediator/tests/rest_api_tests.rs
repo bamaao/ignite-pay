@@ -72,6 +72,33 @@ async fn test_health() {
 }
 
 #[tokio::test]
+async fn test_submit_command_to_offline_agent() {
+    let app = test_app();
+    let token = get_test_token(&app).await;
+
+    // Must use .clone() since get_test_token borrowed &Router
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/agents/testagent/command")
+                .header("Authorization", get_auth_header(&token))
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "jwe_envelope": "test_jwe_payload"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Agent is offline, should be accepted and queued
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+}#[tokio::test]
 async fn test_auth_token_valid_did() {
     let app = test_app();
 

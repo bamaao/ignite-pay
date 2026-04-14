@@ -234,3 +234,39 @@ pub async fn register_device_token(
     info!("Registered FCM token for {}", auth.did);
     StatusCode::OK.into_response()
 }
+
+/// Request body for binding an agent to a user.
+#[derive(Debug, Deserialize)]
+pub struct BindAgentRequest {
+    pub agent_did: String,
+}
+
+/// `POST /v1/agents/bind` — Bind an agent DID to the authenticated user.
+pub async fn bind_agent(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    axum::Json(req): axum::Json<BindAgentRequest>,
+) -> impl IntoResponse {
+    if !req.agent_did.starts_with("did:") {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({ "error": "Invalid agent DID format" })),
+        )
+            .into_response();
+    }
+
+    if let Err(e) = state
+        .agent_binding_store
+        .bind(&req.agent_did, &auth.did)
+        .await
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response();
+    }
+
+    info!("Bound agent {} to user {}", req.agent_did, auth.did);
+    StatusCode::OK.into_response()
+}

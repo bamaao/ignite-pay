@@ -12,6 +12,17 @@ pub trait IpfsClient: Send + Sync {
     async fn download(&self, cid: &str) -> Result<Vec<u8>, anyhow::Error>;
 }
 
+#[async_trait]
+impl IpfsClient for Box<dyn IpfsClient> {
+    async fn upload(&self, data: &[u8]) -> Result<String, anyhow::Error> {
+        (**self).upload(data).await
+    }
+
+    async fn download(&self, cid: &str) -> Result<Vec<u8>, anyhow::Error> {
+        (**self).download(cid).await
+    }
+}
+
 /// Mock IPFS client using in-memory storage. For development and testing.
 pub struct MockIpfsClient {
     store: Mutex<HashMap<String, Vec<u8>>>,

@@ -130,11 +130,6 @@ impl SolanaDidBridge {
 
         // Verify the leaf index matches
         if found_leaf_index != leaf_index {
-            tracing::warn!(
-                "Leaf index mismatch: expected {}, found {}",
-                leaf_index,
-                found_leaf_index
-            );
             return Ok(false);
         }
 
@@ -146,14 +141,30 @@ impl SolanaDidBridge {
 
         // If no proof nodes supplied, fail
         if proof_nodes.is_empty() {
-            tracing::warn!("No proof nodes supplied for verification");
             return Ok(false);
         }
 
         // Verify locally using the supplied proof nodes against the on-chain root
+        let proof_fixed: Vec<[u8; 32]> = proof_nodes
+            .iter()
+            .filter_map(|node| {
+                if node.len() == 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(node);
+                    Some(arr)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if proof_fixed.len() != proof_nodes.len() {
+            return Ok(false);
+        }
+
         let verified = self.compression.verify_proof_locally(
             &full_proof.leaf_hash,
-            proof_nodes,
+            &proof_fixed,
             &full_proof.root,
         );
 
