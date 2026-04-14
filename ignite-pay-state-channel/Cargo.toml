@@ -1,0 +1,24 @@
+[package]
+name = "ignite-pay-state-channel"
+version = "0.1.0"
+edition = "2021"
+description = "Off-chain UTXO + Merkle Tree state channel for Ignite Pay streaming payments"
+
+[dependencies]
+# Core Solana types without the full solana-sdk (avoids openssl transitive dep).
+# solana-sdk -> solana-precompiles -> solana-secp256r1-program -> openssl.
+solana-program = "2"
+solana-pubkey = "2"
+ed25519-dalek = "1"
+rand_core = "0.5"
+borsh = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+anyhow = "1"
+sled = "0.34"
+tracing = "0.1"
+rand = "0.7"
+hex = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
