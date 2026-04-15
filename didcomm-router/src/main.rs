@@ -1,15 +1,20 @@
 use didcomm_router::config::Config;
 use didcomm_router::server;
 use tracing::info;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing
+    // Initialize tracing with stderr + rolling file output
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "didcomm_router=info".into());
+
+    // Ensure log directory exists
+    std::fs::create_dir_all("logs").ok();
+    let file_appender = tracing_appender::rolling::daily("logs", "router.log");
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "didcomm_router=info".into()),
-        )
+        .with_writer(std::io::stderr.and(file_appender))
+        .with_env_filter(env_filter)
         .init();
 
     // Load config

@@ -2,6 +2,7 @@ use ignite_pay_mcp::mediator::MediatorConnection;
 use ignite_pay_mcp::payment::{
     execute_mock_payment, AuthResponse, PaymentRequest, PaymentStatus, PendingAuthStore,
 };
+use ignite_pay_mcp::audit::AuditLogStore;
 use ignite_pay_mcp::tools::{
     AuthorizationCheckInput, CloseSessionInput, CreateSessionInput, PaymentHistoryInput,
     SessionStatusInput, X402ChallengeInput,
@@ -31,6 +32,7 @@ use rmcp::{
 };
 use std::sync::Arc;
 use std::time::Duration;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
@@ -201,6 +203,8 @@ struct IgnitePayMcpServer {
     solana_bridge: Option<Arc<SolanaDidBridge>>,
     // V1.1: IPFS client for VC resolution and list sync
     ipfs_client: Arc<Box<dyn IpfsClient>>,
+    // Audit log store
+    audit: Arc<AuditLogStore>,
 }
 
 #[tool_router]
@@ -282,6 +286,14 @@ impl IgnitePayMcpServer {
         if let Err(e) = self.payments.save_payment(&payment) {
             return format!("Error: Failed to save payment: {}", e);
         }
+
+        // Audit: challenge received
+        let _ = self.audit.record_payment_event(
+            &payment_id,
+            "challenge_received",
+            amount,
+            &merchant_did,
+        );
 
         // 3.5 Verify VC — inline or IPFS CID (V1.1)
         let vc_verified = if let Some(vc_value) = challenge.get("verifiable_credential") {
@@ -444,6 +456,12 @@ impl IgnitePayMcpServer {
                     .payments
                     .update_status(&payment_id, &PaymentStatus::Executed);
                 let _ = self.payments.set_tx_signature(&payment_id, &tx_sig);
+                let _ = self.audit.record_payment_event(
+                    &payment_id,
+                    "payment_executed",
+                    amount,
+                    &merchant_did,
+                );
                 let label_info = label.map(|l| format!(" ({})", l)).unwrap_or_default();
                 return format!(
                     "Auto-approved payment (whitelisted{}). Tx: {}\nAmount: {} {}\nTo: {}",
@@ -471,6 +489,12 @@ impl IgnitePayMcpServer {
             if let Err(e) = self.payments.set_tx_signature(&payment_id, &tx_sig) {
                 return format!("Error: Failed to set tx signature: {}", e);
             }
+            let _ = self.audit.record_payment_event(
+                &payment_id,
+                "payment_executed",
+                amount,
+                &merchant_did,
+            );
             return format!("Auto-approved payment (under threshold). Tx: {}", tx_sig);
         }
 
@@ -527,6 +551,13 @@ impl IgnitePayMcpServer {
                     .payments
                     .update_status(&payment_id, &PaymentStatus::Executed);
                 let _ = self.payments.set_tx_signature(&payment_id, &tx_sig);
+
+                let _ = self.audit.record_payment_event(
+                    &payment_id,
+                    "payment_executed",
+                    amount,
+                    &merchant_did,
+                );
 
                 // Step D: V1.1 Extended list_action handling
                 if resp.list_action != "none" && !payment.merchant_did.is_empty() {
@@ -869,6 +900,9 @@ impl IgnitePayMcpServer {
             _ => return,
         };
 
+        // Audit: list updated
+        let _ = self.audit.record_list_event(list_type, action, merchant_did);
+
         // Upload updated lists to IPFS and notify phone
         match self
             .list_store
@@ -981,13 +1015,22 @@ impl ServerHandler for IgnitePayMcpServer {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "ignite_pay_mcp=info".into()),
-        )
-        .init();
+    // Initialize tracing with optional file output
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "ignite_pay_mcp=info".into());
+
+    if let Ok(log_dir) = std::env::var("AUDIT_LOG_DIR") {
+        let file_appender = tracing_appender::rolling::daily(&log_dir, "ignite-pay-mcp.log");
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr.and(file_appender))
+            .with_env_filter(env_filter)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_env_filter(env_filter)
+            .init();
+    }
 
     let config = load_config()?;
     tracing::info!("Loaded config: mediator={}", config.mediator.ws_url);
@@ -1009,6 +1052,7 @@ async fn main() -> anyhow::Result<()> {
     let payments = Arc::new(ignite_pay_mcp::payment::PaymentStore::from_db(db));
     let pending = Arc::new(PendingAuthStore::new());
     let list_store = Arc::new(ListStore::new(payments.get_db()));
+    let audit = Arc::new(AuditLogStore::from_db(payments.get_db()));
 
     // V2.0: Initialize Solana client if configured
     let solana_client = if config.solana.is_configured() {
@@ -1082,6 +1126,7 @@ async fn main() -> anyhow::Result<()> {
         solana_client,
         solana_bridge,
         ipfs_client: Arc::new(Box::new(MockIpfsClient::new())),
+        audit,
     };
 
     tracing::info!("Starting MCP server on stdio...");

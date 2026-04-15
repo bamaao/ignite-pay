@@ -29,6 +29,7 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 rand = "0.8"
 sha2 = "0.10"
 url = "2"
+rusqlite = { version = "0.31", features = ["bundled"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

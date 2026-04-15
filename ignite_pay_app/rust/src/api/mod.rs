@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod identity;
+pub mod log_store;
 pub mod notification;
 pub mod session;
 pub mod simple;

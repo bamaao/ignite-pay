@@ -1,6 +1,7 @@
 use crate::payment::{AuthResponse, PaymentRequest, PendingAuthStore};
 
 use affinidi_messaging_didcomm::identity::PrivateIdentity;
+use base64::Engine;
 use affinidi_messaging_didcomm::DIDCommAgent;
 use ignite_pay_core::didcomm::{self, is_jwe};
 use ignite_pay_core::identity::{load_identity, save_identity};
@@ -690,8 +691,7 @@ async fn process_inner_message(
     if msg.typ.contains("connection-request") {
         let phone_did = msg
             .from
-            .as_ref()
-            .and_then(|f| f.first().cloned())
+            .clone()
             .unwrap_or_default();
         let push_channel = msg
             .body
