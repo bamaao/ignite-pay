@@ -249,6 +249,75 @@ async fn connect_and_run(
     let (mut ws, _) = connect_async(ws_url).await?;
     tracing::info!("Connected to mediator: {}", ws_url);
 
+    // --- Phase 0: Challenge-Response Authentication ---
+
+    // Wait for ws-challenge message
+    let challenge_text = read_msg_with_timeout(&mut ws, Duration::from_secs(10))
+        .await
+        .map_err(|_| anyhow::anyhow!("Timeout waiting for WS challenge"))?;
+    let challenge: Value = serde_json::from_str(&challenge_text)?;
+    if challenge
+        .get("type")
+        .and_then(|v| v.as_str())
+        != Some("https://didcomm.org/ignite-pay/1.0/ws-challenge")
+    {
+        return Err(anyhow::anyhow!(
+            "Expected ws-challenge, got: {}",
+            challenge_text.chars().take(100).collect::<String>()
+        ));
+    }
+
+    let nonce = challenge["body"]["nonce"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Missing nonce in challenge"))?;
+    let mediator_did = challenge["from"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Missing from in challenge"))?
+        .to_string();
+
+    // Register mediator as peer so we can encrypt to them
+    let mediator_doc = &challenge["body"]["did_document"];
+    {
+        let mut agent_guard = agent.lock().await;
+        if let Some(resolved) = parse_did_document(&mediator_did, mediator_doc) {
+            agent_guard.add_peer(resolved);
+            tracing::info!("Registered mediator as peer: {}", mediator_did);
+        }
+    }
+
+    // Build and send encrypted challenge-response
+    let response_msg = didcomm::build_ws_challenge_response(our_did, &mediator_did, nonce, did_doc);
+    {
+        let agent_guard = agent.lock().await;
+        let jwe = didcomm::pack_encrypted(&agent_guard, &response_msg, our_did, &mediator_did)
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
+        send_msg(&mut ws, jwe).await?;
+        tracing::info!("Sent WS challenge-response (encrypted)");
+    }
+
+    // Wait for auth-ok
+    let auth_result = read_msg_with_timeout(&mut ws, Duration::from_secs(5))
+        .await
+        .map_err(|_| anyhow::anyhow!("Timeout waiting for auth result"))?;
+    let auth_v: Value = serde_json::from_str(&auth_result)?;
+    match auth_v.get("type").and_then(|v| v.as_str()) {
+        Some(t) if t.contains("ws-auth-ok") => {
+            tracing::info!("WS authentication successful");
+        }
+        Some(t) if t.contains("ws-auth-failed") => {
+            let reason = auth_v["body"]["reason"]
+                .as_str()
+                .unwrap_or("unknown");
+            return Err(anyhow::anyhow!("WS auth failed: {}", reason));
+        }
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Unexpected auth response: {}",
+                auth_result.chars().take(100).collect::<String>()
+            ));
+        }
+    }
+
     // --- Phase A: Plaintext handshake ---
 
     // 1. mediate-request

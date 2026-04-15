@@ -26,6 +26,26 @@ pub fn build_keylist_update(from_did: &str) -> Message {
     .from(from_did.to_string())
 }
 
+/// Build a WS challenge-response message for authentication.
+/// Sent by the client (MCP/Phone) to prove ownership of their DID keys.
+/// The client encrypts this with `pack_authcrypt` before sending.
+pub fn build_ws_challenge_response(
+    from_did: &str,
+    to_did: &str,
+    nonce: &str,
+    did_doc: &Value,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/ws-challenge-response",
+        json!({
+            "nonce": nonce,
+            "did_document": did_doc,
+        }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
 /// Build a `peer-did-discovery/1.0/discover` message carrying our DID document.
 pub fn build_peer_introduction(from_did: &str, did_doc: &Value) -> Message {
     Message::new(
