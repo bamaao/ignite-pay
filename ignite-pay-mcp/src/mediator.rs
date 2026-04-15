@@ -3,7 +3,7 @@ use crate::payment::{AuthResponse, PaymentRequest, PendingAuthStore};
 use affinidi_messaging_didcomm::identity::PrivateIdentity;
 use affinidi_messaging_didcomm::DIDCommAgent;
 use ignite_pay_core::didcomm::{self, is_jwe};
-use ignite_pay_core::identity::{load_did, save_identity};
+use ignite_pay_core::identity::{load_identity, save_identity};
 use ignite_pay_core::{
     build_did_document, generate_ignite_did, identity_to_resolved, parse_did_document,
 };
@@ -22,7 +22,6 @@ type WsStream =
 /// Encapsulates the WebSocket connection to the DIDComm mediator.
 pub struct MediatorConnection {
     agent: Arc<Mutex<DIDCommAgent>>,
-    identity: PrivateIdentity,
     did_doc: Value,
     our_did: String,
     ws_url: String,
@@ -43,11 +42,11 @@ impl MediatorConnection {
     /// Create a new mediator connection.
     /// Tries to load a previously saved identity from sled; generates a new one if none found.
     pub fn new(ws_url: &str, db: &sled::Db) -> Result<Self> {
-        let (identity, did) = match load_did(db)? {
-            Some(saved_did) => {
-                tracing::info!("Loaded existing identity: {}", saved_did);
-                let id = PrivateIdentity::generate(&saved_did);
-                (id, saved_did)
+        let (identity, did) = match load_identity(db)? {
+            Some(loaded) => {
+                let did = loaded.did.clone();
+                tracing::info!("Loaded existing identity: {}", did);
+                (loaded, did)
             }
             None => {
                 let (id, did) = generate_ignite_did();
@@ -58,13 +57,12 @@ impl MediatorConnection {
         };
 
         let did_doc = build_did_document(&did, &identity);
-        let (agent, _) = didcomm::create_agent(PrivateIdentity::generate(&did));
+        let (agent, _) = didcomm::create_agent(identity);
 
         let (outgoing_tx, _outgoing_rx) = mpsc::unbounded_channel();
 
         Ok(MediatorConnection {
             agent: Arc::new(Mutex::new(agent)),
-            identity,
             did_doc,
             our_did: did,
             ws_url: ws_url.to_string(),

@@ -20,6 +20,7 @@ class IgnitePaySkill:
         """
         self.core = IgnitePayCore()
         if db_path:
+            self.core.init_identity(db_path)
             self.core.init_list_store(db_path)
         self.core.start_listener(mediator_url)
         self.mediator_url = mediator_url

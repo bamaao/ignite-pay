@@ -437,6 +437,17 @@ class DidcommService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Bind an MCP/Skill agent DID to this user for message routing.
+  Future<void> bindAgent(String agentDid) async {
+    if (_authToken == null) return;
+    try {
+      await _api.bindAgent(_authToken!, agentDid);
+      debugPrint('Bound agent $agentDid to user $_did');
+    } catch (e) {
+      debugPrint('Failed to bind agent: $e');
+    }
+  }
+
   /// Clear the pending auth request.
   void clearPendingAuth() {
     _pendingAuth = null;

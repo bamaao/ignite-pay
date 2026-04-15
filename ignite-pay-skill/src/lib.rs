@@ -13,6 +13,7 @@ use chrono::Utc;
 use affinidi_messaging_didcomm::DIDCommAgent;
 use ignite_pay_core::{generate_ignite_did, build_did_document, parse_did_document};
 use ignite_pay_core::didcomm::{self, is_jwe};
+use ignite_pay_core::identity::{load_identity, save_identity};
 use ignite_pay_core::list_store::ListStore;
 use ignite_pay_core::types::{MerchantListEntry, WhitelistResult, RiskControlDecision};
 
@@ -29,6 +30,7 @@ struct IgnitePayCore {
     did_doc: Value,
     outgoing: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
     list_store: Arc<Mutex<Option<ListStore>>>,
+    identity_db: Option<sled::Db>,
 }
 
 #[pymethods]
@@ -45,7 +47,42 @@ impl IgnitePayCore {
             did_doc,
             outgoing: Arc::new(Mutex::new(None)),
             list_store: Arc::new(Mutex::new(None)),
+            identity_db: None,
         }
+    }
+
+    /// Initialize persistent identity from a sled database.
+    /// If a previous identity exists, loads it with the same private keys.
+    /// Otherwise generates a new one and saves it.
+    #[pyo3(signature = (db_path))]
+    fn init_identity(&mut self, db_path: String) -> PyResult<()> {
+        let db = sled::open(&db_path)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to open database: {}", e)))?;
+
+        let (identity, did) = match load_identity(&db)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to load identity: {}", e)))?
+        {
+            Some(loaded) => {
+                let did = loaded.did.clone();
+                (loaded, did)
+            }
+            None => {
+                let (id, did) = generate_ignite_did();
+                save_identity(&db, &id, &did)
+                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to save identity: {}", e)))?;
+                (id, did)
+            }
+        };
+
+        let did_doc = build_did_document(&did, &identity);
+        let (agent, _) = didcomm::create_agent(identity);
+
+        self.agent = Arc::new(Mutex::new(agent));
+        self.our_did = did;
+        self.did_doc = did_doc;
+        self.identity_db = Some(db);
+
+        Ok(())
     }
 
     /// Initialize sled-backed ListStore for whitelist/blacklist persistence.

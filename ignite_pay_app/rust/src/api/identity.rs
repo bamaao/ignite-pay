@@ -1,7 +1,6 @@
-use affinidi_messaging_didcomm::identity::PrivateIdentity;
 use anyhow::Result;
 use ignite_pay_core::didcomm;
-use ignite_pay_core::identity::{load_did, save_identity};
+use ignite_pay_core::identity::{load_identity, save_identity};
 use ignite_pay_core::{build_did_document, generate_ignite_did};
 use serde_json::Value;
 use std::sync::Arc;
@@ -20,10 +19,10 @@ impl IdentityManager {
     pub fn new(db_path: &str) -> Result<Self> {
         let db = sled::open(db_path)?;
 
-        let (identity, did) = match load_did(&db)? {
-            Some(saved_did) => {
-                let id = PrivateIdentity::generate(&saved_did);
-                (id, saved_did)
+        let (identity, did) = match load_identity(&db)? {
+            Some(loaded) => {
+                let did = loaded.did.clone();
+                (loaded, did)
             }
             None => {
                 let (id, did) = generate_ignite_did();
@@ -33,7 +32,7 @@ impl IdentityManager {
         };
 
         let did_doc = build_did_document(&did, &identity);
-        let (agent, _) = didcomm::create_agent(PrivateIdentity::generate(&did));
+        let (agent, _) = didcomm::create_agent(identity);
 
         Ok(Self {
             did,

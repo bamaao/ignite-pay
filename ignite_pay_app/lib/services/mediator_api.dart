@@ -106,4 +106,13 @@ class MediatorApi {
       options: Options(headers: {'Authorization': 'Bearer $token'}),
     );
   }
+
+  /// Bind an agent DID to the authenticated user for message routing.
+  Future<void> bindAgent(String token, String agentDid) async {
+    await _dio.post(
+      '/v1/agents/bind',
+      data: {'agent_did': agentDid},
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+  }
 }

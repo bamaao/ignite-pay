@@ -1,14 +1,16 @@
-use affinidi_messaging_didcomm::crypto::key_agreement::PublicKeyAgreement;
+use affinidi_messaging_didcomm::crypto::key_agreement::{Curve, PrivateKeyAgreement, PublicKeyAgreement};
 use affinidi_messaging_didcomm::identity::{PrivateIdentity, ResolvedIdentity};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// Serialized identity data for persistence.
+/// Stores DID + raw private key bytes so keys survive restart.
 #[derive(Debug, Serialize, Deserialize)]
 struct StoredIdentity {
     did: String,
-    did_doc: Value,
+    ed25519_signing_private: [u8; 32],
+    x25519_key_agreement_private: [u8; 32],
 }
 
 /// Generate a new `did:ignite:<multibase>` identity.
@@ -111,18 +113,23 @@ pub fn parse_did_document(did: &str, doc: &Value) -> Option<ResolvedIdentity> {
     Some(resolved)
 }
 
+/// Extract the X25519 key agreement private key bytes from a PrivateIdentity.
+fn extract_ka_private(identity: &PrivateIdentity) -> [u8; 32] {
+    match &identity.key_agreement_private {
+        PrivateKeyAgreement::X25519(secret) => secret.to_bytes(),
+        _ => panic!("unsupported key agreement curve"),
+    }
+}
+
 /// Save identity to sled database for persistence across restarts.
-/// Stores the DID string and DID document under the `__identity__` key.
-///
-/// NOTE: The affinidi-messaging-didcomm `PrivateIdentity` does not expose
-/// the raw seed bytes, so we store the DID + DID document. On load, a new
-/// identity is generated with the same DID. The keys will differ, but the
-/// DID identifier is preserved. For true key persistence, the PrivateIdentity
-/// seed would need to be extracted at generation time.
-pub fn save_identity(db: &sled::Db, _identity: &PrivateIdentity, did: &str) -> Result<(), anyhow::Error> {
+/// Stores the DID string and both private keys under the `__identity__` key.
+pub fn save_identity(db: &sled::Db, identity: &PrivateIdentity, did: &str) -> Result<(), anyhow::Error> {
+    let signing_bytes = identity.signing_private.ok_or_else(|| anyhow::anyhow!("no signing key"))?;
+    let ka_bytes = extract_ka_private(identity);
     let stored = StoredIdentity {
         did: did.to_string(),
-        did_doc: Value::Null, // Will be rebuilt on load
+        ed25519_signing_private: signing_bytes,
+        x25519_key_agreement_private: ka_bytes,
     };
     let value = serde_json::to_vec(&stored)?;
     db.insert("__identity__", value)?;
@@ -131,17 +138,28 @@ pub fn save_identity(db: &sled::Db, _identity: &PrivateIdentity, did: &str) -> R
 }
 
 /// Load a previously saved identity from sled database.
-/// Returns the DID string if found, or None if not found.
-///
-/// NOTE: Since we can't persist the actual private key seed, this returns
-/// the DID string so a new identity can be generated with the same DID.
-pub fn load_did(db: &sled::Db) -> Result<Option<String>, anyhow::Error> {
+/// Reconstructs the full PrivateIdentity with the same private keys.
+/// Returns None if no identity was previously saved.
+pub fn load_identity(db: &sled::Db) -> Result<Option<PrivateIdentity>, anyhow::Error> {
     if let Some(bytes) = db.get("__identity__")? {
         let stored: StoredIdentity = serde_json::from_slice(&bytes)?;
-        Ok(Some(stored.did))
+        let identity = PrivateIdentity {
+            did: stored.did.clone(),
+            key_agreement_kid: format!("{}#key-agreement-1", stored.did),
+            key_agreement_private: PrivateKeyAgreement::from_raw_bytes(Curve::X25519, &stored.x25519_key_agreement_private)
+                .map_err(|e| anyhow::anyhow!("failed to reconstruct key agreement key: {:?}", e))?,
+            signing_kid: Some(format!("{}#key-signing-1", stored.did)),
+            signing_private: Some(stored.ed25519_signing_private),
+        };
+        Ok(Some(identity))
     } else {
         Ok(None)
     }
+}
+
+/// Load only the DID string (convenience wrapper around load_identity).
+pub fn load_did(db: &sled::Db) -> Result<Option<String>, anyhow::Error> {
+    Ok(load_identity(db)?.map(|id| id.did))
 }
 
 /// Extract the Ed25519 public key bytes from a did:ignite identifier.
@@ -235,11 +253,22 @@ mod tests {
     fn test_save_load_identity() {
         let dir = tempfile::tempdir().unwrap();
         let db = sled::open(dir.path()).unwrap();
-        let (_identity, did) = generate_ignite_did();
-        save_identity(&db, &_identity, &did).unwrap();
+        let (identity, did) = generate_ignite_did();
+        save_identity(&db, &identity, &did).unwrap();
 
-        let loaded = load_did(&db).unwrap().unwrap();
-        assert_eq!(loaded, did);
+        let loaded = load_identity(&db).unwrap().unwrap();
+        assert_eq!(loaded.did, did);
+        // Keys should match exactly
+        assert_eq!(loaded.signing_private, identity.signing_private);
+        let loaded_ka = match &loaded.key_agreement_private {
+            PrivateKeyAgreement::X25519(s) => s.to_bytes(),
+            _ => panic!("unexpected curve"),
+        };
+        let orig_ka = match &identity.key_agreement_private {
+            PrivateKeyAgreement::X25519(s) => s.to_bytes(),
+            _ => panic!("unexpected curve"),
+        };
+        assert_eq!(loaded_ka, orig_ka);
     }
 
     #[test]
