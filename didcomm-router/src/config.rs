@@ -4,6 +4,8 @@ use serde::Deserialize;
 pub struct Config {
     pub server: ServerConfig,
     pub router: RouterConfig,
+    #[serde(default)]
+    pub fcm: FcmConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -37,6 +39,18 @@ pub struct KnownPeerConfig {
     pub did: String,
     pub key_agreement_kid: String,
     pub key_agreement_public_base64: String,
+}
+
+/// FCM (Firebase Cloud Messaging) configuration.
+/// When `service_account_json` is set, the router will send real FCM push notifications.
+/// When absent, a no-op sender is used.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct FcmConfig {
+    /// Path to a Firebase service account JSON key file.
+    /// Download from Firebase Console > Project Settings > Service Accounts > Generate New Private Key.
+    pub service_account_json: Option<String>,
+    /// Firebase project ID (required if service_account_json is set).
+    pub project_id: Option<String>,
 }
 
 impl Config {

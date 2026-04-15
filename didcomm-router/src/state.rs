@@ -31,7 +31,28 @@ impl RouterState {
         let message_store = Arc::new(InMemoryMessageStore::new(config.router.max_queued_messages));
         let keylist_store = Arc::new(InMemoryKeylistStore::default());
         let device_token_store = Arc::new(InMemoryDeviceTokenStore::new());
-        let notification_sender = Arc::new(crate::notification::NoopNotificationSender);
+
+        // Create notification sender: real FCM if configured, no-op otherwise
+        let notification_sender: Arc<dyn NotificationSender> =
+            if let Some(ref sa_path) = config.fcm.service_account_json {
+                match crate::notification::fcm::FcmSender::from_service_account_file(
+                    sa_path,
+                    config.fcm.project_id.clone(),
+                ) {
+                    Ok(sender) => {
+                        tracing::info!("FCM enabled: service account from {}", sa_path);
+                        Arc::new(sender)
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to init FCM sender from {}: {}. Falling back to no-op.", sa_path, e);
+                        Arc::new(crate::notification::NoopNotificationSender)
+                    }
+                }
+            } else {
+                tracing::info!("FCM not configured (no service_account_json). Push notifications disabled.");
+                Arc::new(crate::notification::NoopNotificationSender)
+            };
+
         let agent_binding_store = Arc::new(InMemoryAgentBindingStore::new());
 
         Ok(Self {
