@@ -55,8 +55,31 @@ pub async fn dispatch(text: &str, state: &RouterState, session_did: Option<&str>
 }
 
 /// Route a parsed plaintext Message to the appropriate protocol handler.
+/// Checks for replay by tracking seen message IDs with a TTL.
 async fn route_message(msg: &Message, state: &RouterState, session_did: Option<&str>) -> Result<()> {
     debug!("Dispatching message type: {}", msg.typ);
+
+    // Replay protection: reject messages we've already processed
+    let msg_id = &msg.id;
+    let now = chrono::Utc::now().timestamp();
+    let ttl = 300; // 5 minutes
+
+    // Periodically prune expired entries (probabilistic — every ~1000 messages)
+    if state.seen_message_ids.len() > 100_000 {
+        state.seen_message_ids.retain(|_, &mut expiry| expiry > now);
+    }
+
+    if let Some(existing) = state.seen_message_ids.get(msg_id) {
+        if *existing > now {
+            warn!("Replay detected: message {} already processed", msg_id);
+            return Err(RouterError::Protocol(format!(
+                "Duplicate message ID: {}", msg_id
+            )));
+        }
+    }
+
+    // Mark this message as seen
+    state.seen_message_ids.insert(msg_id.clone(), now + ttl);
 
     match msg.typ.as_str() {
         MEDIATE_REQUEST => {

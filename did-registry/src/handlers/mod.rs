@@ -1,3 +1,4 @@
+pub mod nonce;
 pub mod resolve;
 pub mod register;
 pub mod rotate_key;

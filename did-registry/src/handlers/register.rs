@@ -6,9 +6,10 @@ use tracing::info;
 
 use crate::did::resolver::compute_did_hash;
 use crate::error::RegistryError;
+use crate::handlers::nonce::verify_and_consume_nonce;
 use crate::state::RegistryState;
+use ignite_pay_core::verify_did_signature;
 use ignite_pay_solana::types::MerchantLeaf;
-use solana_sdk::signature::Signature;
 
 /// Request body for merchant registration.
 #[derive(Debug, Deserialize)]
@@ -16,6 +17,11 @@ pub struct RegisterMerchantRequest {
     pub merchant_did: String,
     pub active_pubkey: String,
     pub platform_vc_hash: String, // hex-encoded 32 bytes
+    /// Base64-encoded Ed25519 signature from the DID key over
+    /// "register:{merchant_did}:{active_pubkey}:{platform_vc_hash}:{nonce}"
+    pub did_signature: String,
+    /// Server-issued nonce to prevent replay. Obtain from GET /v1/auth/nonce.
+    pub nonce: String,
     #[serde(default = "default_status")]
     pub status: u8,
 }
@@ -34,6 +40,28 @@ pub async fn register_merchant(
         return (
             StatusCode::BAD_REQUEST,
             axum::Json(serde_json::json!({ "error": "Invalid DID format, expected did:ignite:..." })),
+        )
+            .into_response();
+    }
+
+    // Verify nonce was issued by this server and consume it (prevents replay)
+    if !verify_and_consume_nonce(&state, &req.nonce) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "Invalid or expired nonce" })),
+        )
+            .into_response();
+    }
+
+    // Verify DID signature proving ownership of the merchant DID key
+    let message = format!(
+        "register:{}:{}:{}:{}",
+        req.merchant_did, req.active_pubkey, req.platform_vc_hash, req.nonce
+    );
+    if !verify_did_signature(&req.merchant_did, &message, &req.did_signature) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "Invalid DID signature" })),
         )
             .into_response();
     }

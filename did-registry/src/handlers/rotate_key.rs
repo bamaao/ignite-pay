@@ -6,6 +6,7 @@ use tracing::info;
 
 use crate::did::resolver::{compute_did_hash, verify_did_signature};
 use crate::error::RegistryError;
+use crate::handlers::nonce::verify_and_consume_nonce;
 use crate::state::RegistryState;
 
 /// Request body for key rotation.
@@ -15,6 +16,8 @@ pub struct RotateKeyRequest {
     pub new_active_pubkey: String,
     /// Base64-encoded Ed25519 signature from the DID key
     pub did_signature: String,
+    /// Server-issued nonce to prevent replay. Obtain from GET /v1/auth/nonce.
+    pub nonce: String,
 }
 
 /// `POST /v1/merchants/rotate-key` — Rotate a merchant's active Solana pubkey.
@@ -42,8 +45,17 @@ pub async fn rotate_key(
         }
     };
 
-    // Verify DID signature over the new pubkey
-    let message = format!("rotate-key:{}:{}", req.merchant_did, req.new_active_pubkey);
+    // Verify nonce was issued by this server and consume it (prevents replay)
+    if !verify_and_consume_nonce(&state, &req.nonce) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "Invalid or expired nonce" })),
+        )
+            .into_response();
+    }
+
+    // Verify DID signature over the new pubkey + nonce
+    let message = format!("rotate-key:{}:{}:{}", req.merchant_did, req.new_active_pubkey, req.nonce);
     if !verify_did_signature(&req.merchant_did, &message, &req.did_signature) {
         return (
             StatusCode::UNAUTHORIZED,

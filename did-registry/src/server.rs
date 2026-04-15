@@ -9,6 +9,8 @@ pub fn build_router(state: RegistryState) -> Router {
         .route("/health", get(health))
         // DID resolution
         .route("/v1/did/resolve/{did}", get(crate::handlers::resolve::resolve_did))
+        // Auth
+        .route("/v1/auth/nonce", get(crate::handlers::nonce::issue_nonce))
         // Merchant management
         .route("/v1/merchants/register", post(crate::handlers::register::register_merchant))
         .route("/v1/merchants/verify/{did}", get(crate::handlers::verify::verify_merchant))

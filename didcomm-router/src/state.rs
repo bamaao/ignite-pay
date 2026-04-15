@@ -22,6 +22,8 @@ pub struct RouterState {
     pub notification_sender: Arc<dyn NotificationSender>,
     pub agent_binding_store: SharedAgentBindingStore,
     pub auth_challenges: Arc<dashmap::DashMap<String, i64>>, // nonce -> expiry timestamp
+    /// Processed message IDs for replay protection: msg_id -> expiry timestamp
+    pub seen_message_ids: Arc<dashmap::DashMap<String, i64>>,
 }
 
 impl RouterState {
@@ -90,6 +92,7 @@ impl RouterState {
             notification_sender,
             agent_binding_store,
             auth_challenges: Arc::new(dashmap::DashMap::new()),
+            seen_message_ids: Arc::new(dashmap::DashMap::new()),
         })
     }
 }

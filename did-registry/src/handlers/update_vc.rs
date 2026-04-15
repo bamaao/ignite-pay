@@ -7,6 +7,7 @@ use tracing::info;
 
 use crate::did::resolver::compute_did_hash;
 use crate::error::RegistryError;
+use crate::handlers::nonce::verify_and_consume_nonce;
 use crate::state::RegistryState;
 
 /// Request body for updating the platform VC hash.
@@ -15,8 +16,10 @@ pub struct UpdateVcRequest {
     pub merchant_did: String,
     /// Hex-encoded new VC hash (32 bytes)
     pub new_vc_hash: String,
-    /// Base64-encoded platform signature over "update-vc:{merchant_did}:{new_vc_hash}"
+    /// Base64-encoded platform signature over "update-vc:{merchant_did}:{new_vc_hash}:{nonce}"
     pub platform_signature: String,
+    /// Server-issued nonce to prevent replay. Obtain from GET /v1/auth/nonce.
+    pub nonce: String,
 }
 
 /// `POST /v1/merchants/update-vc` — Update the platform VC hash for a merchant.
@@ -44,8 +47,17 @@ pub async fn update_vc(
         }
     };
 
+    // Verify nonce was issued by this server and consume it (prevents replay)
+    if !verify_and_consume_nonce(&state, &req.nonce) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "Invalid or expired nonce" })),
+        )
+            .into_response();
+    }
+
     // Verify platform_signature using config.auth.platform_public_key
-    let message = format!("update-vc:{}:{}", req.merchant_did, req.new_vc_hash);
+    let message = format!("update-vc:{}:{}:{}", req.merchant_did, req.new_vc_hash, req.nonce);
     if !verify_platform_signature(&state.config.auth.platform_public_key, &message, &req.platform_signature) {
         return (
             StatusCode::UNAUTHORIZED,

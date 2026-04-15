@@ -16,6 +16,8 @@ pub struct RegistryState {
     pub did_store: Arc<IgniteDidStore>,
     pub db: Arc<sled::Db>,
     pub payer: Arc<solana_sdk::signature::Keypair>,
+    /// Issued nonces for replay protection: nonce -> expiry timestamp
+    pub nonces: Arc<dashmap::DashMap<String, i64>>,
 }
 
 impl RegistryState {
@@ -50,6 +52,7 @@ impl RegistryState {
             did_store: Arc::new(did_store),
             db: Arc::new(db),
             payer: Arc::new(payer),
+            nonces: Arc::new(dashmap::DashMap::new()),
         })
     }
 
