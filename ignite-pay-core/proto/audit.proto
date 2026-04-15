@@ -44,3 +44,18 @@ message TransactionEntry {
     string merchant_did = 8;
     bytes  memo = 9;
 }
+
+// Manifest entry mapping a chunk to its IPFS CID
+message ChunkManifestEntry {
+    uint64 chunk_id = 1;
+    string cid = 2;
+    bytes chunk_hash = 3;     // SHA-256 of serialized LogChunk
+    bytes merkle_root = 4;    // Allows verification without downloading
+}
+
+// Manifest tracking all chunks for a user on IPFS
+message ChunkManifest {
+    string user_did = 1;
+    repeated ChunkManifestEntry entries = 2;
+    bytes prev_manifest_hash = 3;  // Hash chain for manifest integrity
+}

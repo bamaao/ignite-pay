@@ -1,6 +1,13 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use ignite_pay_core::audit_proto::{
+    ChunkManifest, TransactionEntry as ProtoTransactionEntry,
+};
+use ignite_pay_core::ipfs::IpfsClient;
+use ignite_pay_core::log_chunk::ChunkConfig;
+use ignite_pay_core::log_sync;
+
 /// A single transaction log entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionEntry {
@@ -16,6 +23,36 @@ pub struct TransactionEntry {
 }
 
 /// Local log store backed by SQLite for phone-side transaction persistence.
+
+/// Convert a phone TransactionEntry to a proto TransactionEntry.
+fn phone_entry_to_proto(entry: &TransactionEntry) -> ProtoTransactionEntry {
+    ProtoTransactionEntry {
+        nonce: entry.nonce as u64,
+        delta_amount: entry.delta_amount,
+        cumulative_amount: entry.cumulative_amount as u64,
+        signature: entry.signature.as_bytes().to_vec(),
+        timestamp: entry.timestamp,
+        service_id: entry.service_id.clone(),
+        payment_id: entry.payment_id.clone(),
+        merchant_did: entry.merchant_did.clone(),
+        memo: vec![],
+    }
+}
+
+/// Convert a proto TransactionEntry to a phone TransactionEntry.
+fn proto_entry_to_phone(entry: &ProtoTransactionEntry) -> TransactionEntry {
+    TransactionEntry {
+        nonce: entry.nonce as i64,
+        delta_amount: entry.delta_amount,
+        cumulative_amount: entry.cumulative_amount as i64,
+        signature: String::from_utf8_lossy(&entry.signature).to_string(),
+        timestamp: entry.timestamp,
+        service_id: entry.service_id.clone(),
+        payment_id: entry.payment_id.clone(),
+        merchant_did: entry.merchant_did.clone(),
+        synced: true,
+    }
+}
 pub struct LocalLogStore {
     db: rusqlite::Connection,
 }
@@ -119,6 +156,91 @@ impl LocalLogStore {
             results.push(row?);
         }
         Ok(results)
+    }
+
+    /// Get the highest nonce among synced entries, or 0 if none synced yet.
+    pub fn last_synced_nonce(&self) -> Result<i64> {
+        let nonce: Option<i64> = self.db.query_row(
+            "SELECT MAX(nonce) FROM transactions WHERE synced = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(nonce.unwrap_or(0))
+    }
+
+    /// Sync unsynced entries to IPFS via the log_sync pipeline.
+    /// Returns (chunk_cid, new_manifest_cid).
+    pub async fn sync_to_ipfs(
+        &self,
+        ipfs: &dyn IpfsClient,
+        user_did: &str,
+        provider_did: &str,
+        log_key: &[u8; 32],
+        manifest: &mut ChunkManifest,
+    ) -> Result<(String, String)> {
+        let last_nonce = self.last_synced_nonce()?;
+
+        let phone_entries = self.unsynced_entries(last_nonce)?;
+        if phone_entries.is_empty() {
+            return Err(anyhow::anyhow!("no unsynced entries to sync"));
+        }
+
+        // Convert phone TransactionEntry → proto TransactionEntry
+        let proto_entries: Vec<ProtoTransactionEntry> = phone_entries
+            .iter()
+            .map(|e| phone_entry_to_proto(e))
+            .collect();
+
+        // Determine chunk_id and prev_chunk_hash from manifest
+        let chunk_id = if manifest.entries.is_empty() {
+            1
+        } else {
+            manifest.entries.iter().map(|e| e.chunk_id).max().unwrap() + 1
+        };
+        let prev_chunk_hash = if manifest.entries.is_empty() {
+            [0u8; 32]
+        } else {
+            // Use the last entry's chunk_hash as prev
+            let last = manifest.entries.iter().max_by_key(|e| e.chunk_id).unwrap();
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&last.chunk_hash[..32]);
+            hash
+        };
+
+        let config = ChunkConfig {
+            user_did: user_did.to_string(),
+            provider_did: provider_did.to_string(),
+            chunk_id,
+            prev_chunk_hash,
+        };
+
+        let end_nonce = phone_entries.last().unwrap().nonce;
+        let result =
+            log_sync::sync_chunk_to_ipfs(ipfs, &config, &proto_entries, log_key, manifest)
+                .await?;
+
+        // Mark local entries as synced
+        self.mark_synced(end_nonce)?;
+
+        Ok(result)
+    }
+
+    /// Restore all transactions from an IPFS manifest CID into local SQLite.
+    pub async fn restore_from_ipfs(
+        &self,
+        ipfs: &dyn IpfsClient,
+        manifest_cid: &str,
+        log_key: &[u8; 32],
+    ) -> Result<()> {
+        let proto_entries =
+            log_sync::restore_from_ipfs(ipfs, manifest_cid, log_key).await?;
+
+        for proto_entry in &proto_entries {
+            let phone_entry = proto_entry_to_phone(proto_entry);
+            self.record_transaction(&phone_entry)?;
+        }
+
+        Ok(())
     }
 }
 

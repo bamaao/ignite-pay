@@ -8,6 +8,7 @@ pub mod vc;
 pub mod audit_merkle;
 pub mod log_crypto;
 pub mod log_chunk;
+pub mod log_sync;
 
 // Re-export protobuf types
 pub mod audit_proto {
