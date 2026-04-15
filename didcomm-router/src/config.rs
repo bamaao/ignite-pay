@@ -19,6 +19,16 @@ pub struct RouterConfig {
     pub max_message_age_seconds: u64,
     #[serde(default)]
     pub known_peers: Vec<KnownPeerConfig>,
+    #[serde(default = "default_jwt_secret")]
+    pub jwt_secret: String,
+}
+
+fn default_jwt_secret() -> String {
+    use std::env;
+    env::var("JWT_SECRET").unwrap_or_else(|_| {
+        tracing::warn!("JWT_SECRET not set and not configured; using random secret. Set [router] jwt_secret in config or JWT_SECRET env var.");
+        uuid::Uuid::new_v4().to_string()
+    })
 }
 
 /// A pre-configured peer whose keys are known at startup.

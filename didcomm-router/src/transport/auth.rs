@@ -4,6 +4,7 @@ use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation}
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, RouterError};
+use crate::state::RouterState;
 
 /// JWT claims for REST API authentication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +18,8 @@ pub struct AuthClaims {
 pub struct TokenRequest {
     pub did: String,
     pub signature: String,
+    /// Nonce obtained from /v1/auth/challenge.
+    pub nonce: Option<String>,
 }
 
 /// Response body for the auth token endpoint.
@@ -83,13 +86,13 @@ pub struct AuthUser {
 }
 
 #[axum::async_trait]
-impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
+impl FromRequestParts<RouterState> for AuthUser {
     type Rejection = RouterError;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> std::result::Result<Self, Self::Rejection> {
+    async fn from_request_parts(parts: &mut Parts, state: &RouterState) -> std::result::Result<Self, Self::Rejection> {
         let token = extract_bearer(parts)?;
-        let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "ignite-pay-router-secret".to_string());
-        let claims = verify_bearer_token(&token, &secret)?;
+        let secret = &state.config.router.jwt_secret;
+        let claims = verify_bearer_token(&token, secret)?;
         Ok(AuthUser { did: claims.user_did })
     }
 }

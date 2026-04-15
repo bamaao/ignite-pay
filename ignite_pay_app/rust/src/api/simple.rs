@@ -1,4 +1,5 @@
 use anyhow::Result;
+use base64::Engine;
 use once_cell::sync::Lazy;
 use sha2::Digest;
 use tokio::sync::Mutex;
@@ -295,15 +296,45 @@ pub fn create_session_key_for_payment(
 }
 
 /// Authenticate with the mediator and get a JWT token.
+/// Uses challenge-response: fetches a nonce, signs it with the DID key, and exchanges for JWT.
 pub async fn authenticate_with_mediator(mediator_url: String, did: String) -> Result<String> {
     let client = reqwest::Client::new();
-    let url = format!("{}/v1/auth/token", mediator_url);
 
+    // Step 1: Get challenge nonce
+    let challenge_url = format!("{}/v1/auth/challenge", mediator_url);
+    let challenge_resp = client.get(&challenge_url).send().await?;
+    if !challenge_resp.status().is_success() {
+        let status = challenge_resp.status();
+        let body = challenge_resp.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!("Challenge request failed: {} - {}", status, body));
+    }
+    let challenge_body: serde_json::Value = challenge_resp.json().await?;
+    let nonce = challenge_body
+        .get("nonce")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("No nonce in challenge response"))?
+        .to_string();
+
+    // Step 2: Sign the nonce with the DID's Ed25519 key
+    // Derive the signing key from the DID (deterministic, same derivation as create_session_key_for_payment)
+    let seed = sha2::Sha256::digest(did.as_bytes());
+    let seed_bytes: &[u8; 32] = seed
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid seed length"))?;
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(seed_bytes);
+    use ed25519_dalek::Signer;
+    let signature = signing_key.sign(nonce.as_bytes());
+    let signature_b64 = base64::engine::general_purpose::STANDARD_NO_PAD.encode(signature.to_bytes());
+
+    // Step 3: Exchange signed challenge for JWT
+    let token_url = format!("{}/v1/auth/token", mediator_url);
     let response = client
-        .post(&url)
+        .post(&token_url)
         .json(&serde_json::json!({
             "did": did,
-            "signature": "placeholder"
+            "signature": signature_b64,
+            "nonce": nonce
         }))
         .send()
         .await?;

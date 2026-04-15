@@ -12,6 +12,7 @@ pub fn build_router(state: RouterState) -> Router {
         .route("/", post(transport::http::post_message))
         .route("/health", get(health))
         // REST API v1
+        .route("/v1/auth/challenge", get(transport::http::auth_challenge))
         .route("/v1/auth/token", post(transport::http::auth_token))
         .route("/v1/sync/messages/{msg_id}", get(transport::http::get_message))
         .route("/v1/sync/list", get(transport::http::list_messages))

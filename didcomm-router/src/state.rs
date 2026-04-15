@@ -21,6 +21,7 @@ pub struct RouterState {
     pub device_token_store: SharedDeviceTokenStore,
     pub notification_sender: Arc<dyn NotificationSender>,
     pub agent_binding_store: SharedAgentBindingStore,
+    pub auth_challenges: Arc<dashmap::DashMap<String, i64>>, // nonce -> expiry timestamp
 }
 
 impl RouterState {
@@ -42,6 +43,7 @@ impl RouterState {
             device_token_store,
             notification_sender,
             agent_binding_store,
+            auth_challenges: Arc::new(dashmap::DashMap::new()),
         })
     }
 }

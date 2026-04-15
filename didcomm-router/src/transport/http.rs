@@ -8,6 +8,7 @@ use tracing::{error, info};
 use crate::state::RouterState;
 use crate::storage::QueuedMessage;
 use crate::transport::auth::{AuthUser, TokenRequest, TokenResponse, create_token};
+use ignite_pay_core::verify_did_signature;
 
 /// HTTP POST endpoint for receiving DIDComm messages.
 /// The body should be a JWE/JWS/plaintext DIDComm message.
@@ -36,12 +37,27 @@ pub async fn post_message(
 
 // ── REST API Endpoints ─────────────────────────────────────────────────
 
-/// `POST /v1/auth/token` — Exchange DID signature for JWT.
+/// `GET /v1/auth/challenge` — Get a nonce challenge for DID authentication.
+/// Returns a nonce that must be signed with the DID's Ed25519 key.
+pub async fn auth_challenge(
+    State(state): State<RouterState>,
+) -> impl IntoResponse {
+    let nonce = uuid::Uuid::new_v4().to_string();
+    let expiry = chrono::Utc::now().timestamp() + 300; // 5 minutes
+    state.auth_challenges.insert(nonce.clone(), expiry);
+
+    (
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "nonce": nonce })),
+    )
+        .into_response()
+}
+
+/// `POST /v1/auth/token` — Exchange DID signature over a challenge nonce for JWT.
 pub async fn auth_token(
+    State(state): State<RouterState>,
     axum::Json(req): axum::Json<TokenRequest>,
 ) -> impl IntoResponse {
-    // In production, verify the Ed25519 signature against a challenge.
-    // For now, accept any request with a valid DID format.
     if !req.did.starts_with("did:") {
         return (
             StatusCode::BAD_REQUEST,
@@ -50,10 +66,43 @@ pub async fn auth_token(
             .into_response();
     }
 
-    let secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "ignite-pay-router-secret".to_string());
+    // Verify the nonce was issued by us and hasn't expired
+    let nonce = match req.nonce {
+        Some(ref n) => n.clone(),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                axum::Json(serde_json::json!({ "error": "Missing nonce" })),
+            )
+                .into_response();
+        }
+    };
 
-    match create_token(&req.did, &secret) {
+    let now = chrono::Utc::now().timestamp();
+    let valid = state
+        .auth_challenges
+        .remove_if(&nonce, |_, &expiry| expiry > now);
+
+    if valid.is_none() {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "Invalid or expired nonce" })),
+        )
+            .into_response();
+    }
+
+    // Verify Ed25519 signature over the nonce
+    if !verify_did_signature(&req.did, &nonce, &req.signature) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "Invalid signature" })),
+        )
+            .into_response();
+    }
+
+    let secret = &state.config.router.jwt_secret;
+
+    match create_token(&req.did, secret) {
         Ok(token) => (
             StatusCode::OK,
             axum::Json(TokenResponse {

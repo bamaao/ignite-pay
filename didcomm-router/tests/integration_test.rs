@@ -12,6 +12,7 @@ fn test_config() -> Config {
             max_queued_messages: 100,
             max_message_age_seconds: 3600,
             known_peers: vec![],
+            jwt_secret: "test-secret".to_string(),
         },
     }
 }

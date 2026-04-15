@@ -144,6 +144,62 @@ pub fn load_did(db: &sled::Db) -> Result<Option<String>, anyhow::Error> {
     }
 }
 
+/// Extract the Ed25519 public key bytes from a did:ignite identifier.
+/// Format: did:ignite:z + Base58(0xed 0x01 + Ed25519_pubkey)
+pub fn extract_pubkey_from_did(did: &str) -> Option<[u8; 32]> {
+    let prefix = "did:ignite:z";
+    if !did.starts_with(prefix) {
+        return None;
+    }
+
+    let encoded = &did[prefix.len()..];
+    let decoded = bs58::decode(encoded).into_vec().ok()?;
+
+    // Expect multicodec prefix 0xed 0x01 + 32 bytes Ed25519 pubkey
+    if decoded.len() != 34 || decoded[0] != 0xed || decoded[1] != 0x01 {
+        return None;
+    }
+
+    let mut pk = [0u8; 32];
+    pk.copy_from_slice(&decoded[2..34]);
+    Some(pk)
+}
+
+/// Verify an Ed25519 signature from a did:ignite DID key.
+/// Extracts the public key from the DID and verifies the signature over the message.
+pub fn verify_did_signature(did: &str, message: &str, signature_b64: &str) -> bool {
+    let pk_bytes = match extract_pubkey_from_did(did) {
+        Some(bytes) => bytes,
+        None => return false,
+    };
+
+    let verifying_key = match ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes) {
+        Ok(key) => key,
+        Err(_) => return false,
+    };
+
+    let signature_bytes = match base64::engine::general_purpose::STANDARD_NO_PAD
+        .decode(signature_b64)
+    {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+
+    if signature_bytes.len() != 64 {
+        return false;
+    }
+
+    let mut sig_arr = [0u8; 64];
+    sig_arr.copy_from_slice(&signature_bytes);
+    let sig = match ed25519_dalek::Signature::try_from(sig_arr.as_slice()) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    use ed25519_dalek::Verifier;
+    verifying_key.verify(message.as_bytes(), &sig).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,5 +240,35 @@ mod tests {
 
         let loaded = load_did(&db).unwrap().unwrap();
         assert_eq!(loaded, did);
+    }
+
+    #[test]
+    fn test_extract_pubkey_roundtrip() {
+        // Generate a keypair, build a DID from it, then verify extraction
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[42u8; 32]);
+        let vk = signing_key.verifying_key();
+        let did = format!(
+            "did:ignite:z{}",
+            bs58::encode([0xed, 0x01].iter().chain(vk.as_bytes().iter()).copied().collect::<Vec<_>>()).into_string()
+        );
+        let extracted = extract_pubkey_from_did(&did).expect("extract failed");
+        assert_eq!(extracted, *vk.as_bytes());
+    }
+
+    #[test]
+    fn test_verify_did_signature_roundtrip() {
+        // Use a known signing key, build DID from its public key, sign and verify
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[42u8; 32]);
+        let vk = signing_key.verifying_key();
+        let did = format!(
+            "did:ignite:z{}",
+            bs58::encode([0xed, 0x01].iter().chain(vk.as_bytes().iter()).copied().collect::<Vec<_>>()).into_string()
+        );
+        let message = "test-message";
+        use ed25519_dalek::Signer;
+        let sig = signing_key.sign(message.as_bytes());
+        let sig_b64 = base64::engine::general_purpose::STANDARD_NO_PAD.encode(sig.to_bytes());
+        assert!(verify_did_signature(&did, message, &sig_b64));
+        assert!(!verify_did_signature(&did, "wrong-message", &sig_b64));
     }
 }

@@ -39,6 +39,10 @@ async-trait = "0.1"
 # UUID for message IDs
 uuid = { version = "1", features = ["v4"] }
 
+# Crypto for DID signature verification
+ed25519-dalek = { version = "2", features = ["std"] }
+base64 = "0.22"
+
 # Time
 chrono = "0.4"
 

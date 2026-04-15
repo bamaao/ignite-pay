@@ -1,6 +1,7 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use base64::Engine;
 use serde::Deserialize;
 use tracing::info;
 
@@ -43,8 +44,15 @@ pub async fn update_vc(
         }
     };
 
-    // TODO: Verify platform_signature using config.auth.platform_public_key
-    // For now, accept the request (platform auth will be enforced in production)
+    // Verify platform_signature using config.auth.platform_public_key
+    let message = format!("update-vc:{}:{}", req.merchant_did, req.new_vc_hash);
+    if !verify_platform_signature(&state.config.auth.platform_public_key, &message, &req.platform_signature) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "Invalid platform signature" })),
+        )
+            .into_response();
+    }
 
     info!("Updating VC hash for merchant {}", req.merchant_did);
 
@@ -140,4 +148,43 @@ fn hex_to_bytes32(hex_str: &str) -> Result<[u8; 32], String> {
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
     Ok(arr)
+}
+
+/// Verify an Ed25519 signature against a platform public key (base64-encoded).
+fn verify_platform_signature(
+    pubkey_b64: &str,
+    message: &str,
+    signature_b64: &str,
+) -> bool {
+    let pk_bytes = match base64::engine::general_purpose::STANDARD_NO_PAD.decode(pubkey_b64) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    if pk_bytes.len() != 32 {
+        return false;
+    }
+    let mut pk_arr = [0u8; 32];
+    pk_arr.copy_from_slice(&pk_bytes);
+
+    let verifying_key = match ed25519_dalek::VerifyingKey::from_bytes(&pk_arr) {
+        Ok(key) => key,
+        Err(_) => return false,
+    };
+
+    let sig_bytes = match base64::engine::general_purpose::STANDARD_NO_PAD.decode(signature_b64) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    if sig_bytes.len() != 64 {
+        return false;
+    }
+    let mut sig_arr = [0u8; 64];
+    sig_arr.copy_from_slice(&sig_bytes);
+    let sig = match ed25519_dalek::Signature::try_from(sig_arr.as_slice()) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    use ed25519_dalek::Verifier;
+    verifying_key.verify(message.as_bytes(), &sig).is_ok()
 }
