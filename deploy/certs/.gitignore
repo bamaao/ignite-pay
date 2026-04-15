@@ -1,0 +1,5 @@
+# Never commit TLS certificates or keys
+*.key
+*.crt
+*.pem
+!.gitkeep

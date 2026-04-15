@@ -12,6 +12,7 @@ affinidi-messaging-didcomm = "0.13"
 
 # Web framework
 axum = { version = "0.7", features = ["ws"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 

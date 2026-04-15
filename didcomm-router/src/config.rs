@@ -5,6 +5,8 @@ pub struct Config {
     pub server: ServerConfig,
     pub router: RouterConfig,
     #[serde(default)]
+    pub tls: TlsConfig,
+    #[serde(default)]
     pub fcm: FcmConfig,
     #[serde(default)]
     pub storage: StorageConfig,
@@ -41,6 +43,23 @@ pub struct KnownPeerConfig {
     pub did: String,
     pub key_agreement_kid: String,
     pub key_agreement_public_base64: String,
+}
+
+/// TLS configuration. When both cert_path and key_path are set,
+/// the server accepts TLS connections (wss://, https://).
+/// When absent, the server runs plain HTTP/WS.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct TlsConfig {
+    /// Path to the TLS certificate PEM file.
+    pub cert_path: Option<String>,
+    /// Path to the TLS private key PEM file.
+    pub key_path: Option<String>,
+}
+
+impl TlsConfig {
+    pub fn is_enabled(&self) -> bool {
+        self.cert_path.is_some() && self.key_path.is_some()
+    }
 }
 
 /// FCM (Firebase Cloud Messaging) configuration.

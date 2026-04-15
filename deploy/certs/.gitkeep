@@ -1,0 +1,8 @@
+# Placeholder — TLS certificates go here
+#
+# For development, generate a self-signed certificate:
+#   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+#     -days 365 -nodes -keyout tls.key -out tls.crt \
+#     -subj "/CN=localhost"
+#
+# For production, use Let's Encrypt or your own CA-signed certificates.

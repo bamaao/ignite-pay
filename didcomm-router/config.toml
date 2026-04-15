@@ -16,11 +16,17 @@ max_message_age_seconds = 86400
 # key_agreement_kid = "did:ignite:z6Mk...#key-agreement-1"
 # key_agreement_public_base64 = "..."
 
+# TLS (optional — uncomment and set paths to enable built-in TLS)
+# When using nginx reverse proxy, leave this commented out.
+# [tls]
+# cert_path = "./certs/tls.crt"
+# key_path = "./certs/tls.key"
+
 # FCM push notifications (optional — leave commented to disable)
-[fcm]
-service_account_json = "G:\apps\ignite-pay-d1217-firebase-adminsdk-fbsvc-e2eb429585.json"
-project_id = "ignite-pay-d1217"
+# [fcm]
+# service_account_json = "./firebase-service-account.json"
+# project_id = "ignite-pay-d1217"
 
 # Persistent storage (optional — omit to use in-memory stores)
 [storage]
-path = "./router_data"
+path = "./data"
