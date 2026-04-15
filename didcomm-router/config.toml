@@ -20,3 +20,7 @@ max_message_age_seconds = 86400
 [fcm]
 service_account_json = "G:\apps\ignite-pay-d1217-firebase-adminsdk-fbsvc-e2eb429585.json"
 project_id = "ignite-pay-d1217"
+
+# Persistent storage (optional — omit to use in-memory stores)
+[storage]
+path = "./router_data"

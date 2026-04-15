@@ -1,4 +1,4 @@
-use didcomm_router::config::{Config, FcmConfig, RouterConfig, ServerConfig};
+use didcomm_router::config::{Config, FcmConfig, RouterConfig, ServerConfig, StorageConfig};
 use didcomm_router::state::RouterState;
 
 fn test_config() -> Config {
@@ -15,6 +15,7 @@ fn test_config() -> Config {
             jwt_secret: "test-secret".to_string(),
         },
         fcm: FcmConfig::default(),
+        storage: StorageConfig { path: None },
     }
 }
 

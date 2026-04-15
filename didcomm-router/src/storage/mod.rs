@@ -1,4 +1,5 @@
 pub mod in_memory;
+pub mod sled_store;
 
 use async_trait::async_trait;
 use std::collections::HashSet;

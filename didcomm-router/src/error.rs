@@ -24,6 +24,9 @@ pub enum RouterError {
     #[error("Configuration error: {0}")]
     Config(#[from] std::io::Error),
 
+    #[error("Sled database error: {0}")]
+    Sled(#[from] sled::Error),
+
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 }

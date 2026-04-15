@@ -28,9 +28,36 @@ impl RouterState {
     pub fn new(config: Config) -> Result<Self, crate::error::RouterError> {
         let did_agent = RouterDidAgent::new(config.router.did.clone());
         let sessions = Arc::new(SessionManager::new());
-        let message_store = Arc::new(InMemoryMessageStore::new(config.router.max_queued_messages));
-        let keylist_store = Arc::new(InMemoryKeylistStore::default());
-        let device_token_store = Arc::new(InMemoryDeviceTokenStore::new());
+
+        // Create stores: sled-backed if storage.path is configured, in-memory otherwise
+        let (message_store, keylist_store, device_token_store, agent_binding_store) =
+            if let Some(ref path) = config.storage.path {
+                tracing::info!("Persistent storage enabled: {}", path);
+                let db = Arc::new(
+                    sled::open(path).map_err(|e| crate::error::RouterError::Storage(e.to_string()))?,
+                );
+                (
+                    Arc::new(crate::storage::sled_store::SledMessageStore::new(
+                        db.clone(),
+                        config.router.max_queued_messages,
+                    )) as SharedMessageStore,
+                    Arc::new(crate::storage::sled_store::SledKeylistStore::new(db.clone()))
+                        as SharedKeylistStore,
+                    Arc::new(crate::storage::sled_store::SledDeviceTokenStore::new(db.clone()))
+                        as SharedDeviceTokenStore,
+                    Arc::new(crate::storage::sled_store::SledAgentBindingStore::new(db))
+                        as SharedAgentBindingStore,
+                )
+            } else {
+                tracing::warn!("No storage.path configured — using in-memory stores. All data will be lost on restart.");
+                (
+                    Arc::new(InMemoryMessageStore::new(config.router.max_queued_messages))
+                        as SharedMessageStore,
+                    Arc::new(InMemoryKeylistStore::default()) as SharedKeylistStore,
+                    Arc::new(InMemoryDeviceTokenStore::new()) as SharedDeviceTokenStore,
+                    Arc::new(InMemoryAgentBindingStore::new()) as SharedAgentBindingStore,
+                )
+            };
 
         // Create notification sender: real FCM if configured, no-op otherwise
         let notification_sender: Arc<dyn NotificationSender> =
@@ -52,8 +79,6 @@ impl RouterState {
                 tracing::info!("FCM not configured (no service_account_json). Push notifications disabled.");
                 Arc::new(crate::notification::NoopNotificationSender)
             };
-
-        let agent_binding_store = Arc::new(InMemoryAgentBindingStore::new());
 
         Ok(Self {
             config,

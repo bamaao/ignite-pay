@@ -6,6 +6,8 @@ pub struct Config {
     pub router: RouterConfig,
     #[serde(default)]
     pub fcm: FcmConfig,
+    #[serde(default)]
+    pub storage: StorageConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -51,6 +53,15 @@ pub struct FcmConfig {
     pub service_account_json: Option<String>,
     /// Firebase project ID (required if service_account_json is set).
     pub project_id: Option<String>,
+}
+
+/// Storage configuration.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct StorageConfig {
+    /// Directory path for sled database files.
+    /// If set, all stores use sled for persistence across restarts.
+    /// If absent, in-memory stores are used (data lost on restart).
+    pub path: Option<String>,
 }
 
 impl Config {
