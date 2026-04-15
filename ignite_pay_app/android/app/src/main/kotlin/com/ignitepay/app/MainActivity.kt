@@ -1,4 +1,4 @@
-package com.example.ignite_pay_app
+package com.ignitepay.app
 
 import io.flutter.embedding.android.FlutterActivity
 

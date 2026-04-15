@@ -17,10 +17,7 @@ import 'package:flutter/foundation.dart'
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
-      throw UnsupportedError(
-        'DefaultFirebaseOptions have not been configured for web - '
-        'you can reconfigure this by running the FlutterFire CLI again.',
-      );
+      return web;
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
@@ -28,15 +25,9 @@ class DefaultFirebaseOptions {
       case TargetPlatform.iOS:
         return ios;
       case TargetPlatform.macOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for macos - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return macos;
       case TargetPlatform.windows:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for windows - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return windows;
       case TargetPlatform.linux:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for linux - '
@@ -51,7 +42,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyDuJyeHSEVeqlOswWQkZ66kMWqe-pDzxs4',
-    appId: '1:389818499028:android:80e9dee3ee9710e3c76041',
+    appId: '1:389818499028:android:304546bf6fb12a40c76041',
     messagingSenderId: '389818499028',
     projectId: 'ignite-pay-d1217',
     storageBucket: 'ignite-pay-d1217.firebasestorage.app',
@@ -59,10 +50,38 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyBpIdDEKabDBz1Pq3FoIr2krjV-BANP_QQ',
-    appId: '1:389818499028:ios:fd6bec92b6ebf0afc76041',
+    appId: '1:389818499028:ios:02e512743acc97d2c76041',
     messagingSenderId: '389818499028',
     projectId: 'ignite-pay-d1217',
     storageBucket: 'ignite-pay-d1217.firebasestorage.app',
-    iosBundleId: 'com.example.ignitePayApp',
+    iosBundleId: 'com.ignitepay.app',
   );
+
+  static const FirebaseOptions web = FirebaseOptions(
+    apiKey: 'AIzaSyC0nPrUfZeGSTtdvyoKzy-vQ9vekbhqwtI',
+    appId: '1:389818499028:web:604e5e921857d227c76041',
+    messagingSenderId: '389818499028',
+    projectId: 'ignite-pay-d1217',
+    authDomain: 'ignite-pay-d1217.firebaseapp.com',
+    storageBucket: 'ignite-pay-d1217.firebasestorage.app',
+  );
+
+  static const FirebaseOptions macos = FirebaseOptions(
+    apiKey: 'AIzaSyBpIdDEKabDBz1Pq3FoIr2krjV-BANP_QQ',
+    appId: '1:389818499028:ios:02e512743acc97d2c76041',
+    messagingSenderId: '389818499028',
+    projectId: 'ignite-pay-d1217',
+    storageBucket: 'ignite-pay-d1217.firebasestorage.app',
+    iosBundleId: 'com.ignitepay.app',
+  );
+
+  static const FirebaseOptions windows = FirebaseOptions(
+    apiKey: 'AIzaSyC0nPrUfZeGSTtdvyoKzy-vQ9vekbhqwtI',
+    appId: '1:389818499028:web:5c18d3acf29975d6c76041',
+    messagingSenderId: '389818499028',
+    projectId: 'ignite-pay-d1217',
+    authDomain: 'ignite-pay-d1217.firebaseapp.com',
+    storageBucket: 'ignite-pay-d1217.firebasestorage.app',
+  );
+
 }
