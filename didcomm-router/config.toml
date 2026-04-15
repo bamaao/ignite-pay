@@ -17,6 +17,6 @@ max_message_age_seconds = 86400
 # key_agreement_public_base64 = "..."
 
 # FCM push notifications (optional — leave commented to disable)
-# [fcm]
-# service_account_json = "path/to/firebase-service-account.json"
-# project_id = "your-firebase-project-id"
+[fcm]
+service_account_json = "G:\apps\ignite-pay-d1217-firebase-adminsdk-fbsvc-e2eb429585.json"
+project_id = "ignite-pay-d1217"
