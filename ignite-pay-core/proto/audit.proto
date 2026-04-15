@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package ignite_pay.audit.v1;
+
+// Storage and sync minimum unit
+message LogChunk {
+    // Metadata (cleartext, for cloud indexing)
+    ChunkMetadata metadata = 1;
+
+    // AES-256-GCM encrypted EncryptedPayload
+    bytes encrypted_payload = 2;
+
+    // GCM authentication tag
+    bytes auth_tag = 3;
+
+    // Merkle root of all transactions in this chunk
+    bytes merkle_root = 4;
+}
+
+message ChunkMetadata {
+    string user_did = 1;
+    string provider_did = 2;
+    uint64 chunk_id = 3;
+    uint64 start_nonce = 4;
+    uint64 end_nonce = 5;
+    bytes  prev_chunk_hash = 6;
+    int64  timestamp_start = 7;
+    int64  timestamp_end = 8;
+}
+
+// Ciphertext inner structure
+message EncryptedPayload {
+    repeated TransactionEntry entries = 1;
+}
+
+message TransactionEntry {
+    uint64 nonce = 1;
+    int64  delta_amount = 2;
+    uint64 cumulative_amount = 3;
+    bytes  signature = 4;
+    int64  timestamp = 5;
+    string service_id = 6;
+    string payment_id = 7;
+    string merchant_did = 8;
+    bytes  memo = 9;
+}

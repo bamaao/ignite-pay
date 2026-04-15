@@ -33,6 +33,17 @@ uuid = { version = "1", features = ["v4"] }
 thiserror = "2"
 anyhow = "1"
 
+# Phase 2: E2EE log
+prost = "0.13"
+prost-types = "0.13"
+hkdf = "0.12"
+aes-gcm = "0.10"
+zstd = "0.13"
+sha2 = "0.10"
+
+[build-dependencies]
+prost-build = "0.13"
+
 # HTTP client (for Kubo IPFS)
 reqwest = { version = "0.12", features = ["json", "multipart"], optional = true }
 

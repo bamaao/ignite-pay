@@ -5,6 +5,15 @@ pub mod list_store;
 pub mod types;
 pub mod vc;
 
+pub mod audit_merkle;
+pub mod log_crypto;
+pub mod log_chunk;
+
+// Re-export protobuf types
+pub mod audit_proto {
+    include!(concat!(env!("OUT_DIR"), "/ignite_pay.audit.v1.rs"));
+}
+
 #[cfg(feature = "solana")]
 pub mod solana_did;
 
