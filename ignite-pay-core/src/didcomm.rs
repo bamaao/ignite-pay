@@ -57,6 +57,69 @@ pub fn build_peer_introduction(from_did: &str, did_doc: &Value) -> Message {
     .from(from_did.to_string())
 }
 
+/// Build an Out-of-Band invitation for P2P pairing.
+/// The MCP generates this; the phone scans it (as QR) to learn the MCP's DID,
+/// DID document, and the mediator endpoint.
+pub fn build_oob_invitation(
+    from_did: &str,
+    label: &str,
+    mediator_ws_url: &str,
+    did_doc: &Value,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/out-of-band/2.0/invitation",
+        json!({
+            "label": label,
+            "goal_code": "p2p-messaging",
+            "accept": ["didcomm/v2"],
+            "did_document": did_doc,
+            "services": [{
+                "id": "#mediator",
+                "type": "did-communication",
+                "service_endpoint": mediator_ws_url,
+                "routing_keys": [from_did]
+            }]
+        }),
+    )
+    .from(from_did.to_string())
+}
+
+/// Build a connection request sent by the phone to the MCP during pairing.
+/// Contains the phone's push channel preference and optional FCM token.
+pub fn build_connection_request(
+    from_did: &str,
+    to_did: &str,
+    push_channel: &str,
+    fcm_token: Option<&str>,
+) -> Message {
+    let mut body = json!({
+        "push_channel": push_channel,
+    });
+    if let Some(token) = fcm_token {
+        body["fcm_token"] = json!(token);
+    }
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/connection-request",
+        body,
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build a connection response sent by the MCP to acknowledge a pairing request.
+pub fn build_connection_response(
+    from_did: &str,
+    to_did: &str,
+    accepted: bool,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/connection-response",
+        json!({ "accepted": accepted }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
 /// Build a Message Pickup 3.0 `status-request` message.
 /// Asks the mediator how many messages are queued for this DID.
 pub fn build_status_request(from_did: &str) -> Message {
@@ -296,4 +359,407 @@ pub fn create_agent(identity: PrivateIdentity) -> (DIDCommAgent, String) {
     let mut agent = DIDCommAgent::new();
     agent.add_identity(identity);
     (agent, did)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_DID: &str = "did:ignite:zTestMcp123";
+    const PHONE_DID: &str = "did:ignite:zTestPhone456";
+
+    #[test]
+    fn test_build_oob_invitation_fields() {
+        let did_doc = json!({"id": TEST_DID, "verificationMethod": []});
+        let msg = build_oob_invitation(
+            TEST_DID,
+            "Test MCP",
+            "wss://mediator.example.com/ws",
+            &did_doc,
+        );
+
+        assert_eq!(msg.typ, "https://didcomm.org/out-of-band/2.0/invitation");
+        assert_eq!(msg.from.as_ref().unwrap(), TEST_DID);
+        assert_eq!(msg.body.get("label").unwrap().as_str(), Some("Test MCP"));
+        assert_eq!(msg.body.get("goal_code").unwrap().as_str(), Some("p2p-messaging"));
+        assert_eq!(
+            msg.body.get("did_document").unwrap().get("id").unwrap().as_str(),
+            Some(TEST_DID)
+        );
+
+        let services = msg.body.get("services").unwrap().as_array().unwrap();
+        assert_eq!(services.len(), 1);
+        assert_eq!(
+            services[0].get("service_endpoint").unwrap().as_str(),
+            Some("wss://mediator.example.com/ws")
+        );
+        assert_eq!(
+            services[0].get("routing_keys").unwrap().as_array().unwrap(),
+            &vec![json!(TEST_DID)]
+        );
+    }
+
+    #[test]
+    fn test_build_connection_request_without_fcm() {
+        let msg = build_connection_request(PHONE_DID, TEST_DID, "websocket", None);
+
+        assert_eq!(
+            msg.typ,
+            "https://didcomm.org/ignite-pay/1.0/connection-request"
+        );
+        assert_eq!(msg.from.as_ref().unwrap(), PHONE_DID);
+        assert_eq!(
+            msg.to.as_ref().unwrap().first().unwrap(),
+            TEST_DID
+        );
+        assert_eq!(msg.body.get("push_channel").unwrap().as_str(), Some("websocket"));
+        assert!(msg.body.get("fcm_token").is_none());
+    }
+
+    #[test]
+    fn test_build_connection_request_with_fcm() {
+        let msg = build_connection_request(
+            PHONE_DID,
+            TEST_DID,
+            "fcm",
+            Some("token_abc123"),
+        );
+
+        assert_eq!(msg.body.get("push_channel").unwrap().as_str(), Some("fcm"));
+        assert_eq!(msg.body.get("fcm_token").unwrap().as_str(), Some("token_abc123"));
+    }
+
+    #[test]
+    fn test_build_connection_response() {
+        let msg = build_connection_response(TEST_DID, PHONE_DID, true);
+
+        assert_eq!(
+            msg.typ,
+            "https://didcomm.org/ignite-pay/1.0/connection-response"
+        );
+        assert_eq!(msg.body.get("accepted").unwrap().as_bool(), Some(true));
+        assert_eq!(msg.from.as_ref().unwrap(), TEST_DID);
+        assert_eq!(
+            msg.to.as_ref().unwrap().first().unwrap(),
+            PHONE_DID
+        );
+    }
+
+    #[test]
+    fn test_build_connection_response_rejected() {
+        let msg = build_connection_response(TEST_DID, PHONE_DID, false);
+        assert_eq!(msg.body.get("accepted").unwrap().as_bool(), Some(false));
+    }
+
+    #[test]
+    fn test_is_jwe_valid() {
+        let jwe = json!({
+            "ciphertext": "abc123",
+            "recipients": [{"header": {"kid": "test"}}],
+        });
+        assert!(is_jwe(&jwe.to_string()));
+    }
+
+    #[test]
+    fn test_is_jwe_invalid_no_ciphertext() {
+        let not_jwe = json!({"recipients": []});
+        assert!(!is_jwe(&not_jwe.to_string()));
+    }
+
+    #[test]
+    fn test_is_jwe_invalid_not_json() {
+        assert!(!is_jwe("not json at all"));
+    }
+
+    #[test]
+    fn test_oob_invitation_roundtrip_url_parse() {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine;
+
+        let did_doc = json!({"id": TEST_DID});
+        let msg = build_oob_invitation(
+            TEST_DID,
+            "MCP",
+            "ws://localhost:3000",
+            &did_doc,
+        );
+        let json_str = serde_json::to_string(&msg).unwrap();
+        let b64 = URL_SAFE_NO_PAD.encode(json_str.as_bytes());
+        let url = format!("didcomm://?_oob={}", b64);
+
+        // Parse it back manually (no url crate needed)
+        let query_start = url.find("_oob=").unwrap();
+        let oob_param = &url[query_start + 5..];
+        let decoded = URL_SAFE_NO_PAD.decode(oob_param).unwrap();
+        let parsed_msg: Value = serde_json::from_slice(&decoded).unwrap();
+
+        assert_eq!(parsed_msg["type"], "https://didcomm.org/out-of-band/2.0/invitation");
+        assert_eq!(parsed_msg["from"], TEST_DID);
+        assert_eq!(parsed_msg["body"]["label"], "MCP");
+    }
+
+    // --- build_authorization_request ---
+
+    #[test]
+    fn test_build_authorization_request_fields() {
+        let msg = build_authorization_request(
+            TEST_DID,
+            PHONE_DID,
+            "pay-001",
+            "did:ignite:zMerchant",
+            500_000_000,
+            "Coffee",
+        );
+        assert_eq!(msg.typ, "https://didcomm.org/ignite-pay/1.0/payment-auth-request");
+        assert_eq!(msg.from.as_ref().unwrap(), TEST_DID);
+        assert_eq!(msg.to.as_ref().unwrap().first().unwrap(), PHONE_DID);
+        assert_eq!(msg.body["payment_id"], "pay-001");
+        assert_eq!(msg.body["merchant_did"], "did:ignite:zMerchant");
+        assert_eq!(msg.body["amount"], 500_000_000);
+        assert_eq!(msg.body["description"], "Coffee");
+    }
+
+    // --- build_authorization_response_v1 ---
+
+    #[test]
+    fn test_build_auth_response_v1_without_session_key() {
+        let msg = build_authorization_response_v1(
+            PHONE_DID,
+            TEST_DID,
+            "pay-002",
+            true,
+            "none",
+            None,
+        );
+        assert_eq!(msg.typ, "https://didcomm.org/ignite-pay/1.0/payment-auth-response");
+        assert_eq!(msg.from.as_ref().unwrap(), PHONE_DID);
+        assert_eq!(msg.to.as_ref().unwrap().first().unwrap(), TEST_DID);
+        assert_eq!(msg.body["payment_id"], "pay-002");
+        assert_eq!(msg.body["authorized"], true);
+        assert_eq!(msg.body["list_action"], "none");
+        assert!(msg.body.get("session_key_pubkey").is_none());
+    }
+
+    #[test]
+    fn test_build_auth_response_v1_with_session_key() {
+        let sk = SessionKeyResponseData {
+            session_key_pubkey: "pubkey123".to_string(),
+            session_key_secret_key: "secret456".to_string(),
+            session_key_tx_signature: "sig789".to_string(),
+            session_expires_at: 1700000000,
+            spending_limit: 100_000,
+            scopes: vec!["sol:transfer".to_string(), "spl:transfer".to_string()],
+        };
+        let msg = build_authorization_response_v1(
+            PHONE_DID,
+            TEST_DID,
+            "pay-003",
+            true,
+            "add_whitelist",
+            Some(&sk),
+        );
+        assert_eq!(msg.body["session_key_pubkey"], "pubkey123");
+        assert_eq!(msg.body["session_key_secret_key"], "secret456");
+        assert_eq!(msg.body["session_key_tx_signature"], "sig789");
+        assert_eq!(msg.body["session_expires_at"], 1700000000);
+        assert_eq!(msg.body["spending_limit"], 100_000);
+        assert_eq!(msg.body["scopes"], json!(["sol:transfer", "spl:transfer"]));
+    }
+
+    // --- build_authorization_response_v1_1 ---
+
+    #[test]
+    fn test_build_auth_response_v1_1_with_list_metadata() {
+        let msg = build_authorization_response_v1_1(
+            PHONE_DID,
+            TEST_DID,
+            "pay-004",
+            true,
+            "add_whitelist",
+            None,
+            Some("Trusted Shop"),
+            Some(50_000_000),
+        );
+        assert_eq!(msg.body["list_label"], "Trusted Shop");
+        assert_eq!(msg.body["list_max_amount"], 50_000_000);
+    }
+
+    #[test]
+    fn test_build_auth_response_v1_1_without_optionals() {
+        let msg = build_authorization_response_v1_1(
+            PHONE_DID,
+            TEST_DID,
+            "pay-005",
+            false,
+            "none",
+            None,
+            None,
+            None,
+        );
+        assert!(msg.body.get("list_label").is_none());
+        assert!(msg.body.get("list_max_amount").is_none());
+        assert!(msg.body.get("session_key_pubkey").is_none());
+    }
+
+    // --- build_list_sync_notification ---
+
+    #[test]
+    fn test_build_list_sync_notification() {
+        let msg = build_list_sync_notification(
+            TEST_DID,
+            PHONE_DID,
+            "whitelist",
+            "add",
+            "did:ignite:zMerchant",
+            "QmNewCid123",
+        );
+        assert_eq!(msg.typ, "https://didcomm.org/ignite-pay/1.0/list-sync-notification");
+        assert_eq!(msg.from.as_ref().unwrap(), TEST_DID);
+        assert_eq!(msg.to.as_ref().unwrap().first().unwrap(), PHONE_DID);
+        assert_eq!(msg.body["list_type"], "whitelist");
+        assert_eq!(msg.body["action"], "add");
+        assert_eq!(msg.body["entry_did"], "did:ignite:zMerchant");
+        assert_eq!(msg.body["new_cid"], "QmNewCid123");
+    }
+
+    // --- build_ws_challenge_response ---
+
+    #[test]
+    fn test_build_ws_challenge_response() {
+        let did_doc = json!({"id": PHONE_DID});
+        let msg = build_ws_challenge_response(
+            PHONE_DID,
+            TEST_DID,
+            "nonce-abc-123",
+            &did_doc,
+        );
+        assert_eq!(msg.typ, "https://didcomm.org/ignite-pay/1.0/ws-challenge-response");
+        assert_eq!(msg.from.as_ref().unwrap(), PHONE_DID);
+        assert_eq!(msg.to.as_ref().unwrap().first().unwrap(), TEST_DID);
+        assert_eq!(msg.body["nonce"], "nonce-abc-123");
+        assert_eq!(msg.body["did_document"]["id"], PHONE_DID);
+    }
+
+    // --- build_status_request ---
+
+    #[test]
+    fn test_build_status_request() {
+        let msg = build_status_request(PHONE_DID);
+        assert_eq!(msg.typ, "https://didcomm.org/messagepickup/3.0/status-request");
+        assert_eq!(msg.from.as_ref().unwrap(), PHONE_DID);
+    }
+
+    // --- build_batch_pickup ---
+
+    #[test]
+    fn test_build_batch_pickup() {
+        let msg = build_batch_pickup(PHONE_DID, 25);
+        assert_eq!(msg.typ, "https://didcomm.org/messagepickup/3.0/batch-pickup");
+        assert_eq!(msg.from.as_ref().unwrap(), PHONE_DID);
+        assert_eq!(msg.body["count"], 25);
+    }
+
+    // --- build_peer_introduction ---
+
+    #[test]
+    fn test_build_peer_introduction() {
+        let did_doc = json!({"id": PHONE_DID, "verificationMethod": []});
+        let msg = build_peer_introduction(PHONE_DID, &did_doc);
+        assert_eq!(msg.typ, "https://didcomm.org/peer-did-discovery/1.0/discover");
+        assert_eq!(msg.from.as_ref().unwrap(), PHONE_DID);
+        assert_eq!(msg.body["did_document"]["id"], PHONE_DID);
+    }
+
+    // --- pack/unpack roundtrip ---
+
+    #[test]
+    fn test_pack_unpack_roundtrip() {
+        let (sender_identity, sender_did) = crate::identity::generate_ignite_did();
+        let (receiver_identity, receiver_did) = crate::identity::generate_ignite_did();
+
+        let sender_doc = crate::build_did_document(&sender_did, &sender_identity);
+        let receiver_doc = crate::build_did_document(&receiver_did, &receiver_identity);
+
+        let (mut sender_agent, _) = create_agent(sender_identity);
+        let (mut receiver_agent, _) = create_agent(receiver_identity);
+
+        // Register each other as peers
+        if let Some(resolved) = crate::parse_did_document(&receiver_did, &receiver_doc) {
+            sender_agent.add_peer(resolved);
+        }
+        if let Some(resolved) = crate::parse_did_document(&sender_did, &sender_doc) {
+            receiver_agent.add_peer(resolved);
+        }
+
+        // Pack
+        let msg = build_authorization_request(
+            &sender_did,
+            &receiver_did,
+            "pay-test",
+            "did:ignite:zMerchant",
+            100,
+            "test",
+        );
+        let jwe = pack_encrypted(&sender_agent, &msg, &sender_did, &receiver_did).unwrap();
+        assert!(is_jwe(&jwe));
+
+        // Unpack
+        let unpacked = unpack_message(&receiver_agent, &jwe, Some(&sender_did)).unwrap();
+        assert_eq!(unpacked.typ, "https://didcomm.org/ignite-pay/1.0/payment-auth-request");
+        assert_eq!(unpacked.body["payment_id"], "pay-test");
+        assert_eq!(unpacked.body["amount"], 100);
+    }
+
+    #[test]
+    fn test_pack_unpack_connection_request_roundtrip() {
+        let (sender_identity, sender_did) = crate::identity::generate_ignite_did();
+        let (receiver_identity, receiver_did) = crate::identity::generate_ignite_did();
+
+        let sender_doc = crate::build_did_document(&sender_did, &sender_identity);
+        let receiver_doc = crate::build_did_document(&receiver_did, &receiver_identity);
+
+        let (mut sender_agent, _) = create_agent(sender_identity);
+        let (mut receiver_agent, _) = create_agent(receiver_identity);
+
+        if let Some(resolved) = crate::parse_did_document(&receiver_did, &receiver_doc) {
+            sender_agent.add_peer(resolved);
+        }
+        if let Some(resolved) = crate::parse_did_document(&sender_did, &sender_doc) {
+            receiver_agent.add_peer(resolved);
+        }
+
+        let msg = build_connection_request(&sender_did, &receiver_did, "fcm", Some("token_xyz"));
+        let jwe = pack_encrypted(&sender_agent, &msg, &sender_did, &receiver_did).unwrap();
+
+        let unpacked = unpack_message(&receiver_agent, &jwe, Some(&sender_did)).unwrap();
+        assert_eq!(unpacked.typ, "https://didcomm.org/ignite-pay/1.0/connection-request");
+        assert_eq!(unpacked.body["push_channel"], "fcm");
+        assert_eq!(unpacked.body["fcm_token"], "token_xyz");
+    }
+
+    #[test]
+    fn test_pack_unpack_oob_invitation_roundtrip() {
+        let (sender_identity, sender_did) = crate::identity::generate_ignite_did();
+        let (receiver_identity, receiver_did) = crate::identity::generate_ignite_did();
+
+        let sender_doc = crate::build_did_document(&sender_did, &sender_identity);
+        let receiver_doc = crate::build_did_document(&receiver_did, &receiver_identity);
+
+        let (mut sender_agent, _) = create_agent(sender_identity);
+        let (mut receiver_agent, _) = create_agent(receiver_identity);
+
+        if let Some(resolved) = crate::parse_did_document(&receiver_did, &receiver_doc) {
+            sender_agent.add_peer(resolved);
+        }
+        if let Some(resolved) = crate::parse_did_document(&sender_did, &sender_doc) {
+            receiver_agent.add_peer(resolved);
+        }
+
+        let msg = build_oob_invitation(&sender_did, "MCP", "wss://example.com/ws", &sender_doc);
+        let jwe = pack_encrypted(&sender_agent, &msg, &sender_did, &receiver_did).unwrap();
+
+        let unpacked = unpack_message(&receiver_agent, &jwe, Some(&sender_did)).unwrap();
+        assert_eq!(unpacked.typ, "https://didcomm.org/out-of-band/2.0/invitation");
+        assert_eq!(unpacked.body["label"], "MCP");
+    }
 }

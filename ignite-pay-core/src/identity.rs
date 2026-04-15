@@ -300,4 +300,188 @@ mod tests {
         assert!(verify_did_signature(&did, message, &sig_b64));
         assert!(!verify_did_signature(&did, "wrong-message", &sig_b64));
     }
+
+    // --- parse_did_document edge cases ---
+
+    #[test]
+    fn test_parse_did_document_missing_key_agreement() {
+        let doc = json!({
+            "id": "did:test:1",
+            "verificationMethod": []
+        });
+        assert!(parse_did_document("did:test:1", &doc).is_none());
+    }
+
+    #[test]
+    fn test_parse_did_document_missing_verification_method() {
+        let (identity, did) = generate_ignite_did();
+        let mut doc = build_did_document(&did, &identity);
+        // Remove verificationMethod
+        doc.as_object_mut().unwrap().remove("verificationMethod");
+        // Should still parse (verificationMethod is optional)
+        let resolved = parse_did_document(&did, &doc).unwrap();
+        assert_eq!(resolved.did, did);
+        assert!(resolved.verifying_key.is_none());
+    }
+
+    #[test]
+    fn test_parse_did_document_invalid_base64_key() {
+        let doc = json!({
+            "id": "did:test:1",
+            "keyAgreement": [{
+                "id": "did:test:1#key-agreement-1",
+                "type": "X25519KeyAgreementKey2020",
+                "controller": "did:test:1",
+                "publicKeyBase64": "!!!invalid!!!"
+            }],
+            "verificationMethod": []
+        });
+        assert!(parse_did_document("did:test:1", &doc).is_none());
+    }
+
+    #[test]
+    fn test_parse_did_document_wrong_key_length() {
+        let short_key = base64::engine::general_purpose::STANDARD_NO_PAD.encode([0u8; 16]);
+        let doc = json!({
+            "id": "did:test:1",
+            "keyAgreement": [{
+                "id": "did:test:1#key-agreement-1",
+                "type": "X25519KeyAgreementKey2020",
+                "controller": "did:test:1",
+                "publicKeyBase64": short_key
+            }],
+            "verificationMethod": []
+        });
+        assert!(parse_did_document("did:test:1", &doc).is_none());
+    }
+
+    #[test]
+    fn test_parse_did_document_empty_key_agreement_array() {
+        let doc = json!({
+            "id": "did:test:1",
+            "keyAgreement": [],
+            "verificationMethod": []
+        });
+        assert!(parse_did_document("did:test:1", &doc).is_none());
+    }
+
+    #[test]
+    fn test_parse_did_document_invalid_multibase_prefix() {
+        let (identity, did) = generate_ignite_did();
+        let mut doc = build_did_document(&did, &identity);
+        // Corrupt the multibase key (remove the 'z' prefix)
+        if let Some(vm) = doc.get_mut("verificationMethod").unwrap().as_array_mut() {
+            if let Some(key) = vm[0].get_mut("publicKeyMultibase") {
+                *key = json!("abc123"); // no 'z' prefix
+            }
+        }
+        // Should still parse key agreement, but verifying_key should be None
+        let resolved = parse_did_document(&did, &doc).unwrap();
+        assert!(resolved.verifying_key.is_none());
+    }
+
+    #[test]
+    fn test_parse_did_document_roundtrip_full() {
+        let (identity, did) = generate_ignite_did();
+        let doc = build_did_document(&did, &identity);
+        let resolved = parse_did_document(&did, &doc).unwrap();
+
+        assert_eq!(resolved.did, did);
+        assert!(resolved.key_agreement_kid.contains("key-agreement-1"));
+        assert!(resolved.signing_kid.unwrap().contains("key-signing-1"));
+        assert!(resolved.verifying_key.is_some());
+
+        // The verifying key should match the original
+        let original_vk = identity.verifying_key().unwrap();
+        assert_eq!(resolved.verifying_key.unwrap(), original_vk);
+    }
+
+    // --- extract_pubkey_from_did edge cases ---
+
+    #[test]
+    fn test_extract_pubkey_wrong_prefix() {
+        assert!(extract_pubkey_from_did("did:key:z1234").is_none());
+        assert!(extract_pubkey_from_did("did:web:example.com").is_none());
+    }
+
+    #[test]
+    fn test_extract_pubkey_empty_string() {
+        assert!(extract_pubkey_from_did("").is_none());
+    }
+
+    #[test]
+    fn test_extract_pubkey_invalid_multicodec() {
+        // Encode with wrong multicodec prefix
+        let encoded = bs58::encode([0x12, 0x20].iter().chain([0u8; 32].iter()).copied().collect::<Vec<_>>()).into_string();
+        let did = format!("did:ignite:z{}", encoded);
+        assert!(extract_pubkey_from_did(&did).is_none());
+    }
+
+    #[test]
+    fn test_extract_pubkey_too_short() {
+        // Only 2 bytes (prefix), no key data
+        let encoded = bs58::encode([0xed, 0x01]).into_string();
+        let did = format!("did:ignite:z{}", encoded);
+        assert!(extract_pubkey_from_did(&did).is_none());
+    }
+
+    // --- verify_did_signature edge cases ---
+
+    #[test]
+    fn test_verify_signature_wrong_did_format() {
+        assert!(!verify_did_signature("did:web:example.com", "msg", "sig"));
+    }
+
+    #[test]
+    fn test_verify_signature_invalid_base64_sig() {
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[42u8; 32]);
+        let vk = signing_key.verifying_key();
+        let did = format!(
+            "did:ignite:z{}",
+            bs58::encode([0xed, 0x01].iter().chain(vk.as_bytes().iter()).copied().collect::<Vec<_>>()).into_string()
+        );
+        assert!(!verify_did_signature(&did, "msg", "!!!invalid!!!"));
+    }
+
+    #[test]
+    fn test_verify_signature_wrong_signature_length() {
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[42u8; 32]);
+        let vk = signing_key.verifying_key();
+        let did = format!(
+            "did:ignite:z{}",
+            bs58::encode([0xed, 0x01].iter().chain(vk.as_bytes().iter()).copied().collect::<Vec<_>>()).into_string()
+        );
+        let short_sig = base64::engine::general_purpose::STANDARD_NO_PAD.encode([0u8; 32]);
+        assert!(!verify_did_signature(&did, "msg", &short_sig));
+    }
+
+    // --- load_identity edge cases ---
+
+    #[test]
+    fn test_load_identity_no_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = sled::open(dir.path()).unwrap();
+        let result = load_identity(&db).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_load_did_no_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = sled::open(dir.path()).unwrap();
+        let result = load_did(&db).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_load_did_returns_same_did() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = sled::open(dir.path()).unwrap();
+        let (_, did) = generate_ignite_did();
+        let (identity, _) = generate_ignite_did();
+        // Save with first identity
+        save_identity(&db, &identity, &did).unwrap();
+        let loaded_did = load_did(&db).unwrap().unwrap();
+        assert_eq!(loaded_did, did);
+    }
 }

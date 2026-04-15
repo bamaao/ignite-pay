@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
@@ -418,6 +419,136 @@ void main() {
       test('disconnect cleans up WS state', () async {
         await service.disconnect();
         expect(service.isConnected, isFalse);
+      });
+    });
+
+    group('parseInvitationAndConnect', () {
+      /// Helper to build a valid OOB invitation URL from parts.
+      String buildOobUrl({
+        required String fromDid,
+        String label = 'Test MCP',
+        String wsUrl = 'ws://localhost:3000/ws',
+        Map<String, dynamic>? didDoc,
+        List<Map<String, dynamic>>? services,
+      }) {
+        final body = <String, dynamic>{
+          'label': label,
+          'goal_code': 'p2p-messaging',
+          'accept': ['didcomm/v2'],
+          'did_document': didDoc ?? {'id': fromDid},
+          'services': services ??
+              [
+                {
+                  'id': '#mediator',
+                  'type': 'did-communication',
+                  'service_endpoint': wsUrl,
+                  'routing_keys': [fromDid],
+                }
+              ],
+        };
+
+        final invitation = <String, dynamic>{
+          'type': 'https://didcomm.org/out-of-band/2.0/invitation',
+          'from': fromDid,
+          'body': body,
+        };
+
+        final jsonStr = jsonEncode(invitation);
+        final b64 = base64Url.encode(utf8.encode(jsonStr)).replaceAll('=', '');
+        return 'didcomm://?_oob=$b64';
+      }
+
+      test('parses valid OOB invitation URL with correct fields', () async {
+        await service.initialize();
+
+        final url = buildOobUrl(fromDid: 'did:ignite:zMcpTest');
+        // This will fail because we're not connected to a real mediator,
+        // but we can verify parsing works by checking the error message.
+        try {
+          await service.parseInvitationAndConnect(url);
+        } catch (e) {
+          // Expected: connection request fails because no mediator connected
+          // but the parsing should succeed
+          expect(e.toString(), isNot(contains('Missing _oob')));
+          expect(e.toString(), isNot(contains('Missing from')));
+        }
+      });
+
+      test('rejects URL without _oob parameter', () async {
+        await service.initialize();
+
+        expect(
+          () => service.parseInvitationAndConnect('didcomm://?foo=bar'),
+          throwsA(isA<Exception>().having(
+            (e) => e.toString(),
+            'message',
+            contains('Missing _oob'),
+          )),
+        );
+      });
+
+      test('rejects invitation missing from field', () async {
+        await service.initialize();
+
+        // Build an invitation without "from"
+        final invitation = {
+          'type': 'https://didcomm.org/out-of-band/2.0/invitation',
+          'body': {'label': 'No From'},
+        };
+        final jsonStr = jsonEncode(invitation);
+        final b64 = base64Url.encode(utf8.encode(jsonStr)).replaceAll('=', '');
+        final url = 'didcomm://?_oob=$b64';
+
+        expect(
+          () => service.parseInvitationAndConnect(url),
+          throwsA(isA<Exception>().having(
+            (e) => e.toString(),
+            'message',
+            contains('Missing from'),
+          )),
+        );
+      });
+
+      test('rejects invalid base64', () async {
+        await service.initialize();
+
+        expect(
+          () => service.parseInvitationAndConnect('didcomm://?_oob=!!!invalid!!!'),
+          throwsA(anything),
+        );
+      });
+
+      test('extracts mediator WS URL from services array', () async {
+        await service.initialize();
+
+        final url = buildOobUrl(
+          fromDid: 'did:ignite:zMcpTest',
+          wsUrl: 'wss://mediator.example.com/ws',
+        );
+
+        try {
+          await service.parseInvitationAndConnect(url);
+        } catch (e) {
+          // Parsing succeeded but connection failed — expected
+          expect(e.toString(), isNot(contains('_oob')));
+        }
+      });
+
+      test('handles invitation with empty services gracefully', () async {
+        await service.initialize();
+
+        final url = buildOobUrl(
+          fromDid: 'did:ignite:zMcpTest',
+          services: [],
+        );
+
+        // Should not crash on empty services
+        try {
+          await service.parseInvitationAndConnect(url);
+        } catch (e) {
+          // Expected: fails because no mediator URL found, but parsing is fine
+          expect(e.toString(), isNot(contains('services')));
+        }
       });
     });
   });

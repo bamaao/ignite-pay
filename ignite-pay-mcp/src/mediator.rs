@@ -27,6 +27,8 @@ pub struct MediatorConnection {
     ws_url: String,
     connected: Arc<Notify>,
     outgoing: Arc<tokio::sync::Mutex<mpsc::UnboundedSender<String>>>,
+    /// DID of the paired phone (set during connection-request handshake).
+    paired_phone: Arc<tokio::sync::Mutex<Option<String>>>,
 }
 
 impl std::fmt::Debug for MediatorConnection {
@@ -68,12 +70,58 @@ impl MediatorConnection {
             ws_url: ws_url.to_string(),
             connected: Arc::new(Notify::new()),
             outgoing: Arc::new(tokio::sync::Mutex::new(outgoing_tx)),
+            paired_phone: Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
 
     /// Get our DID string.
     pub fn our_did(&self) -> &str {
         &self.our_did
+    }
+
+    /// Get the DID document JSON.
+    pub fn did_doc(&self) -> &Value {
+        &self.did_doc
+    }
+
+    /// Get the mediator WS URL.
+    pub fn ws_url(&self) -> &str {
+        &self.ws_url
+    }
+
+    /// Get the paired phone DID (if any phone has completed pairing).
+    pub async fn paired_phone_did(&self) -> Option<String> {
+        self.paired_phone.lock().await.clone()
+    }
+
+    /// Generate an Out-of-Band invitation URL for P2P pairing.
+    /// The phone scans this QR code to learn our DID, DID document, and mediator endpoint.
+    /// Returns the OOB invitation as a URL-encoded JSON string.
+    pub fn generate_invitation(&self) -> String {
+        let invitation = didcomm::build_oob_invitation(
+            &self.our_did,
+            "Ignite Pay MCP",
+            &self.ws_url,
+            &self.did_doc,
+        );
+        // Serialize the invitation message to JSON, then base64url-encode it
+        // as a DIDComm out-of-band URL: didcomm://?_oob=<base64url-json>
+        let json = serde_json::to_string(&invitation).unwrap_or_default();
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json.as_bytes());
+        format!("didcomm://?_oob={}", b64)
+    }
+
+    /// Generate an ASCII QR code for the OOB invitation.
+    pub fn generate_invitation_qr(&self) -> Result<String> {
+        let url = self.generate_invitation();
+        let code = qrcode::QrCode::new(url.as_bytes())
+            .map_err(|e| anyhow::anyhow!("QR generation failed: {}", e))?;
+        let string = code
+            .render::<char>()
+            .quiet_zone(false)
+            .module_dimensions(2, 1)
+            .build();
+        Ok(string)
     }
 
     /// Connect to mediator, perform plaintext handshake, then start bidirectional loop.
@@ -84,6 +132,7 @@ impl MediatorConnection {
         let did_doc = self.did_doc.clone();
         let ws_url = self.ws_url.clone();
         let connected = self.connected.clone();
+        let paired_phone = self.paired_phone.clone();
 
         // Create a new channel pair for this connection
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel();
@@ -103,6 +152,7 @@ impl MediatorConnection {
                 connected,
                 outgoing_rx,
                 pending,
+                paired_phone,
             )
             .await;
         });
@@ -221,9 +271,20 @@ async fn real_ws_client(
     _connected: Arc<Notify>,
     mut outgoing_rx: mpsc::UnboundedReceiver<String>,
     pending: Arc<PendingAuthStore>,
+    paired_phone: Arc<tokio::sync::Mutex<Option<String>>>,
 ) {
     loop {
-        match connect_and_run(ws_url, agent, our_did, did_doc, &mut outgoing_rx, &pending).await {
+        match connect_and_run(
+            ws_url,
+            agent,
+            our_did,
+            did_doc,
+            &mut outgoing_rx,
+            &pending,
+            &paired_phone,
+        )
+        .await
+        {
             Ok(()) => {
                 tracing::warn!("Mediator disconnected, reconnecting...");
             }
@@ -243,6 +304,7 @@ async fn connect_and_run(
     did_doc: &Value,
     outgoing_rx: &mut mpsc::UnboundedReceiver<String>,
     pending: &PendingAuthStore,
+    paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
 ) -> Result<()> {
     let (mut ws, _) = connect_async(ws_url).await?;
     tracing::info!("Connected to mediator: {}", ws_url);
@@ -413,7 +475,10 @@ async fn connect_and_run(
                                     );
                                     for entry in messages {
                                         if let Some(jwe) = entry.get("message").and_then(|m| m.as_str()) {
-                                            handle_incoming_message(jwe, agent, pending).await;
+                                            handle_incoming_message(
+                                                jwe, agent, pending, paired_phone,
+                                            )
+                                            .await;
                                         }
                                     }
                                 }
@@ -450,7 +515,7 @@ async fn connect_and_run(
             msg = ws.next() => {
                 match msg {
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
-                        handle_incoming_message(&text, agent, pending).await;
+                        handle_incoming_message(&text, agent, pending, paired_phone).await;
                     }
                     Some(Ok(_)) => {}
                     Some(Err(e)) => return Err(e.into()),
@@ -473,11 +538,12 @@ async fn connect_and_run(
     }
 }
 
-/// Handle an incoming message: try JWE unpack, check for auth response.
+/// Handle an incoming message: try JWE unpack, check for auth response or connection request.
 async fn handle_incoming_message(
     text: &str,
     agent: &Arc<Mutex<DIDCommAgent>>,
     pending: &PendingAuthStore,
+    paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
 ) {
     // Try encrypted unpack first
     if is_jwe(text) {
@@ -485,7 +551,7 @@ async fn handle_incoming_message(
         match didcomm::unpack_message(&agent_guard, text, None) {
             Ok(msg) => {
                 drop(agent_guard);
-                process_inner_message(&msg, pending).await;
+                process_inner_message(&msg, pending, paired_phone, agent).await;
                 return;
             }
             Err(e) => {
@@ -503,6 +569,48 @@ async fn handle_incoming_message(
             return;
         }
     };
+
+    // Check for connection-request in plaintext
+    if v
+        .get("type")
+        .and_then(|t| t.as_str())
+        .map(|t| t.contains("connection-request"))
+        .unwrap_or(false)
+    {
+        let phone_did = v["from"].as_str().unwrap_or("");
+        let push_channel = v["body"]
+            .get("push_channel")
+            .and_then(|v| v.as_str())
+            .unwrap_or("fcm");
+
+        tracing::info!(
+            "Received plaintext connection-request from phone: {} (push_channel: {})",
+            phone_did,
+            push_channel
+        );
+
+        // Try to parse phone's DID document from the message body
+        if let Some(phone_doc) = v["body"].get("did_document") {
+            if let Some(resolved) = parse_did_document(phone_did, phone_doc) {
+                let mut agent_guard = agent.lock().await;
+                agent_guard.add_peer(resolved);
+                tracing::info!("Registered phone peer from DID document: {}", phone_did);
+            }
+        }
+
+        // Store the phone DID
+        {
+            let mut guard = paired_phone.lock().await;
+            *guard = Some(phone_did.to_string());
+        }
+
+        tracing::info!(
+            "Phone {} paired successfully via plaintext (push_channel: {})",
+            phone_did,
+            push_channel
+        );
+        return;
+    }
 
     // Check for auth response in body
     if let Some(body) = v.get("body") {
@@ -571,11 +679,60 @@ async fn handle_incoming_message(
     );
 }
 
-/// Process an unpacked DIDComm Message (from JWE or plaintext).
+/// Process an unpacked DIDComm Message (from JWE).
 async fn process_inner_message(
     msg: &affinidi_messaging_didcomm::Message,
     pending: &PendingAuthStore,
+    paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
+    agent: &Arc<Mutex<DIDCommAgent>>,
 ) {
+    // Check for connection-request type (pairing from phone)
+    if msg.typ.contains("connection-request") {
+        let phone_did = msg
+            .from
+            .as_ref()
+            .and_then(|f| f.first().cloned())
+            .unwrap_or_default();
+        let push_channel = msg
+            .body
+            .get("push_channel")
+            .and_then(|v| v.as_str())
+            .unwrap_or("fcm");
+
+        tracing::info!(
+            "Received connection-request from phone: {} (push_channel: {})",
+            phone_did,
+            push_channel
+        );
+
+        // Try to register phone from its DID document included in the message body
+        if let Some(phone_doc) = msg.body.get("did_document") {
+            if let Some(resolved) = parse_did_document(&phone_did, phone_doc) {
+                let mut agent_guard = agent.lock().await;
+                agent_guard.add_peer(resolved);
+                tracing::info!("Registered phone peer from DID document: {}", phone_did);
+            }
+        } else {
+            tracing::warn!(
+                "No did_document in connection-request from {}, encryption may fail",
+                phone_did
+            );
+        }
+
+        // Store the phone DID
+        {
+            let mut guard = paired_phone.lock().await;
+            *guard = Some(phone_did.clone());
+        }
+
+        tracing::info!(
+            "Phone {} paired successfully (push_channel: {})",
+            phone_did,
+            push_channel
+        );
+        return;
+    }
+
     // Check for payment-auth-response type
     if msg.typ.contains("payment-auth-response") {
         if let Some(payment_id) = msg.body.get("payment_id").and_then(|v| v.as_str()) {

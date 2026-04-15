@@ -7,6 +7,7 @@ import 'package:ignite_pay_app/src/rust/frb_generated.dart';
 import 'package:ignite_pay_app/challenge_screen.dart';
 import 'package:ignite_pay_app/policy_screen.dart';
 import 'package:ignite_pay_app/vault_screen.dart';
+import 'package:ignite_pay_app/qr_scanner_screen.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
 import 'package:provider/provider.dart';
 
@@ -95,6 +96,8 @@ class SentinelDashboard extends StatelessWidget {
                       DIDCard(),
                       SizedBox(height: 20),
                       _QuickNavRow(),
+                      SizedBox(height: 12),
+                      _PairButton(),
                       SizedBox(height: 20),
                       TrustScoreGauge(
                         spent: 0.42,
@@ -206,6 +209,70 @@ class _DashboardHeader extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pair with MCP via QR scan
+// ---------------------------------------------------------------------------
+class _PairButton extends StatelessWidget {
+  const _PairButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final didService = DidcommService();
+    return GestureDetector(
+      onTap: () async {
+        final result = await showQrScanner(context);
+        if (result != null && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: _kSuccess,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              content: Text(
+                'Paired with MCP',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+              ),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        decoration: BoxDecoration(
+          color: _kSurfaceDark.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: didService.isConnected
+                ? _kSuccess.withValues(alpha: 0.3)
+                : _kNeonCyan.withValues(alpha: 0.3),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              LucideIcons.scanLine,
+              size: 18,
+              color: didService.isConnected ? _kSuccess : _kNeonCyan,
+            ),
+            const SizedBox(width: 10),
+            Text(
+              didService.isConnected ? 'Pair New MCP' : 'Scan MCP QR Code',
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: didService.isConnected ? _kSuccess : _kNeonCyan,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

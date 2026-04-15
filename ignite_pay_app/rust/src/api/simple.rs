@@ -383,3 +383,158 @@ pub async fn register_device_token(
 
     Ok(())
 }
+
+/// Parse an OOB invitation URL (from QR code scan).
+/// Extracts the MCP DID, DID document, and mediator WS URL from the invitation.
+pub fn parse_oob_invitation(invitation_url: String) -> Result<OobInvitationData> {
+    // Expected format: didcomm://?_oob=<base64url-encoded JSON>
+    let url = url::Url::parse(&invitation_url)
+        .map_err(|e| anyhow::anyhow!("Invalid URL: {}", e))?;
+
+    let oob_b64 = url
+        .query_pairs()
+        .find(|(k, _)| k == "_oob")
+        .map(|(_, v)| v.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Missing _oob parameter in invitation URL"))?;
+
+    let json_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(&oob_b64)
+        .map_err(|e| anyhow::anyhow!("Base64 decode failed: {}", e))?;
+
+    let invitation: serde_json::Value = serde_json::from_slice(&json_bytes)
+        .map_err(|e| anyhow::anyhow!("JSON parse failed: {}", e))?;
+
+    // Extract MCP DID (from "from" field)
+    let mcp_did = invitation
+        .get("from")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Missing 'from' in invitation"))?
+        .to_string();
+
+    // Extract DID document from body
+    let did_doc = invitation
+        .get("body")
+        .and_then(|b| b.get("did_document"))
+        .cloned();
+
+    // Extract mediator WS URL from services
+    let mediator_ws_url = invitation
+        .get("body")
+        .and_then(|b| b.get("services"))
+        .and_then(|s| s.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|svc| svc.get("service_endpoint"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Extract label
+    let label = invitation
+        .get("body")
+        .and_then(|b| b.get("label"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Ok(OobInvitationData {
+        mcp_did,
+        did_doc_json: did_doc
+            .map(|d| serde_json::to_string(&d).unwrap_or_default())
+            .unwrap_or_default(),
+        mediator_ws_url,
+        label,
+    })
+}
+
+/// Parsed OOB invitation data.
+pub struct OobInvitationData {
+    pub mcp_did: String,
+    pub did_doc_json: String,
+    pub mediator_ws_url: String,
+    pub label: String,
+}
+
+/// Send a connection request to the MCP via the mediator.
+/// This is called after parsing the QR code invitation.
+pub async fn send_connection_request(
+    storage_path: String,
+    mcp_did: String,
+    mcp_did_doc_json: String,
+    mediator_ws_url: String,
+    push_channel: String,
+    fcm_token: Option<String>,
+) -> Result<()> {
+    // Get our identity
+    let mgr = IdentityManager::new(&storage_path)?;
+    let our_did = mgr.did().to_string();
+    let our_did_doc = mgr.did_doc().clone();
+    let agent = mgr.agent();
+
+    // Register MCP as a peer using its DID document
+    if !mcp_did_doc_json.is_empty() {
+        if let Ok(mcp_doc) = serde_json::from_str::<serde_json::Value>(&mcp_did_doc_json) {
+            if let Some(resolved) = ignite_pay_core::parse_did_document(&mcp_did, &mcp_doc) {
+                let mut agent_guard = agent.lock().await;
+                agent_guard.add_peer(resolved);
+                tracing::info!("Registered MCP peer from invitation: {}", mcp_did);
+            }
+        }
+    }
+
+    // Build connection request message
+    let msg = ignite_pay_core::didcomm::build_connection_request(
+        &our_did,
+        &mcp_did,
+        &push_channel,
+        fcm_token.as_deref(),
+    );
+
+    // Encrypt with authcrypt
+    let jwe = {
+        let agent_guard = agent.lock().await;
+        ignite_pay_core::didcomm::pack_encrypted(&agent_guard, &msg, &our_did, &mcp_did)
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?
+    };
+
+    // Send via the WS client (if connected) or via HTTP
+    {
+        let global = GLOBAL_WS_CLIENT.lock().await;
+        if let Some(ref client) = *global {
+            // Send through the existing WS connection
+            client.send_raw(&jwe).await?;
+            tracing::info!("Connection request sent to MCP {} via WS", mcp_did);
+        } else {
+            drop(global);
+            // Not connected via WS — connect and send via HTTP to mediator
+            let client = reqwest::Client::new();
+            let url = format!(
+                "{}/v1/agents/{}/command",
+                mediator_ws_url
+                    .replace("ws://", "http://")
+                    .replace("wss://", "https://")
+                    .trim_end_matches("/ws"),
+                mcp_did
+            );
+            let response = client
+                .post(&url)
+                .json(&serde_json::json!({
+                    "jwe_envelope": jwe
+                }))
+                .send()
+                .await?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                return Err(anyhow::anyhow!(
+                    "Connection request failed: {} - {}",
+                    status,
+                    body
+                ));
+            }
+            tracing::info!("Connection request sent to MCP {} via HTTP", mcp_did);
+        }
+    }
+
+    Ok(())
+}

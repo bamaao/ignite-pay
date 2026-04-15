@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:ignite_pay_app/services/fcm_service.dart';
@@ -445,6 +446,89 @@ class DidcommService extends ChangeNotifier {
       debugPrint('Bound agent $agentDid to user $_did');
     } catch (e) {
       debugPrint('Failed to bind agent: $e');
+    }
+  }
+
+  /// Parse an OOB invitation URL from a QR code scan and send a connection request.
+  /// Returns the MCP DID on success, or throws on error.
+  Future<String> parseInvitationAndConnect(String invitationUrl) async {
+    try {
+      // Parse the invitation URL (didcomm://?_oob=<base64url-json>)
+      final uri = Uri.parse(invitationUrl);
+      final oobB64 = uri.queryParameters['_oob'];
+      if (oobB64 == null || oobB64.isEmpty) {
+        throw Exception('Missing _oob parameter in invitation URL');
+      }
+
+      // Decode base64url (add padding if needed)
+      String padded = oobB64;
+      while (padded.length % 4 != 0) {
+        padded += '=';
+      }
+      final jsonBytes = base64Url.decode(padded);
+      final invitation = jsonDecode(utf8.decode(jsonBytes)) as Map<String, dynamic>;
+
+      // Extract MCP DID (from "from" field)
+      final mcpDid = invitation['from'] as String? ?? '';
+      if (mcpDid.isEmpty) throw Exception('Missing from in invitation');
+
+      // Extract body
+      final body = invitation['body'] as Map<String, dynamic>? ?? {};
+
+      // Extract mediator WS URL from services
+      final services = body['services'] as List<dynamic>? ?? [];
+      String mediatorWsUrl = '';
+      if (services.isNotEmpty) {
+        mediatorWsUrl = (services.first as Map<String, dynamic>)['service_endpoint'] as String? ?? '';
+      }
+
+      debugPrint('Parsed OOB invitation: MCP DID=$mcpDid, mediator=$mediatorWsUrl');
+
+      // Determine push channel based on locale
+      final pushChannel = _isChineseUser ? 'websocket' : 'fcm';
+      String? fcmToken;
+      if (!_isChineseUser) {
+        fcmToken = FcmService().fcmToken;
+      }
+
+      // Save mediator URL if it changed and connect to mediator
+      if (mediatorWsUrl.isNotEmpty && mediatorWsUrl != _mediatorWsUrl) {
+        await connectToMediator(mediatorWsUrl);
+      } else if (!_isConnected && mediatorWsUrl.isNotEmpty) {
+        await connectToMediator(mediatorWsUrl);
+      }
+
+      // Send connection request via the WS channel or HTTP API
+      final connectionBody = <String, dynamic>{
+        'push_channel': pushChannel,
+      };
+      if (fcmToken != null) {
+        connectionBody['fcm_token'] = fcmToken;
+      }
+
+      // Build the connection-request message as JSON
+      final connectionMsg = jsonEncode({
+        'type': 'https://didcomm.org/ignite-pay/1.0/connection-request',
+        'from': _did,
+        'to': [mcpDid],
+        'body': connectionBody,
+      });
+
+      // Send via WS if available, otherwise via mediator HTTP
+      if (_wsChannel != null) {
+        _wsChannel!.sink.add(connectionMsg);
+        debugPrint('Connection request sent to MCP $mcpDid via WS');
+      } else if (_authToken != null) {
+        await _api.submitCommand(_authToken!, mcpDid, connectionMsg);
+        debugPrint('Connection request sent to MCP $mcpDid via HTTP');
+      } else {
+        throw Exception('Not connected to mediator. Connect first.');
+      }
+
+      return mcpDid;
+    } catch (e) {
+      debugPrint('Failed to parse invitation and connect: $e');
+      rethrow;
     }
   }
 

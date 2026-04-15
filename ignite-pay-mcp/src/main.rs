@@ -477,9 +477,19 @@ impl IgnitePayMcpServer {
         // 5. Register pending auth and send request
         let rx = self.pending.register(&payment_id);
 
+        // Resolve phone DID: input override > paired phone > config
+        let phone_did = if !input.phone_did.is_empty() {
+            input.phone_did.clone()
+        } else {
+            match self.resolve_phone_did().await {
+                Some(did) => did,
+                None => return "Error: No phone DID available. Either provide phone_did in the request or pair a phone using generate_pairing_invitation.".to_string(),
+            }
+        };
+
         match self
             .mediator
-            .send_auth_request(&input.phone_did, &payment)
+            .send_auth_request(&phone_did, &payment)
             .await
         {
             Ok(_) => {}
@@ -636,11 +646,31 @@ impl IgnitePayMcpServer {
         } else {
             "Solana: not configured"
         };
+        let phone = self.resolve_phone_did().await;
         format!(
             "DID: {}\nMediator: connected\nPhone DID: {}\n{}",
             self.mediator.our_did(),
-            self.phone_did,
+            phone.as_deref().unwrap_or("(not paired)"),
             solana_status
+        )
+    }
+
+    #[tool(
+        description = "Generate a pairing invitation QR code for the phone app to scan. Returns the OOB invitation URL and an ASCII QR code. The phone app should scan this QR code to establish a P2P DIDComm connection."
+    )]
+    async fn generate_pairing_invitation(&self) -> String {
+        let invitation_url = self.mediator.generate_invitation();
+
+        let qr = match self.mediator.generate_invitation_qr() {
+            Ok(qr) => qr,
+            Err(e) => return format!("Error generating QR code: {}", e),
+        };
+
+        format!(
+            "Scan this QR code with the Ignite Pay phone app to pair:\n\n{}\n\nInvitation URL (for manual entry):\n{}\n\nMCP DID: {}",
+            qr,
+            invitation_url,
+            self.mediator.our_did(),
         )
     }
 
@@ -771,6 +801,20 @@ impl IgnitePayMcpServer {
 }
 
 impl IgnitePayMcpServer {
+    /// Resolve the phone DID: prefer the dynamically paired phone DID,
+    /// fall back to the config value, then to the input parameter.
+    async fn resolve_phone_did(&self) -> Option<String> {
+        // First check if a phone has paired via connection-request
+        if let Some(paired) = self.mediator.paired_phone_did().await {
+            return Some(paired);
+        }
+        // Then check config
+        if !self.phone_did.is_empty() {
+            return Some(self.phone_did.clone());
+        }
+        None
+    }
+
     /// Handle V1.1 extended list_action from phone auth response.
     async fn handle_list_action(
         &self,
@@ -834,18 +878,20 @@ impl IgnitePayMcpServer {
             Ok(new_cid) => {
                 tracing::info!("Lists uploaded to IPFS: {}", new_cid);
                 // Send list-sync-notification to phone
-                if let Err(e) = self
-                    .mediator
-                    .send_list_sync_notification(
-                        &self.phone_did,
-                        list_type,
-                        action,
-                        merchant_did,
-                        &new_cid,
-                    )
-                    .await
-                {
-                    tracing::warn!("Failed to send list-sync-notification: {}", e);
+                if let Some(phone_did) = self.resolve_phone_did().await {
+                    if let Err(e) = self
+                        .mediator
+                        .send_list_sync_notification(
+                            &phone_did,
+                            list_type,
+                            action,
+                            merchant_did,
+                            &new_cid,
+                        )
+                        .await
+                    {
+                        tracing::warn!("Failed to send list-sync-notification: {}", e);
+                    }
                 }
             }
             Err(e) => {

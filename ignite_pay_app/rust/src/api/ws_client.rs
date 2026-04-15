@@ -122,6 +122,19 @@ impl WsClient {
         let mut agent = self.agent.lock().await;
         agent.add_peer(resolved);
     }
+
+    /// Send a raw JWE string through the outgoing WS channel.
+    pub async fn send_raw(&self, jwe: &str) -> Result<()> {
+        let outgoing_guard = self.outgoing.lock().await;
+        if let Some(sender) = outgoing_guard.as_ref() {
+            sender
+                .send(jwe.to_string())
+                .map_err(|_| anyhow::anyhow!("WS channel closed"))?;
+        } else {
+            return Err(anyhow::anyhow!("Not connected to mediator"));
+        }
+        Ok(())
+    }
 }
 
 async fn run_ws_loop(
