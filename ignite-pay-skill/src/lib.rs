@@ -8,11 +8,13 @@ use lazy_static::lazy_static;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::connect_async;
 use serde_json::Value;
+use chrono::Utc;
 
 use affinidi_messaging_didcomm::DIDCommAgent;
-use affinidi_messaging_didcomm::identity::PrivateIdentity;
-use ignite_pay_core::{generate_ignite_did, build_did_document, identity_to_resolved};
+use ignite_pay_core::{generate_ignite_did, build_did_document, parse_did_document};
 use ignite_pay_core::didcomm::{self, is_jwe};
+use ignite_pay_core::list_store::ListStore;
+use ignite_pay_core::types::{MerchantListEntry, WhitelistResult, RiskControlDecision};
 
 // --- Global task coordinator (keyed by payment_id) ---
 lazy_static! {
@@ -24,7 +26,9 @@ lazy_static! {
 struct IgnitePayCore {
     agent: Arc<Mutex<DIDCommAgent>>,
     our_did: String,
+    did_doc: Value,
     outgoing: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
+    list_store: Arc<Mutex<Option<ListStore>>>,
 }
 
 #[pymethods]
@@ -32,46 +36,126 @@ impl IgnitePayCore {
     #[new]
     fn new() -> Self {
         let (priv_identity, did) = generate_ignite_did();
+        let did_doc = build_did_document(&did, &priv_identity);
         let (agent, _) = didcomm::create_agent(priv_identity);
 
         IgnitePayCore {
             agent: Arc::new(Mutex::new(agent)),
             our_did: did,
+            did_doc,
             outgoing: Arc::new(Mutex::new(None)),
+            list_store: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Register mediator's resolved identity as a peer in the DIDComm agent.
-    fn add_mediator_peer(&self, mediator_did: String) -> PyResult<()> {
-        let mediator_identity = PrivateIdentity::generate(&mediator_did);
-        let resolved = identity_to_resolved(&mediator_identity);
-
+    /// Initialize sled-backed ListStore for whitelist/blacklist persistence.
+    #[pyo3(signature = (db_path))]
+    fn init_list_store(&self, db_path: String) -> PyResult<()> {
+        let db = sled::open(&db_path)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to open database: {}", e)))?;
+        let store = ListStore::new(db);
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let mut agent = self.agent.lock().await;
-            agent.add_peer(resolved);
+            let mut guard = self.list_store.lock().await;
+            *guard = Some(store);
         });
-
         Ok(())
     }
 
-    /// Start background WebSocket listener
+    /// Start background WebSocket listener with WS challenge-response authentication.
     fn start_listener(&self, _py: Python, ws_url: String) -> PyResult<()> {
         let agent = self.agent.clone();
         let our_did = self.our_did.clone();
+        let did_doc = self.did_doc.clone();
         let outgoing = self.outgoing.clone();
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async move {
                 println!("DIDComm WebSocket listener starting: {} (DID: {})", ws_url, our_did);
-                real_ws_client(&ws_url, &agent, &our_did, outgoing).await;
+                real_ws_client(&ws_url, &agent, &our_did, &did_doc, outgoing).await;
             });
         });
         Ok(())
     }
 
-    /// Core payment interface: Pub/Sub pattern
-    fn check_and_pay<'p>(&self, py: Python<'p>, payment_id: String, merchant_did: String, amount: u64) -> PyResult<&'p PyAny> {
+    /// Query allowance for a merchant. Returns JSON string with allowance info.
+    #[pyo3(signature = (merchant_did, amount=None))]
+    fn check_allowance(&self, merchant_did: String, amount: Option<u64>) -> PyResult<String> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let guard = self.list_store.lock().await;
+            let store = match guard.as_ref() {
+                Some(s) => s,
+                None => return Ok(serde_json::json!({
+                    "error": "ListStore not initialized. Call init_list_store() first."
+                }).to_string()),
+            };
+
+            let is_blacklisted = store.is_blacklisted(&merchant_did)
+                .map_err(|e| PyRuntimeError::new_err(format!("Blacklist check failed: {}", e)))?;
+
+            if is_blacklisted {
+                return Ok(serde_json::json!({
+                    "is_blacklisted": true,
+                    "is_whitelisted": false,
+                    "max_amount": null,
+                    "label": null,
+                    "expires_at": null,
+                }).to_string());
+            }
+
+            let check_amount = amount.unwrap_or(0);
+            let result: WhitelistResult = store.check_whitelist(&merchant_did, check_amount)
+                .map_err(|e| PyRuntimeError::new_err(format!("Whitelist check failed: {}", e)))?;
+
+            Ok(serde_json::json!({
+                "is_blacklisted": false,
+                "is_whitelisted": result.is_whitelisted,
+                "max_amount": result.max_amount,
+                "label": result.label,
+                "expires_at": result.expires_at.map(|dt| dt.to_rfc3339()),
+            }).to_string())
+        })
+    }
+
+    /// Risk check for a merchant and amount. Returns JSON with the decision.
+    #[pyo3(signature = (merchant_did, amount))]
+    fn risk_check(&self, merchant_did: String, amount: u64) -> PyResult<String> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let guard = self.list_store.lock().await;
+            let store = match guard.as_ref() {
+                Some(s) => s,
+                None => return Ok(serde_json::json!({
+                    "decision": "needs_auth",
+                    "reason": "ListStore not initialized"
+                }).to_string()),
+            };
+
+            let decision: RiskControlDecision = store.risk_check(&merchant_did, amount)
+                .map_err(|e| PyRuntimeError::new_err(format!("Risk check failed: {}", e)))?;
+
+            match decision {
+                RiskControlDecision::Blocked => Ok(serde_json::json!({
+                    "decision": "blocked",
+                    "reason": "Merchant is blacklisted"
+                }).to_string()),
+                RiskControlDecision::AutoApproved { max_amount, label } => Ok(serde_json::json!({
+                    "decision": "auto_approved",
+                    "max_amount": max_amount,
+                    "label": label,
+                }).to_string()),
+                RiskControlDecision::NeedsAuth => Ok(serde_json::json!({
+                    "decision": "needs_auth"
+                }).to_string()),
+            }
+        })
+    }
+
+    /// Core payment interface. payment_id is auto-generated.
+    /// Python signature: check_and_pay(merchant_did, amount)
+    fn check_and_pay<'p>(&self, py: Python<'p>, merchant_did: String, amount: u64) -> PyResult<&'p PyAny> {
+        let payment_id = format!("pay_{}", uuid::Uuid::new_v4());
         let outgoing = self.outgoing.clone();
         let agent = self.agent.clone();
         let our_did = self.our_did.clone();
@@ -131,6 +215,90 @@ impl IgnitePayCore {
             }
         })
     }
+
+    /// Add a merchant to the whitelist.
+    #[pyo3(signature = (did, name=None, max_amount=None, label=None))]
+    fn add_to_whitelist(&self, did: String, name: Option<String>, max_amount: Option<u64>, label: Option<String>) -> PyResult<()> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let guard = self.list_store.lock().await;
+            let store = match guard.as_ref() {
+                Some(s) => s,
+                None => return Err(PyRuntimeError::new_err("ListStore not initialized. Call init_list_store() first.")),
+            };
+            let entry = MerchantListEntry {
+                did: did.clone(),
+                name,
+                max_amount,
+                added_at: Utc::now(),
+                label,
+                expires: None,
+            };
+            store.add_to_whitelist(entry)
+                .map_err(|e| PyRuntimeError::new_err(format!("Failed to add to whitelist: {}", e)))?;
+            Ok(())
+        })
+    }
+
+    /// Remove a merchant from the whitelist.
+    fn remove_from_whitelist(&self, did: String) -> PyResult<()> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let guard = self.list_store.lock().await;
+            let store = match guard.as_ref() {
+                Some(s) => s,
+                None => return Err(PyRuntimeError::new_err("ListStore not initialized. Call init_list_store() first.")),
+            };
+            store.remove_from_whitelist(&did)
+                .map_err(|e| PyRuntimeError::new_err(format!("Failed to remove from whitelist: {}", e)))?;
+            Ok(())
+        })
+    }
+
+    /// Add a merchant to the blacklist.
+    #[pyo3(signature = (did, name=None))]
+    fn add_to_blacklist(&self, did: String, name: Option<String>) -> PyResult<()> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let guard = self.list_store.lock().await;
+            let store = match guard.as_ref() {
+                Some(s) => s,
+                None => return Err(PyRuntimeError::new_err("ListStore not initialized. Call init_list_store() first.")),
+            };
+            let entry = MerchantListEntry {
+                did: did.clone(),
+                name,
+                max_amount: None,
+                added_at: Utc::now(),
+                label: None,
+                expires: None,
+            };
+            store.add_to_blacklist(entry)
+                .map_err(|e| PyRuntimeError::new_err(format!("Failed to add to blacklist: {}", e)))?;
+            Ok(())
+        })
+    }
+
+    /// Remove a merchant from the blacklist.
+    fn remove_from_blacklist(&self, did: String) -> PyResult<()> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let guard = self.list_store.lock().await;
+            let store = match guard.as_ref() {
+                Some(s) => s,
+                None => return Err(PyRuntimeError::new_err("ListStore not initialized. Call init_list_store() first.")),
+            };
+            store.remove_from_blacklist(&did)
+                .map_err(|e| PyRuntimeError::new_err(format!("Failed to remove from blacklist: {}", e)))?;
+            Ok(())
+        })
+    }
+
+    /// Get our DID.
+    #[getter]
+    fn our_did(&self) -> &str {
+        &self.our_did
+    }
 }
 
 /// Reconnecting WebSocket client loop.
@@ -138,10 +306,11 @@ async fn real_ws_client(
     ws_url: &str,
     agent: &Arc<Mutex<DIDCommAgent>>,
     our_did: &str,
+    did_doc: &Value,
     outgoing: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
 ) {
     loop {
-        match connect_and_run(ws_url, agent, our_did, &outgoing).await {
+        match connect_and_run(ws_url, agent, our_did, did_doc, &outgoing).await {
             Ok(()) => println!("Mediator disconnected, reconnecting..."),
             Err(e) => eprintln!("WS error: {}, reconnecting in 3s...", e),
         }
@@ -153,15 +322,72 @@ type WsStream = tokio_tungstenite::WebSocketStream<
     tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
 >;
 
-/// Connect to mediator, perform plaintext handshake, then enter bidirectional loop.
+/// Connect to mediator, perform WS challenge-response auth then plaintext handshake,
+/// then enter bidirectional loop.
 async fn connect_and_run(
     ws_url: &str,
     agent: &Arc<Mutex<DIDCommAgent>>,
     our_did: &str,
+    did_doc: &Value,
     outgoing: &Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (mut ws, _) = connect_async(ws_url).await?;
     println!("Connected to Mediator: {}", ws_url);
+
+    // --- Phase 0: WS Challenge-Response Authentication ---
+
+    // 0a. Receive challenge
+    let challenge_text = read_msg(&mut ws).await?;
+    let challenge: Value = serde_json::from_str(&challenge_text)?;
+
+    let challenge_type = challenge.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    if !challenge_type.contains("ws-challenge") {
+        return Err(format!("Expected ws-challenge, got type: {}", challenge_type).into());
+    }
+
+    let nonce = challenge["body"]["nonce"].as_str()
+        .ok_or("Challenge missing body.nonce")?;
+    let mediator_did = challenge["from"].as_str()
+        .ok_or("Challenge missing from field")?;
+    let mediator_doc = challenge["body"].get("did_document")
+        .ok_or("Challenge missing body.did_document")?;
+
+    println!("Received WS challenge from mediator: {}", mediator_did);
+
+    // 0b. Register mediator as peer from their DID document
+    {
+        let mut agent_guard = agent.lock().await;
+        if let Some(resolved) = parse_did_document(mediator_did, mediator_doc) {
+            agent_guard.add_peer(resolved);
+            println!("Registered mediator peer from DID document");
+        } else {
+            return Err("Failed to parse mediator DID document".into());
+        }
+    }
+
+    // 0c. Build and send encrypted challenge response
+    {
+        let agent_guard = agent.lock().await;
+        let response_msg = didcomm::build_ws_challenge_response(our_did, mediator_did, nonce, did_doc);
+        let jwe = didcomm::pack_encrypted(&agent_guard, &response_msg, our_did, mediator_did)
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+        send_msg(&mut ws, jwe).await?;
+        println!("Sent WS challenge response");
+    }
+
+    // 0d. Wait for auth result
+    let auth_result = read_msg(&mut ws).await?;
+    let auth_v: Value = serde_json::from_str(&auth_result)?;
+    let auth_type = auth_v.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+    if auth_type.contains("ws-auth-ok") {
+        println!("WS authentication successful");
+    } else if auth_type.contains("ws-auth-failed") {
+        let reason = auth_v["body"]["reason"].as_str().unwrap_or("unknown");
+        return Err(format!("WS authentication failed: {}", reason).into());
+    } else {
+        return Err(format!("Unexpected auth response type: {}", auth_type).into());
+    }
 
     // --- Phase A: Plaintext handshake ---
 
@@ -198,13 +424,9 @@ async fn connect_and_run(
     }
 
     // 3. peer-introduction — send our DID document
-    {
-        let temp = PrivateIdentity::generate(our_did);
-        let did_doc = build_did_document(our_did, &temp);
-        let intro = didcomm::build_peer_introduction(our_did, &did_doc);
-        send_msg(&mut ws, serde_json::to_string(&intro)?).await?;
-        println!("Sent peer-introduction (DID doc)");
-    }
+    let intro = didcomm::build_peer_introduction(our_did, did_doc);
+    send_msg(&mut ws, serde_json::to_string(&intro)?).await?;
+    println!("Sent peer-introduction (DID doc)");
 
     println!("Mediator handshake complete, entering bidirectional loop...");
 
