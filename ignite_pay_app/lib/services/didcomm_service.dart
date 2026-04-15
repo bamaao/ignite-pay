@@ -280,8 +280,9 @@ class DidcommService extends ChangeNotifier {
     if (_authToken == null) return;
 
     try {
-      final messages = await _api.pullMessages(
-        _authToken!,
+      final messages = await rust.pullMessages(
+        mediatorUrl: _mediatorHttpUrl,
+        token: _authToken!,
         afterId: _lastPulledId,
         limit: 50,
       );
@@ -405,7 +406,11 @@ class DidcommService extends ChangeNotifier {
       // Register FCM token with mediator
       final fcmToken = FcmService().fcmToken;
       if (fcmToken != null && _authToken != null) {
-        await _api.registerDeviceToken(_authToken!, fcmToken);
+        await rust.registerDeviceToken(
+          mediatorUrl: _mediatorHttpUrl,
+          authToken: _authToken!,
+          fcmToken: fcmToken,
+        );
       }
     } catch (e) {
       debugPrint('FCM init failed (non-fatal): $e');
