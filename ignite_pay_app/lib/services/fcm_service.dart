@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:ignite_pay_app/firebase_options.dart';
 
 /// Callback for when a signal is received (foreground or background).
 typedef OnSignalReceived = void Function(String msgId);
@@ -27,7 +28,9 @@ class FcmService {
   Future<void> initialize({OnSignalReceived? onSignalReceived}) async {
     _onSignalReceived = onSignalReceived;
 
-    await Firebase.initializeApp();
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
 
     // Request notification permissions
     if (Platform.isIOS) {
@@ -76,6 +79,15 @@ class FcmService {
 
     // Background message handler (must be top-level function)
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+    // Handle notification tap that opened the app from terminated state
+    final initialMessage = await _messaging.getInitialMessage();
+    if (initialMessage != null) {
+      _handleMessageOpened(initialMessage);
+    }
+
+    // Handle notification tap when app was in background
+    FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpened);
   }
 
   /// Handle foreground FCM messages.
@@ -113,13 +125,25 @@ class FcmService {
       details,
     );
   }
+
+  /// Handle a message that opened the app (from terminated or background state).
+  void _handleMessageOpened(RemoteMessage message) {
+    final data = message.data;
+    final type = data['type'] as String?;
+    final msgId = data['msg_id'] as String?;
+
+    if (type == 'SIGNAL' && msgId != null) {
+      debugPrint('Notification opened for msg: $msgId');
+      _onSignalReceived?.call(msgId);
+    }
+  }
 }
 
 /// Top-level background message handler for Firebase.
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   debugPrint('Background FCM message: ${message.messageId}');
-  // In background, the OS will display the notification.
-  // On app resume, the DidcommService should pull pending messages.
 }
