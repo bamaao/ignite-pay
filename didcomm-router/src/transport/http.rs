@@ -42,8 +42,14 @@ pub async fn post_message(
 pub async fn auth_challenge(
     State(state): State<RouterState>,
 ) -> impl IntoResponse {
+    // Prune expired entries periodically
+    let now = chrono::Utc::now().timestamp();
+    if state.auth_challenges.len() > 10_000 {
+        state.auth_challenges.retain(|_, &mut expiry| expiry > now);
+    }
+
     let nonce = uuid::Uuid::new_v4().to_string();
-    let expiry = chrono::Utc::now().timestamp() + 300; // 5 minutes
+    let expiry = now + 300; // 5 minutes
     state.auth_challenges.insert(nonce.clone(), expiry);
 
     (

@@ -55,16 +55,51 @@ pub async fn dispatch(text: &str, state: &RouterState, session_did: Option<&str>
 }
 
 /// Route a parsed plaintext Message to the appropriate protocol handler.
-/// Checks for replay by tracking seen message IDs with a TTL.
+/// Validates expiration, message age, and checks for replay.
 async fn route_message(msg: &Message, state: &RouterState, session_did: Option<&str>) -> Result<()> {
     debug!("Dispatching message type: {}", msg.typ);
+
+    let now_secs = chrono::Utc::now().timestamp() as u64;
+    let max_age = state.config.router.max_message_age_seconds;
+
+    // Expiration check: reject if expires_time is set and has passed
+    if let Some(expires) = msg.expires_time {
+        if expires < now_secs {
+            warn!(
+                "Rejected expired message {} (expires_time={}, now={})",
+                msg.id, expires, now_secs
+            );
+            return Err(RouterError::Protocol(format!(
+                "Message expired: expires_time {} is in the past",
+                expires
+            )));
+        }
+    }
+
+    // Age check: reject if created_time is too old
+    if let Some(created) = msg.created_time {
+        if created + max_age < now_secs {
+            warn!(
+                "Rejected stale message {} (created_time={}, age={}s, max={})",
+                msg.id,
+                created,
+                now_secs.saturating_sub(created),
+                max_age
+            );
+            return Err(RouterError::Protocol(format!(
+                "Message too old: created {}s ago, max allowed {}s",
+                now_secs.saturating_sub(created),
+                max_age
+            )));
+        }
+    }
 
     // Replay protection: reject messages we've already processed
     let msg_id = &msg.id;
     let now = chrono::Utc::now().timestamp();
     let ttl = 300; // 5 minutes
 
-    // Periodically prune expired entries (probabilistic — every ~1000 messages)
+    // Periodically prune expired entries
     if state.seen_message_ids.len() > 100_000 {
         state.seen_message_ids.retain(|_, &mut expiry| expiry > now);
     }

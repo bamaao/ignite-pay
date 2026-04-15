@@ -14,6 +14,16 @@ pub struct QueuedMessage {
     pub queued_at: chrono::DateTime<chrono::Utc>,
 }
 
+impl QueuedMessage {
+    /// Check if this message has exceeded the given maximum age (in seconds).
+    pub fn is_expired(&self, max_age_secs: u64) -> bool {
+        let age = chrono::Utc::now()
+            .signed_duration_since(self.queued_at)
+            .num_seconds();
+        age > max_age_secs as i64
+    }
+}
+
 /// Persistence for queued messages.
 #[async_trait]
 pub trait MessageStore: Send + Sync {

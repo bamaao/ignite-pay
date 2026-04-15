@@ -12,6 +12,7 @@ pub struct InMemoryMessageStore {
     /// recipient_did -> Vec<QueuedMessage>
     queues: DashMap<String, Vec<QueuedMessage>>,
     max_queued: usize,
+    max_message_age_secs: u64,
 }
 
 impl InMemoryMessageStore {
@@ -19,6 +20,15 @@ impl InMemoryMessageStore {
         Self {
             queues: DashMap::new(),
             max_queued,
+            max_message_age_secs: 86400, // default 24h
+        }
+    }
+
+    pub fn with_max_age(max_queued: usize, max_message_age_secs: u64) -> Self {
+        Self {
+            queues: DashMap::new(),
+            max_queued,
+            max_message_age_secs,
         }
     }
 }
@@ -26,6 +36,10 @@ impl InMemoryMessageStore {
 #[async_trait]
 impl MessageStore for InMemoryMessageStore {
     async fn enqueue(&self, recipient_did: &str, msg: QueuedMessage) -> crate::error::Result<()> {
+        // Reject already-expired messages at enqueue time
+        if msg.is_expired(self.max_message_age_secs) {
+            return Ok(());
+        }
         let mut queue = self.queues.entry(recipient_did.to_string()).or_default();
         if queue.len() >= self.max_queued {
             // Drop oldest message
@@ -44,6 +58,8 @@ impl MessageStore for InMemoryMessageStore {
             Some(q) => q,
             None => return Ok(Vec::new()),
         };
+        // Drop expired messages and collect up to `limit` valid ones
+        queue.retain(|m| !m.is_expired(self.max_message_age_secs));
         let take = limit.min(queue.len());
         let messages: Vec<QueuedMessage> = queue.drain(..take).collect();
         Ok(messages)
@@ -65,6 +81,10 @@ impl MessageStore for InMemoryMessageStore {
     }
 
     async fn store_for_user(&self, recipient_did: &str, msg: QueuedMessage) -> crate::error::Result<()> {
+        // Reject already-expired messages
+        if msg.is_expired(self.max_message_age_secs) {
+            return Ok(());
+        }
         // store_for_user uses the same queue as enqueue — messages persist until explicitly removed.
         let mut queue = self.queues.entry(recipient_did.to_string()).or_default();
         if queue.len() >= self.max_queued {

@@ -42,6 +42,7 @@ impl RouterState {
                     Arc::new(crate::storage::sled_store::SledMessageStore::new(
                         db.clone(),
                         config.router.max_queued_messages,
+                        config.router.max_message_age_seconds,
                     )) as SharedMessageStore,
                     Arc::new(crate::storage::sled_store::SledKeylistStore::new(db.clone()))
                         as SharedKeylistStore,
@@ -53,7 +54,10 @@ impl RouterState {
             } else {
                 tracing::warn!("No storage.path configured — using in-memory stores. All data will be lost on restart.");
                 (
-                    Arc::new(InMemoryMessageStore::new(config.router.max_queued_messages))
+                    Arc::new(InMemoryMessageStore::with_max_age(
+                        config.router.max_queued_messages,
+                        config.router.max_message_age_seconds,
+                    ))
                         as SharedMessageStore,
                     Arc::new(InMemoryKeylistStore::default()) as SharedKeylistStore,
                     Arc::new(InMemoryDeviceTokenStore::new()) as SharedDeviceTokenStore,

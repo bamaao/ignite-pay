@@ -9,11 +9,12 @@ use super::{AgentBindingStore, DeviceTokenStore, KeylistStore, MessageStore, Que
 pub struct SledMessageStore {
     db: Arc<sled::Db>,
     max_queued: usize,
+    max_message_age_secs: u64,
 }
 
 impl SledMessageStore {
-    pub fn new(db: Arc<sled::Db>, max_queued: usize) -> Self {
-        Self { db, max_queued }
+    pub fn new(db: Arc<sled::Db>, max_queued: usize, max_message_age_secs: u64) -> Self {
+        Self { db, max_queued, max_message_age_secs }
     }
 
     fn queue_tree(&self, recipient_did: &str) -> sled::Result<sled::Tree> {
@@ -24,6 +25,11 @@ impl SledMessageStore {
 #[async_trait]
 impl MessageStore for SledMessageStore {
     async fn enqueue(&self, recipient_did: &str, msg: QueuedMessage) -> crate::error::Result<()> {
+        // Reject already-expired messages at enqueue time
+        if msg.is_expired(self.max_message_age_secs) {
+            return Ok(());
+        }
+
         let tree = self.queue_tree(recipient_did)?;
         let data = serde_json::to_vec(&msg)?;
         tree.insert(msg.id.as_bytes(), data.as_slice())?;
@@ -48,10 +54,20 @@ impl MessageStore for SledMessageStore {
         let mut messages = Vec::new();
         let mut keys_to_remove = Vec::new();
 
-        for item in tree.iter().take(limit) {
+        for item in tree.iter() {
             let (k, v) = item?;
             if let Ok(msg) = serde_json::from_slice::<QueuedMessage>(&v) {
+                if msg.is_expired(self.max_message_age_secs) {
+                    // Remove expired message
+                    keys_to_remove.push(k);
+                    continue;
+                }
                 messages.push(msg);
+                keys_to_remove.push(k);
+                if messages.len() >= limit {
+                    break;
+                }
+            } else {
                 keys_to_remove.push(k);
             }
         }
