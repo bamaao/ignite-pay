@@ -50,6 +50,12 @@ pub struct CreateSessionInput {
     /// Session duration in seconds (default 3600 = 1 hour).
     #[serde(default = "default_duration")]
     pub duration_secs: i64,
+    /// Whether to register the session on-chain (requires owner_keypair_b58).
+    #[serde(default)]
+    pub register_on_chain: bool,
+    /// Owner keypair (base58 64-byte) for on-chain registration. Required if register_on_chain=true.
+    #[serde(default)]
+    pub owner_keypair_b58: Option<String>,
 }
 
 fn default_duration() -> i64 {
@@ -73,6 +79,57 @@ pub struct CloseSessionInput {
     /// Whether to refund remaining SOL to owner before closing.
     #[serde(default)]
     pub refund: bool,
+}
+
+/// Input for the `execute_spl_payment` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SplPaymentInput {
+    /// Recipient Solana public key (base58).
+    pub recipient: String,
+    /// Amount in smallest token units (e.g., lamports for SOL).
+    pub amount: u64,
+    /// SPL Token mint address (base58).
+    pub mint: String,
+    /// Source ATA override (base58). If empty, derived from session key + mint.
+    #[serde(default)]
+    pub source_ata: Option<String>,
+    /// Destination ATA override (base58). If empty, derived from recipient + mint.
+    #[serde(default)]
+    pub dest_ata: Option<String>,
+}
+
+/// Input for the `add_merchant` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AddMerchantInput {
+    /// Merchant DID string (e.g., "did:ignite:z...").
+    pub merchant_did: String,
+    /// Merchant payment Solana address (base58).
+    pub payment_address: String,
+    /// IPFS CID of the platform Verifiable Credential for this merchant.
+    #[serde(default)]
+    pub vc_ipfs_cid: Option<String>,
+}
+
+/// Input for the `update_merchant` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateMerchantInput {
+    /// Merchant DID string.
+    pub merchant_did: String,
+    /// New payment address (base58). If empty, keeps the existing one.
+    #[serde(default)]
+    pub new_payment_address: Option<String>,
+    /// New status: 0=active, 1=suspended, 2=revoked. If empty, keeps the existing status.
+    #[serde(default)]
+    pub new_status: Option<u8>,
+}
+
+/// Input for the `verify_merchant` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct VerifyMerchantInput {
+    /// Merchant DID string.
+    pub merchant_did: String,
+    /// Expected payment address (base58).
+    pub expected_address: String,
 }
 
 #[cfg(test)]

@@ -1,13 +1,14 @@
 use crate::error::{Result, SolanaError};
 use crate::session::{SessionKeypair, SessionManager};
 use crate::session_program::{self as session_prog, build_execute_payment_ix, derive_session_pda};
-use crate::types::{PayMode, PaymentResult};
+use crate::types::{PayMode, PaymentResult, SplPaymentParams};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signer;
 #[allow(deprecated)]
 use solana_sdk::system_instruction;
 use solana_sdk::transaction::Transaction;
+use spl_associated_token_account::get_associated_token_address;
 
 /// Main client for executing on-chain payments.
 pub struct IgnitePayClient {
@@ -40,6 +41,11 @@ fn get_slot_for_signature(rpc_client: &RpcClient, sig: solana_sdk::signature::Si
 }
 
 impl IgnitePayClient {
+    /// Derive the Associated Token Account address for an owner and mint.
+    pub fn derive_ata(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+        get_associated_token_address(owner, mint)
+    }
+
     /// Create a new IgnitePayClient.
     pub fn new(
         rpc_url: &str,
@@ -190,6 +196,7 @@ impl IgnitePayClient {
         token: &str,
         _network: &str,
         session: &SessionKeypair,
+        spl_params: Option<&SplPaymentParams>,
     ) -> Result<PaymentResult> {
         let recipient_pubkey = recipient
             .parse::<Pubkey>()
@@ -200,9 +207,22 @@ impl IgnitePayClient {
                 self.execute_sol_transfer(session, &recipient_pubkey, amount)
                     .await
             }
-            _ => Err(SolanaError::Other(anyhow::anyhow!(
-                "SPL token transfers require source_ata, dest_ata, and mint. Use execute_spl_transfer directly."
-            ))),
+            _ => {
+                // SPL token transfer
+                let params = spl_params.ok_or_else(|| {
+                    SolanaError::Other(anyhow::anyhow!(
+                        "SPL token transfers require spl_params with mint address"
+                    ))
+                })?;
+
+                let source_ata = params.source_ata_override
+                    .unwrap_or_else(|| Self::derive_ata(&session.keypair.pubkey(), &params.mint));
+                let dest_ata = params.dest_ata_override
+                    .unwrap_or_else(|| Self::derive_ata(&recipient_pubkey, &params.mint));
+
+                self.execute_spl_transfer(session, &source_ata, &dest_ata, amount, &params.mint)
+                    .await
+            }
         }
     }
 

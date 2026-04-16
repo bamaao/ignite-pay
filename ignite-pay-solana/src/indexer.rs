@@ -6,6 +6,8 @@ use solana_sdk::pubkey::Pubkey;
 pub struct IndexerClient {
     http_client: reqwest::Client,
     das_endpoint: String,
+    /// Optional sled tree for local DID → leaf_index mapping
+    did_index: Option<sled::Tree>,
 }
 
 impl std::fmt::Debug for IndexerClient {
@@ -22,7 +24,103 @@ impl IndexerClient {
         Ok(Self {
             http_client: reqwest::Client::new(),
             das_endpoint: das_endpoint.to_string(),
+            did_index: None,
         })
+    }
+
+    /// Create an IndexerClient with a sled-backed DID index for persistent lookups.
+    pub fn with_index(das_endpoint: &str, db: &sled::Db) -> Result<Self> {
+        let tree = db
+            .open_tree("did_index")
+            .map_err(|e| SolanaError::SledError(e))?;
+        Ok(Self {
+            http_client: reqwest::Client::new(),
+            das_endpoint: das_endpoint.to_string(),
+            did_index: Some(tree),
+        })
+    }
+
+    /// SHA-256 hash of a merchant DID string.
+    pub fn hash_merchant_did(did: &str) -> [u8; 32] {
+        use solana_sdk::hash::hash;
+        hash(did.as_bytes()).to_bytes()
+    }
+
+    /// Register a merchant DID → leaf_index mapping in the local index.
+    /// Also stores the serialized MerchantLeaf for direct retrieval.
+    pub fn register_merchant_index(
+        &self,
+        merchant_did: &str,
+        leaf_index: u32,
+        leaf: &MerchantLeaf,
+    ) -> Result<()> {
+        let index = self
+            .did_index
+            .as_ref()
+            .ok_or_else(|| SolanaError::IndexerError("No DID index configured".into()))?;
+
+        let did_hash = Self::hash_merchant_did(merchant_did);
+        // Key: DID hash (32 bytes), Value: leaf_index (4 bytes LE) + borsh(MerchantLeaf)
+        let mut value = leaf_index.to_le_bytes().to_vec();
+        value.extend_from_slice(&borsh::to_vec(leaf)?);
+        index.insert(&did_hash, value)?;
+        index.flush()?;
+        tracing::info!(
+            "Registered merchant DID index: {} -> leaf {}",
+            merchant_did,
+            leaf_index
+        );
+        Ok(())
+    }
+
+    /// Find a merchant leaf by DID using the local index + DAS API proof.
+    /// Returns (leaf_index, MerchantLeaf) if found.
+    pub async fn find_merchant_leaf(
+        &self,
+        tree_address: &Pubkey,
+        merchant_did: &str,
+    ) -> Result<Option<(u32, MerchantLeaf)>> {
+        let index = match self.did_index.as_ref() {
+            Some(idx) => idx,
+            None => {
+                tracing::warn!(
+                    "find_merchant_leaf: no DID index configured, cannot look up {}",
+                    merchant_did
+                );
+                return Ok(None);
+            }
+        };
+
+        let did_hash = Self::hash_merchant_did(merchant_did);
+        match index.get(&did_hash)? {
+            Some(value) => {
+                if value.len() < 4 {
+                    return Err(SolanaError::IndexerError(
+                        "Invalid index entry: too short".into(),
+                    ));
+                }
+                let leaf_index = u32::from_le_bytes(
+                    value[..4].try_into().map_err(|_| {
+                        SolanaError::IndexerError("Failed to parse leaf_index".into())
+                    })?,
+                );
+                let leaf: MerchantLeaf = borsh::from_slice(&value[4..])?;
+                tracing::info!(
+                    "Found merchant {} at leaf index {} via local index",
+                    merchant_did,
+                    leaf_index
+                );
+                Ok(Some((leaf_index, leaf)))
+            }
+            None => {
+                tracing::info!(
+                    "Merchant {} not found in local DID index for tree {}",
+                    merchant_did,
+                    tree_address
+                );
+                Ok(None)
+            }
+        }
     }
 
     /// Fetch a Merkle proof for a compressed leaf by tree address and leaf index.
@@ -101,25 +199,6 @@ impl IndexerClient {
         })
     }
 
-    /// Find a merchant leaf by DID.
-    /// In production, this queries the Helius indexer for the matching compressed asset.
-    /// For now, returns None to indicate the lookup should be done externally.
-    pub async fn find_merchant_leaf(
-        &self,
-        tree_address: &Pubkey,
-        merchant_did: &str,
-    ) -> Result<Option<(u32, MerchantLeaf)>> {
-        // In production, this would use Helius DAS search API to find the leaf.
-        // The actual implementation depends on the indexing service setup.
-        // For V2.0, the leaf index is stored alongside the merchant DID in the off-chain database.
-        tracing::warn!(
-            "find_merchant_leaf: lookup for {} in tree {} - requires external index",
-            merchant_did,
-            tree_address
-        );
-        Ok(None)
-    }
-
     /// Get the current root hash of the Concurrent Merkle Tree.
     pub async fn get_tree_root(&self, tree_address: &Pubkey) -> Result<[u8; 32]> {
         let request_body = serde_json::json!({
@@ -167,5 +246,95 @@ mod tests {
     fn test_indexer_client_new() {
         let client = IndexerClient::new("https://mainnet.helius-rpc.com/?api-key=test");
         assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_indexer_with_did_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = sled::open(dir.path()).unwrap();
+        let client = IndexerClient::with_index(
+            "https://mainnet.helius-rpc.com/?api-key=test",
+            &db,
+        )
+        .unwrap();
+        assert!(client.did_index.is_some());
+    }
+
+    #[test]
+    fn test_register_and_find_merchant() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = sled::open(dir.path()).unwrap();
+        let client =
+            IndexerClient::with_index("https://mainnet.helius-rpc.com/?api-key=test", &db)
+                .unwrap();
+
+        let leaf = MerchantLeaf {
+            merchant_did_hash: IndexerClient::hash_merchant_did("did:ignite:zTestMerchant"),
+            active_pubkey: Pubkey::new_unique(),
+            platform_vc_hash: [0u8; 32],
+            status: 0,
+            slot_updated: 100,
+        };
+
+        client
+            .register_merchant_index("did:ignite:zTestMerchant", 5, &leaf)
+            .unwrap();
+
+        // Synchronous lookup in local index
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt
+            .block_on(client.find_merchant_leaf(
+                &Pubkey::new_unique(),
+                "did:ignite:zTestMerchant",
+            ))
+            .unwrap();
+
+        assert!(result.is_some());
+        let (index, found_leaf) = result.unwrap();
+        assert_eq!(index, 5);
+        assert_eq!(found_leaf.merchant_did_hash, leaf.merchant_did_hash);
+        assert_eq!(found_leaf.active_pubkey, leaf.active_pubkey);
+    }
+
+    #[test]
+    fn test_find_merchant_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = sled::open(dir.path()).unwrap();
+        let client =
+            IndexerClient::with_index("https://mainnet.helius-rpc.com/?api-key=test", &db)
+                .unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt
+            .block_on(client.find_merchant_leaf(
+                &Pubkey::new_unique(),
+                "did:ignite:zNonexistent",
+            ))
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_merchant_no_index() {
+        let client = IndexerClient::new("https://mainnet.helius-rpc.com/?api-key=test").unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt
+            .block_on(client.find_merchant_leaf(
+                &Pubkey::new_unique(),
+                "did:ignite:zTestMerchant",
+            ))
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_hash_merchant_did_deterministic() {
+        let h1 = IndexerClient::hash_merchant_did("did:ignite:zTest");
+        let h2 = IndexerClient::hash_merchant_did("did:ignite:zTest");
+        assert_eq!(h1, h2);
+
+        let h3 = IndexerClient::hash_merchant_did("did:ignite:zOther");
+        assert_ne!(h1, h3);
     }
 }

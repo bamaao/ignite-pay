@@ -1,4 +1,5 @@
 use crate::error::{Result, SolanaError};
+use crate::indexer::IndexerClient;
 use crate::types::MerchantLeaf;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::hash::{hash, hashv};
@@ -110,7 +111,7 @@ impl CompressionService {
     }
 
     /// Update a merchant leaf in the Merkle tree (e.g., key rotation).
-    /// Requires the old leaf hash, new leaf, leaf index, and a Merkle proof.
+    /// Requires the old leaf hash, new leaf, leaf index, a Merkle proof, and an IndexerClient for root retrieval.
     pub async fn update_merchant(
         &self,
         payer: &Keypair,
@@ -118,10 +119,11 @@ impl CompressionService {
         new_leaf: &MerchantLeaf,
         leaf_index: u32,
         proof: &[[u8; 32]],
+        indexer: &IndexerClient,
     ) -> Result<Signature> {
         let old_hash = Self::compute_leaf_hash(old_leaf);
         let new_hash = Self::compute_leaf_hash(new_leaf);
-        let root = self.get_tree_root().await?;
+        let root = indexer.get_tree_root(&self.tree_address).await?;
 
         let recent_blockhash = self
             .rpc_client
@@ -172,26 +174,13 @@ impl CompressionService {
         Ok(sig)
     }
 
-    /// Fetch the current root hash of the Merkle tree from on-chain data.
-    async fn get_tree_root(&self) -> Result<[u8; 32]> {
-        let account_data = self
-            .rpc_client
-            .get_account_data(&self.tree_address)
-            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
-
-        if account_data.len() < 100 {
-            return Err(SolanaError::CompressionError(
-                "Account data too short to contain tree root".into(),
-            ));
-        }
-
-        // The active root is stored within the ConcurrentMerkleTree struct after the header.
-        // Exact offset depends on maxDepth/maxBufferSize configuration.
-        // For production, use the IndexerClient to get the root from DAS API.
-        tracing::warn!(
-            "get_tree_root: exact root parsing depends on tree config, use IndexerClient for reliable root retrieval"
-        );
-        Ok([0u8; 32])
+    /// Fetch the current root hash via the IndexerClient (DAS API).
+    /// This is the recommended way to get the root — on-chain parsing is fragile.
+    pub async fn get_tree_root_via_indexer(
+        &self,
+        indexer: &IndexerClient,
+    ) -> Result<[u8; 32]> {
+        indexer.get_tree_root(&self.tree_address).await
     }
 
     /// Verify a Merkle proof locally (off-chain fast filter).

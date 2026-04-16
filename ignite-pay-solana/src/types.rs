@@ -83,3 +83,14 @@ pub struct MerchantVerification {
     /// The Merkle proof
     pub proof: MerkleProof,
 }
+
+/// Parameters for SPL Token payments.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SplPaymentParams {
+    /// SPL Token mint address
+    pub mint: Pubkey,
+    /// Override source ATA (if None, derived from owner + mint)
+    pub source_ata_override: Option<Pubkey>,
+    /// Override destination ATA (if None, derived from recipient + mint)
+    pub dest_ata_override: Option<Pubkey>,
+}

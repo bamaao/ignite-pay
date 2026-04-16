@@ -100,7 +100,7 @@ impl SolanaDidBridge {
     /// Checks if the merchant DID exists in the indexer without full proof verification.
     pub async fn quick_verify(&self, merchant_did: &str) -> Result<bool> {
         let tree_address = self.compression.tree_address;
-        let lookup = self
+        let lookup: Option<(u32, ignite_pay_solana::types::MerchantLeaf)> = self
             .indexer
             .find_merchant_leaf(&tree_address, merchant_did)
             .await?;
