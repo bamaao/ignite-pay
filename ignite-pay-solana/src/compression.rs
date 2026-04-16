@@ -7,6 +7,7 @@ use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{Keypair, Signature};
 use solana_sdk::signer::Signer;
+use solana_sdk::system_program;
 
 /// Compute the Anchor instruction discriminator: sha256("global:<name>")[..8]
 fn anchor_sighash(name: &str) -> [u8; 8] {
@@ -17,11 +18,26 @@ fn anchor_sighash(name: &str) -> [u8; 8] {
     disc
 }
 
-/// Service for interacting with SPL Account Compression (Concurrent Merkle Tree).
+/// Derive the did-config PDA from the DID program.
+fn derive_did_config_pda(did_program_id: &Pubkey) -> (Pubkey, u8) {
+    Pubkey::find_program_address(&[b"did-config"], did_program_id)
+}
+
+/// Derive the did-tree-authority PDA from the DID program and merkle tree address.
+fn derive_tree_authority_pda(merkle_tree: &Pubkey, did_program_id: &Pubkey) -> (Pubkey, u8) {
+    Pubkey::find_program_address(
+        &[b"did-tree-authority", merkle_tree.as_ref()],
+        did_program_id,
+    )
+}
+
+/// Service for interacting with SPL Account Compression (Concurrent Merkle Tree)
+/// and the ignite-pay-did-program.
 pub struct CompressionService {
     pub rpc_client: RpcClient,
     pub tree_address: Pubkey,
     pub tree_authority: Pubkey,
+    pub did_program_id: Pubkey,
 }
 
 impl std::fmt::Debug for CompressionService {
@@ -29,23 +45,33 @@ impl std::fmt::Debug for CompressionService {
         f.debug_struct("CompressionService")
             .field("tree_address", &self.tree_address)
             .field("tree_authority", &self.tree_authority)
+            .field("did_program_id", &self.did_program_id)
             .finish()
     }
 }
 
 impl CompressionService {
     /// Create a new CompressionService.
-    pub fn new(rpc_url: &str, tree_address: &str, authority: &str) -> Result<Self> {
+    pub fn new(
+        rpc_url: &str,
+        tree_address: &str,
+        authority: &str,
+        did_program_id: &str,
+    ) -> Result<Self> {
         let tree_address = tree_address
             .parse::<Pubkey>()
             .map_err(|e| SolanaError::InvalidPubkey(e.to_string()))?;
         let tree_authority = authority
             .parse::<Pubkey>()
             .map_err(|e| SolanaError::InvalidPubkey(e.to_string()))?;
+        let did_program_id = did_program_id
+            .parse::<Pubkey>()
+            .map_err(|e| SolanaError::InvalidPubkey(e.to_string()))?;
         Ok(Self {
             rpc_client: RpcClient::new(rpc_url.to_string()),
             tree_address,
             tree_authority,
+            did_program_id,
         })
     }
 
@@ -67,6 +93,8 @@ impl CompressionService {
 
     /// Add a merchant leaf to the Merkle tree by appending.
     /// Called by the platform authority.
+    #[deprecated = "Use register_merchant() instead, which routes through the DID program"]
+    #[allow(deprecated)]
     pub async fn add_merchant(&self, payer: &Keypair, leaf: &MerchantLeaf) -> Result<Signature> {
         let leaf_hash = Self::compute_leaf_hash(leaf);
         let recent_blockhash = self
@@ -112,6 +140,8 @@ impl CompressionService {
 
     /// Update a merchant leaf in the Merkle tree (e.g., key rotation).
     /// Requires the old leaf hash, new leaf, leaf index, a Merkle proof, and an IndexerClient for root retrieval.
+    #[deprecated = "Use update_vc(), update_status(), or rotate_key() instead, which route through the DID program"]
+    #[allow(deprecated)]
     pub async fn update_merchant(
         &self,
         payer: &Keypair,
@@ -202,6 +232,346 @@ impl CompressionService {
         }
         current == *root
     }
+
+    /// Register a new merchant via the DID program.
+    /// The merchant signs: did_hash || active_pubkey || platform_vc_hash || slot_le_bytes
+    pub async fn register_merchant(
+        &self,
+        payer: &Keypair,
+        merchant_did: &str,
+        active_pubkey: &Pubkey,
+        platform_vc_hash: &[u8; 32],
+        merchant_keypair: &Keypair,
+    ) -> Result<Signature> {
+        let slot = self
+            .rpc_client
+            .get_slot()
+            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
+
+        let did_hash = hash(merchant_did.as_bytes()).to_bytes();
+
+        // Build the message the merchant signs
+        let mut message = Vec::with_capacity(32 + 32 + 32 + 8);
+        message.extend_from_slice(&did_hash);
+        message.extend_from_slice(active_pubkey.as_ref());
+        message.extend_from_slice(platform_vc_hash);
+        message.extend_from_slice(&slot.to_le_bytes());
+
+        let signature = merchant_keypair.sign_message(&message);
+
+        let recent_blockhash = self
+            .rpc_client
+            .get_latest_blockhash()
+            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
+
+        let (did_config, _) = derive_did_config_pda(&self.did_program_id);
+        let (did_tree_auth, _) =
+            derive_tree_authority_pda(&self.tree_address, &self.did_program_id);
+        let noop_program = spl_noop::id();
+
+        // Build Anchor instruction data: discriminator + borsh-serialized params
+        let mut data = Vec::with_capacity(8 + 256);
+        data.extend_from_slice(&anchor_sighash("register_merchant"));
+        // merchant_did: String (borsh = u32 length prefix + utf8 bytes)
+        let did_bytes = merchant_did.as_bytes();
+        data.extend_from_slice(&(did_bytes.len() as u32).to_le_bytes());
+        data.extend_from_slice(did_bytes);
+        // active_pubkey: Pubkey (32 bytes)
+        data.extend_from_slice(active_pubkey.as_ref());
+        // platform_vc_hash: [u8; 32]
+        data.extend_from_slice(platform_vc_hash);
+        // signature: [u8; 64]
+        data.extend_from_slice(signature.as_ref());
+
+        let accounts = vec![
+            AccountMeta::new_readonly(did_config, false),
+            AccountMeta::new_readonly(did_tree_auth, false),
+            AccountMeta::new(self.tree_address, false),
+            AccountMeta::new(payer.pubkey(), true),
+            AccountMeta::new_readonly(noop_program, false),
+            AccountMeta::new_readonly(
+                solana_sdk::sysvar::clock::id(),
+                false,
+            ),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ];
+
+        let ix = Instruction {
+            program_id: self.did_program_id,
+            accounts,
+            data,
+        };
+
+        let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
+            &[ix],
+            Some(&payer.pubkey()),
+            &[payer, merchant_keypair],
+            recent_blockhash,
+        );
+
+        let sig = self
+            .rpc_client
+            .send_and_confirm_transaction(&tx)
+            .map_err(|e| SolanaError::TransactionFailed(e.to_string()))?;
+
+        Ok(sig)
+    }
+
+    /// Update a merchant's VC via the DID program.
+    /// Only the platform authority can call this.
+    pub async fn update_vc(
+        &self,
+        authority: &Keypair,
+        merchant_did_hash: &[u8; 32],
+        active_pubkey: &Pubkey,
+        old_vc_hash: &[u8; 32],
+        new_vc_hash: &[u8; 32],
+        status: u8,
+        old_slot: u64,
+        leaf_index: u32,
+        root: &[u8; 32],
+        proof: &[[u8; 32]],
+    ) -> Result<Signature> {
+        let recent_blockhash = self
+            .rpc_client
+            .get_latest_blockhash()
+            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
+
+        let (did_config, _) = derive_did_config_pda(&self.did_program_id);
+        let (did_tree_auth, _) =
+            derive_tree_authority_pda(&self.tree_address, &self.did_program_id);
+
+        // Build Anchor instruction data: discriminator + borsh-serialized params
+        // Parameters order: merchant_did_hash, active_pubkey, new_vc_hash, status,
+        //                   old_slot, leaf_index, root, old_vc_hash
+        let mut data = Vec::with_capacity(8 + 32 + 32 + 32 + 1 + 8 + 4 + 32 + 32);
+        data.extend_from_slice(&anchor_sighash("update_vc"));
+        data.extend_from_slice(merchant_did_hash);
+        data.extend_from_slice(active_pubkey.as_ref());
+        data.extend_from_slice(new_vc_hash);
+        data.extend_from_slice(&[status]);
+        data.extend_from_slice(&old_slot.to_le_bytes());
+        data.extend_from_slice(&leaf_index.to_le_bytes());
+        data.extend_from_slice(root);
+        data.extend_from_slice(old_vc_hash);
+
+        let mut accounts = vec![
+            AccountMeta::new_readonly(did_config, false),
+            AccountMeta::new_readonly(did_tree_auth, false),
+            AccountMeta::new(self.tree_address, false),
+            AccountMeta::new_readonly(authority.pubkey(), true),
+            AccountMeta::new_readonly(
+                solana_sdk::sysvar::clock::id(),
+                false,
+            ),
+        ];
+        // Proof nodes as remaining accounts
+        for node in proof {
+            let pubkey = Pubkey::new_from_array(*node);
+            accounts.push(AccountMeta::new_readonly(pubkey, false));
+        }
+
+        let ix = Instruction {
+            program_id: self.did_program_id,
+            accounts,
+            data,
+        };
+
+        let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
+            &[ix],
+            Some(&authority.pubkey()),
+            &[authority],
+            recent_blockhash,
+        );
+
+        let sig = self
+            .rpc_client
+            .send_and_confirm_transaction(&tx)
+            .map_err(|e| SolanaError::TransactionFailed(e.to_string()))?;
+
+        Ok(sig)
+    }
+
+    /// Update a merchant's status via the DID program.
+    /// Only the platform authority can call this.
+    pub async fn update_status(
+        &self,
+        authority: &Keypair,
+        merchant_did_hash: &[u8; 32],
+        active_pubkey: &Pubkey,
+        platform_vc_hash: &[u8; 32],
+        old_status: u8,
+        new_status: u8,
+        old_slot: u64,
+        leaf_index: u32,
+        root: &[u8; 32],
+        proof: &[[u8; 32]],
+    ) -> Result<Signature> {
+        let recent_blockhash = self
+            .rpc_client
+            .get_latest_blockhash()
+            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
+
+        let (did_config, _) = derive_did_config_pda(&self.did_program_id);
+        let (did_tree_auth, _) =
+            derive_tree_authority_pda(&self.tree_address, &self.did_program_id);
+
+        // Build Anchor instruction data: discriminator + borsh-serialized params
+        // Parameters order: merchant_did_hash, active_pubkey, platform_vc_hash,
+        //                   old_status, new_status, old_slot, leaf_index, root
+        let mut data = Vec::with_capacity(8 + 32 + 32 + 32 + 1 + 1 + 8 + 4 + 32);
+        data.extend_from_slice(&anchor_sighash("update_status"));
+        data.extend_from_slice(merchant_did_hash);
+        data.extend_from_slice(active_pubkey.as_ref());
+        data.extend_from_slice(platform_vc_hash);
+        data.extend_from_slice(&[old_status]);
+        data.extend_from_slice(&[new_status]);
+        data.extend_from_slice(&old_slot.to_le_bytes());
+        data.extend_from_slice(&leaf_index.to_le_bytes());
+        data.extend_from_slice(root);
+
+        let mut accounts = vec![
+            AccountMeta::new_readonly(did_config, false),
+            AccountMeta::new_readonly(did_tree_auth, false),
+            AccountMeta::new(self.tree_address, false),
+            AccountMeta::new_readonly(authority.pubkey(), true),
+            AccountMeta::new_readonly(
+                solana_sdk::sysvar::clock::id(),
+                false,
+            ),
+        ];
+        // Proof nodes as remaining accounts
+        for node in proof {
+            let pubkey = Pubkey::new_from_array(*node);
+            accounts.push(AccountMeta::new_readonly(pubkey, false));
+        }
+
+        let ix = Instruction {
+            program_id: self.did_program_id,
+            accounts,
+            data,
+        };
+
+        let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
+            &[ix],
+            Some(&authority.pubkey()),
+            &[authority],
+            recent_blockhash,
+        );
+
+        let sig = self
+            .rpc_client
+            .send_and_confirm_transaction(&tx)
+            .map_err(|e| SolanaError::TransactionFailed(e.to_string()))?;
+
+        Ok(sig)
+    }
+
+    /// Rotate a merchant's active key via the DID program.
+    /// The merchant signs: did_hash || old_active_pubkey || new_active_pubkey || platform_vc_hash || new_slot_le_bytes
+    pub async fn rotate_key(
+        &self,
+        payer: &Keypair,
+        merchant_did: &str,
+        old_active_pubkey: &Pubkey,
+        new_active_pubkey: &Pubkey,
+        platform_vc_hash: &[u8; 32],
+        old_status: u8,
+        old_slot: u64,
+        leaf_index: u32,
+        root: &[u8; 32],
+        proof: &[[u8; 32]],
+        merchant_keypair: &Keypair,
+    ) -> Result<Signature> {
+        let slot = self
+            .rpc_client
+            .get_slot()
+            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
+
+        let did_hash = hash(merchant_did.as_bytes()).to_bytes();
+
+        // Build the message the merchant signs
+        let mut message = Vec::with_capacity(32 + 32 + 32 + 32 + 8);
+        message.extend_from_slice(&did_hash);
+        message.extend_from_slice(old_active_pubkey.as_ref());
+        message.extend_from_slice(new_active_pubkey.as_ref());
+        message.extend_from_slice(platform_vc_hash);
+        message.extend_from_slice(&slot.to_le_bytes());
+
+        let signature = merchant_keypair.sign_message(&message);
+
+        let recent_blockhash = self
+            .rpc_client
+            .get_latest_blockhash()
+            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
+
+        let (did_config, _) = derive_did_config_pda(&self.did_program_id);
+        let (did_tree_auth, _) =
+            derive_tree_authority_pda(&self.tree_address, &self.did_program_id);
+
+        // Build Anchor instruction data: discriminator + borsh-serialized params
+        // Parameters order: merchant_did, old_active_pubkey, new_active_pubkey,
+        //                   platform_vc_hash, old_status, old_slot, leaf_index, root, signature
+        let mut data = Vec::with_capacity(8 + 256 + 32 + 32 + 32 + 1 + 8 + 4 + 32 + 64);
+        data.extend_from_slice(&anchor_sighash("rotate_key"));
+        // merchant_did: String (borsh = u32 length prefix + utf8 bytes)
+        let did_bytes = merchant_did.as_bytes();
+        data.extend_from_slice(&(did_bytes.len() as u32).to_le_bytes());
+        data.extend_from_slice(did_bytes);
+        // old_active_pubkey: Pubkey (32 bytes)
+        data.extend_from_slice(old_active_pubkey.as_ref());
+        // new_active_pubkey: Pubkey (32 bytes)
+        data.extend_from_slice(new_active_pubkey.as_ref());
+        // platform_vc_hash: [u8; 32]
+        data.extend_from_slice(platform_vc_hash);
+        // old_status: u8
+        data.extend_from_slice(&[old_status]);
+        // old_slot: u64
+        data.extend_from_slice(&old_slot.to_le_bytes());
+        // leaf_index: u32
+        data.extend_from_slice(&leaf_index.to_le_bytes());
+        // root: [u8; 32]
+        data.extend_from_slice(root);
+        // signature: [u8; 64]
+        data.extend_from_slice(signature.as_ref());
+
+        let mut accounts = vec![
+            AccountMeta::new_readonly(did_config, false),
+            AccountMeta::new_readonly(did_tree_auth, false),
+            AccountMeta::new(self.tree_address, false),
+            AccountMeta::new(payer.pubkey(), true),
+            AccountMeta::new_readonly(
+                solana_sdk::sysvar::clock::id(),
+                false,
+            ),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ];
+        // Proof nodes as remaining accounts
+        for node in proof {
+            let pubkey = Pubkey::new_from_array(*node);
+            accounts.push(AccountMeta::new_readonly(pubkey, false));
+        }
+
+        let ix = Instruction {
+            program_id: self.did_program_id,
+            accounts,
+            data,
+        };
+
+        let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
+            &[ix],
+            Some(&payer.pubkey()),
+            &[payer, merchant_keypair],
+            recent_blockhash,
+        );
+
+        let sig = self
+            .rpc_client
+            .send_and_confirm_transaction(&tx)
+            .map_err(|e| SolanaError::TransactionFailed(e.to_string()))?;
+
+        Ok(sig)
+    }
 }
 
 #[cfg(test)]
@@ -273,6 +643,7 @@ mod tests {
             "https://api.devnet.solana.com",
             "11111111111111111111111111111111",
             "11111111111111111111111111111111",
+            "11111111111111111111111111111111",
         )
         .unwrap();
         assert!(
@@ -296,6 +667,7 @@ mod tests {
             "https://api.devnet.solana.com",
             "11111111111111111111111111111111",
             "11111111111111111111111111111111",
+            "11111111111111111111111111111111",
         )
         .unwrap();
 
@@ -316,6 +688,7 @@ mod tests {
         let wrong_root = [99u8; 32];
         let service = CompressionService::new(
             "https://api.devnet.solana.com",
+            "11111111111111111111111111111111",
             "11111111111111111111111111111111",
             "11111111111111111111111111111111",
         )
