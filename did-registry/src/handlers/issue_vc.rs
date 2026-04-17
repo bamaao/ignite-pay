@@ -3,9 +3,11 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use ignite_pay_core::types::VerifiableCredential;
+use ignite_pay_core::verify_did_signature;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+use crate::did::resolver::compute_did_hash;
 use crate::state::RegistryState;
 
 #[derive(Debug, Deserialize)]
@@ -20,9 +22,14 @@ pub struct IssueVcRequest {
     pub validity_hours: Option<u64>,
     /// Server nonce for replay protection
     pub nonce: String,
+    /// DID signature over "issue_vc:{merchant_did}:{merchant_name}:{nonce}"
+    pub did_signature: String,
 }
 
 /// `POST /v1/vc/issue` — Issue a W3C Verifiable Credential for a merchant.
+///
+/// For initial registration: verifies DID ownership via signature, then issues VC.
+/// For updates: verifies DID ownership AND checks merchant is already registered.
 pub async fn issue_vc(
     State(state): State<RegistryState>,
     Json(req): Json<IssueVcRequest>,
@@ -45,24 +52,51 @@ pub async fn issue_vc(
             .into_response();
     }
 
-    // 3. Optionally verify merchant is registered (check sled cache)
-    let did_hash = crate::did::resolver::compute_did_hash(&req.merchant_did);
-    if state.get_cached_merchant(&did_hash).is_none() {
+    // 3. Verify DID signature proving ownership
+    let message = format!(
+        "issue_vc:{}:{}:{}",
+        req.merchant_did, req.merchant_name, req.nonce
+    );
+    if !verify_did_signature(&req.merchant_did, &message, &req.did_signature) {
         return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "merchant not registered"})),
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "invalid DID signature"})),
         )
             .into_response();
     }
 
-    // 4. Build credential fields
+    // 4. If merchant is already cached, this is an update — verify status
+    let did_hash = compute_did_hash(&req.merchant_did);
+    if let Some(cached) = state.get_cached_merchant(&did_hash) {
+        // Merchant exists — verify the requester is the current controller
+        let did_pk_bytes = match crate::did::resolver::extract_pubkey_from_did(&req.merchant_did) {
+            Some(pk) => pk,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "cannot extract pubkey from DID"})),
+                )
+                    .into_response();
+            }
+        };
+        let did_pk = solana_sdk::pubkey::Pubkey::new_from_array(did_pk_bytes);
+        if cached.controller_pk != did_pk && cached.original_pk != did_pk {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error": "not authorized: signer is not controller or original key"})),
+            )
+                .into_response();
+        }
+    }
+
+    // 5. Build credential fields
     let vc_id = format!("urn:uuid:{}", uuid::Uuid::new_v4());
     let validity_hours = req.validity_hours.unwrap_or(8760);
     let now = chrono::Utc::now();
     let expiration = now + chrono::Duration::hours(validity_hours as i64);
     let verification_method = format!("{}#key-signing-1", state.platform_did);
 
-    // 5. Sign the VC with the platform key
+    // 6. Sign the VC with the platform key (includes credentialStatus for revocation)
     let vc = VerifiableCredential::sign(
         vec![
             "https://www.w3.org/2018/credentials/v1".to_string(),
@@ -81,16 +115,17 @@ pub async fn issue_vc(
         req.category,
         &state.platform_signing_key,
         &verification_method,
+        &state.did_program_id().to_string(),
     );
 
-    // 6. Compute VC hash for on-chain use
+    // 7. Compute VC hash for on-chain use
     let vc_json = serde_json::to_vec(&vc).unwrap_or_default();
     let mut hasher = Sha256::new();
     hasher.update(&vc_json);
     let hash = hasher.finalize();
     let vc_hash_hex = hex::encode(hash);
 
-    // 7. Store the VC in sled
+    // 8. Store the VC in sled
     let store = crate::storage::sled_store::MerchantStore::new((*state.db).clone());
     if let Err(e) = store.save_vc(&vc_hash_hex, &vc_json) {
         tracing::error!("Failed to store VC: {}", e);
@@ -101,7 +136,7 @@ pub async fn issue_vc(
             .into_response();
     }
 
-    // 8. Return the VC and its hash
+    // 9. Return the VC and its hash
     (
         StatusCode::OK,
         Json(serde_json::json!({

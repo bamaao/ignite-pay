@@ -84,6 +84,7 @@ impl VerifiableCredential {
     }
 
     /// Create a new VC with a signature (used by the platform to issue VCs).
+    /// `did_program_id` is the on-chain DID program ID used for revocation checks.
     pub fn sign(
         context: Vec<String>,
         id: String,
@@ -96,12 +97,18 @@ impl VerifiableCredential {
         subject_category: Option<String>,
         signing_key: &ed25519_dalek::SigningKey,
         verification_method: &str,
+        did_program_id: &str,
     ) -> Self {
         let credential_subject = crate::types::VCCredentialSubject {
             id: subject_id,
             name: subject_name,
             category: subject_category,
         };
+
+        let credential_status = Some(crate::types::CredentialStatus {
+            status_type: "IgniteVcRevocationRegistry".to_string(),
+            program_id: did_program_id.to_string(),
+        });
 
         let mut vc = VerifiableCredential {
             context,
@@ -111,6 +118,7 @@ impl VerifiableCredential {
             issuance_date,
             expiration_date,
             credential_subject,
+            credential_status,
             proof: VCProof {
                 proof_type: String::new(),
                 created: chrono::Utc::now(),
@@ -161,6 +169,7 @@ mod tests {
             Some("retail".to_string()),
             signing_key,
             &format!("{}#key-signing-1", platform_did),
+            "D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D",
         )
     }
 

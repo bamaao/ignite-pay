@@ -92,16 +92,24 @@ impl DidService {
         proof_bytes: &[u8],
         address_tree_info: &PackedAddressTreeInfo,
         output_state_tree_index: u8,
+        vc_hash: [u8; 32],
+        platform_signature: [u8; 64],
+        credential_subject_pk: &Pubkey,
+        platform_config_address: &Pubkey,
         remaining_accounts: &[AccountMeta],
     ) -> Result<Instruction> {
-        let mut data = Vec::with_capacity(8 + proof_bytes.len() + 8);
+        let mut data = Vec::with_capacity(8 + proof_bytes.len() + 8 + 32 + 64 + 32);
         data.extend_from_slice(&anchor_sighash("initialize_did"));
         data.extend_from_slice(proof_bytes);
         data.extend_from_slice(&borsh::to_vec(address_tree_info).map_err(SolanaError::BorshError)?);
         data.extend_from_slice(&output_state_tree_index.to_le_bytes());
+        data.extend_from_slice(&vc_hash);
+        data.extend_from_slice(&platform_signature);
+        data.extend_from_slice(credential_subject_pk.as_ref());
 
         let mut accounts = vec![
             AccountMeta::new(*signer_pubkey, true),
+            AccountMeta::new_readonly(*platform_config_address, false),
         ];
         accounts.extend_from_slice(remaining_accounts);
 
@@ -121,6 +129,9 @@ impl DidService {
         account_meta: &light_sdk::instruction::account_meta::CompressedAccountMeta,
         vc_hash: [u8; 32],
         nonce: u64,
+        platform_signature: [u8; 64],
+        credential_subject_pk: &Pubkey,
+        platform_config_address: &Pubkey,
         remaining_accounts: &[AccountMeta],
     ) -> Result<Instruction> {
         let mut data = Vec::new();
@@ -130,9 +141,12 @@ impl DidService {
         data.extend_from_slice(&borsh::to_vec(account_meta).map_err(SolanaError::BorshError)?);
         data.extend_from_slice(&vc_hash);
         data.extend_from_slice(&nonce.to_le_bytes());
+        data.extend_from_slice(&platform_signature);
+        data.extend_from_slice(credential_subject_pk.as_ref());
 
         let mut accounts = vec![
             AccountMeta::new(*signer_pubkey, true),
+            AccountMeta::new_readonly(*platform_config_address, false),
         ];
         accounts.extend_from_slice(remaining_accounts);
 
@@ -183,6 +197,10 @@ impl DidService {
         proof_bytes: &[u8],
         address_tree_info: &PackedAddressTreeInfo,
         output_state_tree_index: u8,
+        vc_hash: [u8; 32],
+        platform_signature: [u8; 64],
+        credential_subject_pk: &Pubkey,
+        platform_config_address: &Pubkey,
         remaining_accounts: &[AccountMeta],
     ) -> Result<Signature> {
         let recent_blockhash = self
@@ -195,6 +213,10 @@ impl DidService {
             proof_bytes,
             address_tree_info,
             output_state_tree_index,
+            vc_hash,
+            platform_signature,
+            credential_subject_pk,
+            platform_config_address,
             remaining_accounts,
         )?;
 
@@ -222,6 +244,9 @@ impl DidService {
         account_meta: &light_sdk::instruction::account_meta::CompressedAccountMeta,
         vc_hash: [u8; 32],
         nonce: u64,
+        platform_signature: [u8; 64],
+        credential_subject_pk: &Pubkey,
+        platform_config_address: &Pubkey,
         remaining_accounts: &[AccountMeta],
     ) -> Result<Signature> {
         let recent_blockhash = self
@@ -236,6 +261,9 @@ impl DidService {
             account_meta,
             vc_hash,
             nonce,
+            platform_signature,
+            credential_subject_pk,
+            platform_config_address,
             remaining_accounts,
         )?;
 
@@ -355,6 +383,10 @@ impl DidService {
         proof_bytes: &[u8],
         address_tree_info: &PackedAddressTreeInfo,
         output_state_tree_index: u8,
+        vc_hash: [u8; 32],
+        platform_signature: [u8; 64],
+        credential_subject_pk: &Pubkey,
+        platform_config_address: &Pubkey,
         remaining_accounts: &[AccountMeta],
     ) -> Result<Transaction> {
         let recent_blockhash = self
@@ -367,6 +399,10 @@ impl DidService {
             proof_bytes,
             address_tree_info,
             output_state_tree_index,
+            vc_hash,
+            platform_signature,
+            credential_subject_pk,
+            platform_config_address,
             remaining_accounts,
         )?;
 
@@ -387,6 +423,9 @@ impl DidService {
         account_meta: &light_sdk::instruction::account_meta::CompressedAccountMeta,
         vc_hash: [u8; 32],
         nonce: u64,
+        platform_signature: [u8; 64],
+        credential_subject_pk: &Pubkey,
+        platform_config_address: &Pubkey,
         remaining_accounts: &[AccountMeta],
     ) -> Result<Transaction> {
         let recent_blockhash = self
@@ -401,6 +440,9 @@ impl DidService {
             account_meta,
             vc_hash,
             nonce,
+            platform_signature,
+            credential_subject_pk,
+            platform_config_address,
             remaining_accounts,
         )?;
 
@@ -444,6 +486,63 @@ impl DidService {
             &recent_blockhash,
         );
         Ok(Transaction::new_unsigned(message))
+    }
+
+    // ── VC Revocation ────────────────────────────────────────────────
+
+    /// Revoke a VC by creating an on-chain RevokedVc PDA.
+    /// Only the platform authority (from PlatformConfig) can invoke.
+    /// PDA seeds: [b"revoked-vc", vc_hash]
+    pub async fn revoke_vc(
+        &self,
+        authority: &Keypair,
+        vc_hash: [u8; 32],
+        credential_subject_pk: &Pubkey,
+        reason: u8,
+        platform_config_address: &Pubkey,
+    ) -> Result<Signature> {
+        let revoked_vc_address = Pubkey::find_program_address(
+            &[b"revoked-vc", &vc_hash],
+            &self.did_program_id,
+        ).0;
+
+        let mut data = Vec::with_capacity(8 + 32 + 32 + 1);
+        data.extend_from_slice(&anchor_sighash("revoke_vc"));
+        data.extend_from_slice(&vc_hash);
+        data.extend_from_slice(credential_subject_pk.as_ref());
+        data.extend_from_slice(&reason.to_le_bytes());
+
+        let accounts = vec![
+            AccountMeta::new(authority.pubkey(), true),
+            AccountMeta::new_readonly(*platform_config_address, false),
+            AccountMeta::new(revoked_vc_address, false),
+            AccountMeta::new_readonly(solana_sdk::system_program::id(), false),
+        ];
+
+        let ix = Instruction {
+            program_id: self.did_program_id,
+            accounts,
+            data,
+        };
+
+        let recent_blockhash = self
+            .rpc_client
+            .get_latest_blockhash()
+            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
+
+        let tx = Transaction::new_signed_with_payer(
+            &[ix],
+            Some(&authority.pubkey()),
+            &[authority],
+            recent_blockhash,
+        );
+
+        let sig = self
+            .rpc_client
+            .send_and_confirm_transaction(&tx)
+            .map_err(|e| SolanaError::TransactionFailed(e.to_string()))?;
+
+        Ok(sig)
     }
 }
 

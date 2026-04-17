@@ -51,6 +51,7 @@ jsonwebtoken = "9"
 # Solana
 solana-sdk = "2.1"
 solana-client = "2.1"
+solana-transaction-status = "2.1"
 
 # ZK Compression
 light-sdk = "0.23.0"

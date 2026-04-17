@@ -12,7 +12,7 @@
 
 本文档提供两种上链模式的完整示例：
 - **模式 A（Sponsored 平台代付）**：平台签名并发送交易，记录服务费
-- **模式 B（SelfOnchain 商户自助）**：平台构建未签名交易，商户自行签名并广播
+- **模式 B（SelfOnchain 商户自助）**：商户通过公开 proof 端点获取 ZK proof，本地构建交易并签名广播，完成后通知平台
 
 ---
 
@@ -76,9 +76,15 @@ curl -s http://localhost:8081/v1/auth/nonce | jq
 
 ### 步骤 3：平台签发 Verifiable Credential
 
-使用上一步的 nonce 请求平台签发 VC。
+使用上一步的 nonce，商户用 DID 私钥签名后请求平台签发 VC。
+
+签名消息格式: `issue_vc:{merchant_did}:{merchant_name}:{nonce}`
 
 ```bash
+# 商户本地签名 (伪代码)
+# message = "issue_vc:did:ignite:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK:星火便利店:a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+# did_signature = ed25519_sign(merchant_private_key, message)
+
 curl -s -X POST http://localhost:8081/v1/vc/issue \
   -H "Content-Type: application/json" \
   -d '{
@@ -86,7 +92,8 @@ curl -s -X POST http://localhost:8081/v1/vc/issue \
     "merchant_name": "星火便利店",
     "category": "retail",
     "validity_hours": 8760,
-    "nonce": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    "nonce": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "did_signature": "<base64-Ed25519-sig>"
   }' | jq
 ```
 
@@ -108,6 +115,10 @@ curl -s -X POST http://localhost:8081/v1/vc/issue \
       "name": "星火便利店",
       "category": "retail"
     },
+    "credentialStatus": {
+      "type": "IgniteVcRevocationRegistry",
+      "program_id": "<DID程序ID>"
+    },
     "proof": {
       "type": "Ed25519Signature2020",
       "created": "2025-06-15T08:30:00Z",
@@ -124,6 +135,7 @@ curl -s -X POST http://localhost:8081/v1/vc/issue \
 - `vc_hash`: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
 - VC 已被平台 Ed25519 私钥签名
 - VC 已持久化到 sled 数据库（`vc:{vc_hash_hex}` 键）
+- 平台验证了 DID 签名，确认请求者持有该 DID 的私钥
 
 ---
 
@@ -199,6 +211,8 @@ curl -s -X POST http://localhost:8081/v1/merchants/register \
 
 #### 模式 B：SelfOnchain（商户自助上链）
 
+方式一：通过 register 端点获取未签名交易
+
 ```bash
 curl -s -X POST http://localhost:8081/v1/merchants/register \
   -H "Content-Type: application/json" \
@@ -212,12 +226,44 @@ curl -s -X POST http://localhost:8081/v1/merchants/register \
   }' | jq
 ```
 
+方式二：通过公开 proof 端点获取 ZK proof，本地构建交易
+
+```bash
+# 获取 proof（无需认证）
+curl -s -X POST http://localhost:8081/v1/proof \
+  -H "Content-Type: application/json" \
+  -d '{
+    "pubkey": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+    "operation": "register"
+  }' | jq
+```
+
+**响应（新增字段）**:
+```json
+{
+  "proof": "<base64>",
+  "compressed_address": "<base58>",
+  "address_seed": "<base58>",
+  "address_merkle_tree": "<base58>",
+  "address_tree_info": "<base64>",
+  "output_state_tree_index": 0,
+  "remaining_accounts": [
+    { "pubkey": "...", "is_signer": false, "is_writable": true }
+  ],
+  "program_id": "DID程序ID(base58)",
+  "platform_config_address": "PlatformConfig PDA地址(base58)"
+}
+```
+
+> `platform_config_address` 是 PlatformConfig PDA 地址，商户构建 `initialize_did` / `update_did_with_vc` 指令时，accounts 列表须为 `[signer(writable), platform_config(readonly), ...remaining_accounts]`。指令数据须包含 `vc_hash(32) + platform_signature(64) + credential_subject_pk(32)`。
+
 **服务端处理流程**:
 1. 同上步骤 1-6（验证、nonce、签名、证明）
-2. 调用 `DidService::prepare_initialize_did` 构建未签名交易
-3. 使用 bincode 序列化，base64 编码返回
+2. 生成平台签名：`sign(credential_subject_pk || vc_hash)`
+3. 调用 `DidService::prepare_initialize_did` 构建未签名交易（含 platform_config 账户和平台签名）
+4. 使用 bincode 序列化，base64 编码返回
 
-**响应**:
+**响应**（方式一）:
 ```json
 {
   "transaction": "AQAAAAAAAAABAAABA4njKdHxaNnCoWmNk9p5WjnUk4KwbbOGrFckyTSDj5k7CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAmr7Vi8Y0JB3X7JYBmSvvyLIj3j8WLXQirU1pImYJE4YBAAAAAAKCAQIDBAUG...",
@@ -231,22 +277,54 @@ curl -s -X POST http://localhost:8081/v1/merchants/register \
 use solana_sdk::transaction::Transaction;
 use solana_client::rpc_client::RpcClient;
 
-// 1. 解码 base64
+// 方式一：解码平台返回的未签名交易
 let tx_bytes = base64::engine::general_purpose::STANDARD.decode(&tx_b64)?;
-
-// 2. 反序列化 Transaction
 let mut tx: Transaction = bincode::deserialize(&tx_bytes)?;
-
-// 3. 用商户 keypair 签名
 tx.sign(&[&merchant_keypair], tx.message.recent_blockhash);
-
-// 4. 广播
 let rpc_client = RpcClient::new("https://api.devnet.solana.com");
 let sig = rpc_client.send_and_confirm_transaction(&tx)?;
-println!("Transaction confirmed: {}", sig);
+
+// 方式二：使用 proof 本地构建交易（需 light-sdk + ignite-pay-did-program IDL）
+// 1. 解码 proof, address_tree_info, remaining_accounts
+// 2. 构建 Anchor instruction:
+//    discriminator(8) + proof + address_tree_info(borsh) + output_state_tree_index(1)
+//    + vc_hash(32) + platform_signature(64) + credential_subject_pk(32)
+// 3. accounts: [signer(writable), platform_config(readonly), ...remaining_accounts]
+//    其中 platform_config 地址从 /v1/proof 响应的 platform_config_address 字段获取
+// 4. Transaction::new_unsigned(message) → sign → broadcast
+// 注意：platform_signature 和 credential_subject_pk 需从平台获取（平台签发）
 ```
 
 > **注意**：SelfOnchain 模式下商户需在 90 秒内完成签名和广播（blockhash 过期限制）。超时需重新请求未签名交易。
+
+**重要：广播后必须通知平台**
+
+SelfOnchain 模式下，平台不参与交易，因此不知道商户已上链。商户广播成功后必须调用 confirm 端点：
+
+```bash
+# 获取新 nonce
+NONCE=$(curl -s http://localhost:8081/v1/auth/nonce | jq -r '.nonce')
+
+# 商户签名: "confirm:{did}:{tx_signature}:{nonce}"
+
+curl -s -X POST http://localhost:8081/v1/merchants/confirm \
+  -H "Content-Type: application/json" \
+  -d '{
+    "merchant_did": "did:ignite:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+    "tx_signature": "'"${TX_SIG}"'",
+    "active_pubkey": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+    "platform_vc_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "did_signature": "<base64签名>",
+    "nonce": "'"${NONCE}"'"
+  }' | jq
+```
+
+**响应**:
+```json
+{ "status": "confirmed" }
+```
+
+> 若商户已缓存，返回 `{ "status": "already_confirmed" }`（幂等）。未调用 confirm 前，verify/status/update-vc/rotate-key 均返回 404。
 
 此时链上已创建 `MerchantCompressedDid` 压缩账户：
 ```
@@ -419,11 +497,54 @@ curl -s "http://localhost:8081/v1/fees?operation=update_vc&limit=20" | jq
 3. 设置新的 `controller_pk`
 4. 链上 nonce 递增
 
+### VC 吊销
+
+当商户违规或 VC 过期需提前作废时，平台可吊销 VC：
+
+```bash
+# 1. 获取 nonce
+NONCE=$(curl -s http://localhost:8081/v1/auth/nonce | jq -r '.nonce')
+
+# 2. 平台签名: "revoke:{vc_hash}:{nonce}"
+#    使用 platform_signing_key 签名
+
+# 3. 提交吊销
+curl -s -X POST http://localhost:8081/v1/vc/revoke \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vc_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "credential_subject_pk": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+    "reason": 1,
+    "platform_signature": "<平台base64签名>",
+    "nonce": "'"${NONCE}"'"
+  }' | jq
+```
+
+**响应**:
+```json
+{
+  "signature": "<solana-tx-signature>",
+  "revoked_vc_pda": "<RevokedVc PDA地址>"
+}
+```
+
+**验证方如何检查**: 第三方收到 VC 后：
+1. 计算 `vc_hash = SHA-256(vc_json)`
+2. 推导 PDA: `find_program_address(&[b"revoked-vc", vc_hash], program_id)`
+3. 查询该 PDA 是否存在 → 存在则已被吊销
+
 ---
 
 ## 状态流转图
 
 ```
+  ┌────────────────────────────────────────────────────────────┐
+  │  部署时一次性: init_platform                                │
+  │  → 将平台 Ed25519 公钥写入 PlatformConfig PDA              │
+  │  → seeds: [b"platform-config"]                             │
+  │  → 未初始化时 initialize_did / update_did_with_vc 被拒绝   │
+  └────────────────────────────────────────────────────────────┘
+
                      ┌───────────────────────┐
                      │  商户生成密钥对        │
                      │  → did:ignite:z...     │
@@ -435,9 +556,16 @@ curl -s "http://localhost:8081/v1/fees?operation=update_vc&limit=20" | jq
                      └───────────┬───────────┘
                                  │
                      ┌───────────▼───────────┐
+                     │  商户签名              │
+                     │  "issue_vc:{did}:      │
+                     │   {name}:{nonce}"      │
+                     └───────────┬───────────┘
+                                 │
+                     ┌───────────▼───────────┐
                      │  POST /v1/vc/issue     │
+                     │  + did_signature       │
+                     │  → 平台校验DID所有权   │
                      │  → VC + vc_hash        │
-                     │  (平台签名 + 存储)      │
                      └───────────┬───────────┘
                                  │
                      ┌───────────▼───────────┐
@@ -453,6 +581,7 @@ curl -s "http://localhost:8081/v1/fees?operation=update_vc&limit=20" | jq
               ┌──────────────────▼──────────────────┐
               │  POST /v1/merchants/register         │
               │  mode = "sponsored" | "self_onchain" │
+              │  → 平台签名 (subject_pk || vc_hash)  │
               │  → Photon 证明                       │
               ├─────────────┬────────────────────────┤
               │  Sponsored  │  SelfOnchain            │
@@ -460,9 +589,19 @@ curl -s "http://localhost:8081/v1/fees?operation=update_vc&limit=20" | jq
               │  发送+记录费│  商户自签+广播            │
               └─────────────┴────────────────────────┘
                                  │
+              → 链上验证:
+                ① subject_binding: credential_subject_pk == signer
+                ② platform_sig: verify(platform_pk, subject_pk||vc_hash, sig)
               → MerchantCompressedDid 创建
                 original_pk = controller_pk = 签名者
                 vc_hash = VC 哈希, nonce = 0
+                                 │
+                     ┌───────────▼───────────┐
+                     │  SelfOnchain 专用:     │
+                     │  POST /v1/merchants/   │
+                     │       confirm          │
+                     │  → 通知平台缓存商户数据 │
+                     └───────────┬───────────┘
                                  │
            ┌─────────────────────┼─────────────────────┐
            │                     │                     │
@@ -470,8 +609,17 @@ curl -s "http://localhost:8081/v1/fees?operation=update_vc&limit=20" | jq
   │ update-vc       │  │ set-recovery    │  │ rotate-key      │
   │ nonce 0→1→...   │  │ nonce 递增      │  │ nonce 递增      │
   │ 更新 vc_hash    │  │ 设置 recovery   │  │ 更新 controller │
-  │ (支持双模式)    │  │                 │  │ (支持双模式)    │
+  │ +平台签名验证   │  │                 │  │ (支持双模式)    │
+  │ +subject binding│  │                 │  │                 │
+  │ (支持双模式)    │  │                 │  │                 │
   └─────────────────┘  └─────────────────┘  └─────────────────┘
+
+  ┌────────────────────────────────────────────────────────────┐
+  │  POST /v1/proof (公开端点)                                  │
+  │  → 获取 ZK proof + platform_config_address                 │
+  │  → 商户可自行构建交易（需平台签名数据）                       │
+  │  → 也可用 light-sdk + 自建 Photon RPC 完全独立              │
+  └────────────────────────────────────────────────────────────┘
 
   ┌────────────────────────────────────────────────────────────┐
   │  GET /v1/fees?operation=register&since=ts&limit=100        │
@@ -489,15 +637,18 @@ curl -s "http://localhost:8081/v1/fees?operation=update_vc&limit=20" | jq
 |---|---|---|---|
 | 1 | 服务健康 | `curl localhost:8081/health` | `ok` |
 | 2 | Nonce 发放 | `curl localhost:8081/v1/auth/nonce` | 200 + UUID nonce |
-| 3 | VC 签发 | `POST /v1/vc/issue` | 200 + VC JSON + vc_hash |
-| 4 | 商户注册（Sponsored） | `POST /v1/merchants/register` (mode=sponsored) | 200 + tx signature |
-| 5 | 商户注册（SelfOnchain） | `POST /v1/merchants/register` (mode=self_onchain) | 200 + base64 transaction |
-| 6 | DID 解析 | `GET /v1/did/resolve/{did}` | 200 + DID Document |
-| 7 | 商户验证 | `GET /v1/merchants/verify/{did}` | 200 + verified: true |
-| 8 | 状态查询 | `GET /v1/merchants/status/{did}` | 200 + status: active |
-| 9 | VC 更新 | `POST /v1/merchants/update-vc` | 200 + tx signature |
-| 10 | 密钥轮换 | `POST /v1/merchants/rotate-key` | 200 + tx signature |
-| 11 | 费用查询 | `GET /v1/fees` | 200 + fees 数组 |
+| 3 | VC 签发（需DID签名） | `POST /v1/vc/issue` + did_signature | 200 + VC JSON + vc_hash |
+| 4 | ZK Proof 获取 | `POST /v1/proof` | 200 + proof + remaining_accounts |
+| 5 | 商户注册（Sponsored） | `POST /v1/merchants/register` (mode=sponsored) | 200 + tx signature |
+| 6 | 商户注册（SelfOnchain） | `POST /v1/merchants/register` (mode=self_onchain) | 200 + base64 transaction |
+| 7 | SelfOnchain 确认 | `POST /v1/merchants/confirm` | 200 + status: confirmed |
+| 8 | DID 解析 | `GET /v1/did/resolve/{did}` | 200 + DID Document |
+| 9 | 商户验证 | `GET /v1/merchants/verify/{did}` | 200 + verified: true |
+| 10 | 状态查询 | `GET /v1/merchants/status/{did}` | 200 + status: active |
+| 11 | VC 更新 | `POST /v1/merchants/update-vc` | 200 + tx signature |
+| 12 | 密钥轮换 | `POST /v1/merchants/rotate-key` | 200 + tx signature |
+| 13 | VC 吊销 | `POST /v1/vc/revoke` | 200 + signature + revoked_vc_pda |
+| 14 | 费用查询 | `GET /v1/fees` | 200 + fees 数组 |
 
 ---
 
@@ -518,9 +669,13 @@ solana balance <PAYER_ADDRESS> --url devnet
 solana airdrop 2 <PAYER_ADDRESS> --url devnet
 ```
 
-### Q: VC 签发报 "merchant not registered"
+### Q: VC 签发报 "invalid DID signature"
 
-`POST /v1/vc/issue` 要求商户已经注册（sled 中有缓存）。需先完成步骤 6（链上注册），或调整业务流程让注册不依赖已有 VC。
+`POST /v1/vc/issue` 要求 DID 签名验证。确认签名消息格式为 `issue_vc:{merchant_did}:{merchant_name}:{nonce}`，且使用了正确的 nonce 和 DID 私钥。
+
+### Q: VC 签发报 "not authorized"
+
+更新场景下（商户已注册），平台会校验签名者是否为 controller 或 original key。确认 DID 签名使用的私钥对应当前 controller。
 
 ### Q: 签名验证失败
 

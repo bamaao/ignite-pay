@@ -73,10 +73,20 @@
           │  │  (Anchor + Light SDK)                │         │
           │  │                                      │         │
           │  │  Instructions:                       │         │
+          │  │  - init_platform (一次性)             │         │
           │  │  - initialize_did                    │         │
           │  │  - update_did_with_vc                │         │
           │  │  - set_recovery_key                  │         │
           │  │  - recover_controller                │         │
+          │  │  - revoke_vc                         │         │
+          │  └─────────────────────────────────────┘         │
+          │                                                   │
+          │  ┌─────────────────────────────────────┐         │
+          │  │  PlatformConfig PDA                  │         │
+          │  │  seeds: [b"platform-config"]          │         │
+          │  │  存储平台 Ed25519 公钥                 │         │
+          │  │  initialize_did / update_did_with_vc │         │
+          │  │  验证平台签名后才能写入 vc_hash        │         │
           │  └─────────────────────────────────────┘         │
           │                                                   │
           │  ┌─────────────────────────────────────┐         │
@@ -91,23 +101,36 @@
           │  │  - last_updated  (时间戳)            │         │
           │  │  - nonce         (防重放计数器)       │         │
           │  └─────────────────────────────────────┘         │
+          │                                                   │
+          │  ┌─────────────────────────────────────┐         │
+          │  │  RevokedVc PDA (吊销注册表)           │         │
+          │  │  seeds: [b"revoked-vc", vc_hash]      │         │
+          │  │  每个 VC 吊销创建一个 PDA             │         │
+          │  │  验证方检查 PDA 存在即判定已吊销       │         │
+          │  └─────────────────────────────────────┘         │
           └──────────────────────────────────────────────────┘
 ```
 
 ### 数据流
 
 ```
+0. 部署时: init_platform(platform_ed25519_pubkey) → 写入 PlatformConfig PDA
 1. 商户生成 Ed25519 密钥对 → derive did:ignite:z...
 2. GET  /v1/auth/nonce              → 获取服务器 nonce
-3. POST /v1/vc/issue                → 平台签发 VC → 获得 vc_hash
-4. 商户签名 "register:{did}:{pubkey}:{vc_hash}:{nonce}"
-5. POST /v1/merchants/register      → 链上创建压缩 DID
+3. 商户签名 "issue_vc:{did}:{merchant_name}:{nonce}"
+4. POST /v1/vc/issue + did_signature → 平台校验 DID 所有权 → 签发 VC → 获得 vc_hash
+5. 商户签名 "register:{did}:{pubkey}:{vc_hash}:{nonce}"
+6. POST /v1/merchants/register      → 平台签名(credential_subject_pk || vc_hash) → 链上创建压缩 DID
+   ├── 链上验证: subject_binding + platform_sig_verify
    ├── mode=sponsored (默认): 平台签名+发送, 记录服务费
    └── mode=self_onchain:  返回未签名TX, 商户自行签名+广播
-6. GET  /v1/did/resolve/{did}       → 解析 DID Document
-7. POST /v1/merchants/update-vc     → 更新链上 VC 哈希 (同样支持双模式)
-8. POST /v1/merchants/rotate-key    → 轮换控制密钥 (同样支持双模式)
-9. GET  /v1/fees                    → 查询费用记录
+7. POST /v1/merchants/confirm (SelfOnchain 专用) → 商户通知平台交易已上链
+8. GET  /v1/did/resolve/{did}       → 解析 DID Document
+9. POST /v1/merchants/update-vc     → 更新链上 VC 哈希 (平台签名验证 + Subject Binding, 支持双模式)
+10. POST /v1/merchants/rotate-key    → 轮换控制密钥 (同样支持双模式)
+11. GET  /v1/fees                    → 查询费用记录
+12. POST /v1/proof                   → 获取 ZK proof + platform_config_address（公开端点）
+13. POST /v1/vc/revoke               → 吊销 VC（仅平台 authority，创建 RevokedVc PDA）
 ```
 
 ---
@@ -159,13 +182,15 @@ ignite-pay-did-program/
 ├── Anchor.toml          # Anchor 配置（program ID, cluster, wallet）
 ├── Cargo.toml           # Rust 依赖
 ├── src/
-│   ├── lib.rs           # 程序入口，4 条指令
-│   ├── state.rs         # MerchantCompressedDid 压缩账户结构
-│   └── error.rs         # DidError 错误码定义
+│   ├── lib.rs           # 程序入口，6 条指令 + ed25519 验证
+│   ├── state.rs         # MerchantCompressedDid + PlatformConfig + RevokedVc 结构
+│   └── error.rs         # DidError 错误码定义（含 PlatformNotInitialized, AlreadyRevoked 等）
 └── tests/               # TypeScript 集成测试（可选）
 ```
 
-### 3.2 压缩账户结构
+### 3.2 账户结构
+
+#### MerchantCompressedDid（压缩账户）
 
 ```rust
 // 存储在 Light Protocol Merkle Tree 中（不是传统链上账户）
@@ -181,19 +206,69 @@ pub struct MerchantCompressedDid {
 
 **PDA 派生**: `seeds = [b"merchant-did", original_pk]`，在 Address Tree 中确定地址。
 
+#### PlatformConfig（链上 PDA 账户）
+
+```rust
+// 链上 PDA，存储平台 Ed25519 公钥，用于验证平台签名
+// Seeds: [b"platform-config"]
+pub struct PlatformConfig {
+    pub platform_ed25519_pubkey: [u8; 32],  // 平台 Ed25519 公钥
+    pub authority: Pubkey,                   // 有权更新平台密钥的地址
+    pub bump: u8,                            // PDA bump seed
+}
+```
+
+**空间**: 8（discriminator）+ 32 + 32 + 1 = 73 字节。通过 `init_platform` 指令一次性初始化。
+
+#### RevokedVc（链上 PDA 账户 — 吊销注册表）
+
+```rust
+// 链上 PDA，每个被吊销的 VC 创建一个 RevokedVc 账户
+// Seeds: [b"revoked-vc", vc_hash]
+pub struct RevokedVc {
+    pub vc_hash: [u8; 32],              // 被吊销的 VC 哈希
+    pub credential_subject_pk: Pubkey,   // VC 主体公钥
+    pub revoked_at: i64,                 // 吊销时间戳
+    pub reason: u8,                      // 吊销原因 (0=unspecified, 1=violation, 2=expired, etc.)
+    pub authority: Pubkey,               // 执行吊销的平台 authority
+    pub bump: u8,                        // PDA bump seed
+}
+```
+
+**空间**: 8（discriminator）+ 32 + 32 + 8 + 1 + 32 + 1 = 114 字节。通过 `revoke_vc` 指令创建。
+
+**吊销检查**: 第三方验证方通过检查 `RevokedVc` PDA 是否存在来判断 VC 是否已被吊销。PDA 地址 = `find_program_address(&[b"revoked-vc", vc_hash], program_id)`。
+
 ### 3.3 指令清单
 
-| 指令 | 签名者 | 功能 |
+| 指令 | 账户结构 | 功能 |
 |---|---|---|
-| `initialize_did` | 任意（成为 original_pk + controller_pk） | 创建新的压缩 DID |
-| `update_did_with_vc` | controller_pk | 绑定/更新 VC 哈希 |
-| `set_recovery_key` | controller_pk | 设置/更换恢复密钥 |
-| `recover_controller` | recovery_pk | 通过恢复密钥重置 controller |
+| `init_platform` | `[authority, platform_config, system_program]` | 一次性初始化平台 Ed25519 公钥 |
+| `initialize_did` | `[signer, platform_config, ...remaining]` | 创建压缩 DID，需平台签名 |
+| `update_did_with_vc` | `[signer, platform_config, ...remaining]` | 绑定/更新 VC 哈希，需平台签名 |
+| `set_recovery_key` | `[signer, ...remaining]` | 设置/更换恢复密钥 |
+| `recover_controller` | `[signer, ...remaining]` | 通过恢复密钥重置 controller |
+| `revoke_vc` | `[authority, platform_config, revoked_vc, system_program]` | 吊销 VC，创建 RevokedVc PDA |
 
-所有指令均通过 Light System Program CPI 写入压缩状态树，需要：
-- **Validity Proof**: 由 Photon RPC 提供，证明账户存在/不存在
-- **Remaining Accounts**: CPI 所需的 Light Protocol 账户（树账户、系统程序等）
-- **Anti-replay Nonce**: 链上计数器，每次 mutation 必须递增
+**平台签名验证**（`initialize_did` / `update_did_with_vc`）：
+
+链上程序在 CPI 写入前验证平台对 `(credential_subject_pk || vc_hash)` 的 Ed25519 签名，并强制 `credential_subject_pk == signer.key()`。这同时实现了：
+- **Account Binding**: 签名绑定了特定 signer，防止跨账户重放
+- **Subject Binding**: 链上强制 signer 必须是 VC 的 subject，防止身份冒充
+
+签名消息格式：`credential_subject_pk (32 bytes) || vc_hash (32 bytes)` = 64 字节
+
+**`initialize_did` 指令数据格式**：
+```
+[discriminator(8)] [proof(var)] [address_tree_info(borsh)] [output_state_tree_index(1)]
+[vc_hash(32)] [platform_signature(64)] [credential_subject_pk(32)]
+```
+
+**`update_did_with_vc` 指令数据格式**：
+```
+[discriminator(8)] [proof(var)] [current_did(borsh)] [account_meta(borsh)]
+[vc_hash(32)] [nonce(8)] [platform_signature(64)] [credential_subject_pk(32)]
+```
 
 ### 3.4 错误码
 
@@ -206,6 +281,11 @@ pub struct MerchantCompressedDid {
 | `InvalidRecoveryKey` | 签名者不是恢复密钥 |
 | `ArithmeticOverflow` | Nonce 溢出 |
 | `InsufficientCpiAccounts` | CPI 账户不足 |
+| `PlatformNotInitialized` | PlatformConfig PDA 未初始化（需先调用 `init_platform`） |
+| `InvalidPlatformSignature` | 平台 Ed25519 签名验证失败 |
+| `VcSubjectMismatch` | credential_subject_pk 与 signer 不匹配 |
+| `AlreadyRevoked` | 该 VC 已被吊销（RevokedVc PDA 已存在） |
+| `UnauthorizedRevocation` | 调用者不是平台 authority，无权吊销 |
 
 ### 3.5 编译与部署
 
@@ -278,6 +358,19 @@ solana program show <PROGRAM_ID> --url devnet
 did_program_id = "<DEPLOYED_PROGRAM_ID>"
 ```
 
+#### 步骤 6：初始化 PlatformConfig
+
+部署后必须**一次性**调用 `init_platform` 指令，将平台的 Ed25519 公钥写入链上 PDA：
+
+```bash
+# 用 Anchor CLI 或 solana-sdk 调用 init_platform
+# 参数: platform_ed25519_pubkey (32 字节)
+# 账户: [authority(signer), platform_config(PDA), system_program]
+# PDA seeds: [b"platform-config"]
+```
+
+> 未调用 `init_platform` 前，`initialize_did` 和 `update_did_with_vc` 会因 `PlatformNotInitialized` 错误而拒绝执行。
+
 ---
 
 ## 4. 链下服务部署（did-registry）
@@ -290,7 +383,7 @@ did-registry/
 ├── config.toml          # 服务配置
 └── src/
     ├── main.rs          # 入口（tokio + tracing + axum）
-    ├── server.rs        # 路由定义（11 条路由）
+    ├── server.rs        # 路由定义（14 条路由）
     ├── config.rs        # Config 结构体（含 FeesConfig）
     ├── state.rs         # RegistryState 共享状态
     ├── error.rs         # RegistryError
@@ -298,12 +391,15 @@ did-registry/
     │   ├── mod.rs
     │   ├── nonce.rs     # GET  /v1/auth/nonce
     │   ├── register.rs  # POST /v1/merchants/register (支持 mode 字段)
+    │   ├── confirm.rs   # POST /v1/merchants/confirm (SelfOnchain 确认)
     │   ├── resolve.rs   # GET  /v1/did/resolve/{did}
     │   ├── verify.rs    # GET  /v1/merchants/verify/{did}
     │   ├── status.rs    # GET  /v1/merchants/status/{did}
     │   ├── rotate_key.rs# POST /v1/merchants/rotate-key (支持 mode 字段)
     │   ├── update_vc.rs # POST /v1/merchants/update-vc (支持 mode 字段)
-    │   ├── issue_vc.rs  # POST /v1/vc/issue
+    │   ├── issue_vc.rs  # POST /v1/vc/issue (需 DID 签名)
+    │   ├── revoke_vc.rs # POST /v1/vc/revoke (仅平台 authority)
+    │   ├── proof.rs     # POST /v1/proof (公开，无需认证)
     │   └── fees.rs      # GET  /v1/fees
     ├── did/
     │   ├── resolver.rs  # DID 哈希计算、签名验证
@@ -619,6 +715,7 @@ did-registry 使用嵌入式 sled 数据库，默认路径 `./did_registry_data`
 | `leaf_index:{hex(did_hash)}` | 4 字节 LE u32 | Merkle 树叶子索引 |
 | `vc:{vc_hash_hex}` | 原始 JSON | 已签发的 VC 存储 |
 | `fee:{operation}:{timestamp_ms}:{did_hash_hex}` | JSON | Sponsored 模式费用记录 |
+| `revoked_vc:{vc_hash_hex}` | JSON | VC 吊销记录缓存 |
 
 > `did_hash` = `SHA-256(did_string)`
 
@@ -644,8 +741,11 @@ did-registry 使用嵌入式 sled 数据库，默认路径 `./did_registry_data`
 |---|---|---|
 | GET | `/health` | 健康检查 |
 | GET | `/v1/auth/nonce` | 获取防重放 nonce |
-| POST | `/v1/vc/issue` | 签发 W3C VC |
+| POST | `/v1/vc/issue` | 签发 W3C VC（需 DID 签名验证） |
+| POST | `/v1/vc/revoke` | 吊销 VC（仅平台 authority，创建链上 RevokedVc PDA） |
+| POST | `/v1/proof` | 获取 ZK proof（公开端点，无需认证） |
 | POST | `/v1/merchants/register` | 注册链上压缩 DID（支持 `mode` 字段） |
+| POST | `/v1/merchants/confirm` | SelfOnchain 注册确认（商户广播后通知平台） |
 | GET | `/v1/did/resolve/{did}` | 解析 DID Document |
 | GET | `/v1/merchants/verify/{did}` | 验证商户 DID |
 | GET | `/v1/merchants/status/{did}` | 查询商户状态 |
@@ -667,7 +767,7 @@ did-registry 使用嵌入式 sled 数据库，默认路径 `./did_registry_data`
 
 ### 7.2 POST /v1/vc/issue
 
-平台签发 W3C Verifiable Credential。
+平台签发 W3C Verifiable Credential。需要 DID 签名验证身份所有权。若商户已注册，还会校验签名者是 controller 或 original key。
 
 **请求**:
 ```json
@@ -676,7 +776,8 @@ did-registry 使用嵌入式 sled 数据库，默认路径 `./did_registry_data`
   "merchant_name": "示例商店",
   "category": "retail",
   "validity_hours": 8760,
-  "nonce": "<server-issued-nonce>"
+  "nonce": "<server-issued-nonce>",
+  "did_signature": "<base64-Ed25519-sig>"
 }
 ```
 
@@ -698,6 +799,10 @@ did-registry 使用嵌入式 sled 数据库，默认路径 `./did_registry_data`
       "name": "示例商店",
       "category": "retail"
     },
+    "credentialStatus": {
+      "type": "IgniteVcRevocationRegistry",
+      "program_id": "<DID程序ID>"
+    },
     "proof": {
       "type": "Ed25519Signature2020",
       "created": "2025-01-01T00:00:00Z",
@@ -710,7 +815,35 @@ did-registry 使用嵌入式 sled 数据库，默认路径 `./did_registry_data`
 }
 ```
 
-### 8.3 POST /v1/merchants/register
+### 8.3 POST /v1/vc/revoke
+
+吊销已签发的 VC。仅平台 authority 可调用。在链上创建 `RevokedVc` PDA 并在 sled 中缓存吊销记录。
+
+**请求**:
+```json
+{
+  "vc_hash": "<hex 32字节，被吊销的VC哈希>",
+  "credential_subject_pk": "<VC主体公钥(base58)>",
+  "reason": 1,
+  "platform_signature": "<base64签名，消息: revoke:{vc_hash}:{nonce}>",
+  "nonce": "<server-nonce>"
+}
+```
+
+- `reason`: 吊销原因码（0=unspecified, 1=violation, 2=expired 等）
+- `platform_signature`: 平台 Ed25519 签名，消息格式 `revoke:{vc_hash}:{nonce}`
+
+**响应**:
+```json
+{
+  "signature": "<solana-tx-signature>",
+  "revoked_vc_pda": "<RevokedVc PDA地址(base58)>"
+}
+```
+
+**验证方吊销检查**: 第三方使用 `find_program_address(&[b"revoked-vc", vc_hash], program_id)` 推导 PDA 地址，查询该账户是否存在。若存在则 VC 已被吊销。
+
+### 8.4 POST /v1/merchants/register
 
 将商户 DID 注册为链上压缩账户。支持双模式上链。
 
@@ -745,7 +878,7 @@ did-registry 使用嵌入式 sled 数据库，默认路径 `./did_registry_data`
 }
 ```
 
-### 8.4 GET /v1/did/resolve/{did}
+### 8.5 GET /v1/did/resolve/{did}
 
 解析 DID 为 W3C DID Document。
 
@@ -766,7 +899,7 @@ did-registry 使用嵌入式 sled 数据库，默认路径 `./did_registry_data`
 }
 ```
 
-### 8.5 POST /v1/merchants/update-vc
+### 8.6 POST /v1/merchants/update-vc
 
 更新链上压缩 DID 的 VC 哈希。支持双模式上链。
 
@@ -786,7 +919,7 @@ did-registry 使用嵌入式 sled 数据库，默认路径 `./did_registry_data`
 
 签名消息格式: `update-vc:{merchant_did}:{new_vc_hash}:{nonce}`
 
-### 8.6 POST /v1/merchants/rotate-key
+### 8.7 POST /v1/merchants/rotate-key
 
 轮换商户控制密钥。支持双模式上链。
 
@@ -806,7 +939,7 @@ did-registry 使用嵌入式 sled 数据库，默认路径 `./did_registry_data`
 
 签名消息格式: `rotate-key:{merchant_did}:{new_active_pubkey}:{nonce}`
 
-### 8.7 GET /v1/fees
+### 8.8 GET /v1/fees
 
 查询 Sponsored 模式产生的费用记录。
 
@@ -838,9 +971,95 @@ curl "http://localhost:8081/v1/fees?operation=register&since=1718438400000&limit
 }
 ```
 
+### 8.9 POST /v1/proof
+
+公开端点，获取 ZK Compression validity proof。无需认证。商户使用返回的 proof 数据在本地构建并签名交易。
+
+**请求**:
+```json
+{
+  "pubkey": "<商户Solana公钥(base58)>",
+  "operation": "register",
+  "account_hash": "<hex 32字节，update_vc/rotate_key时必填>"
+}
+```
+
+- `operation`: `"register"` | `"update_vc"` | `"rotate_key"`
+- `account_hash`: 仅 `update_vc` 和 `rotate_key` 需要提供（已有压缩账户的哈希）
+
+**响应**:
+```json
+{
+  "proof": "<base64 borsh序列化的ZK proof>",
+  "compressed_address": "<base58>",
+  "address_seed": "<base58>",
+  "address_merkle_tree": "<base58>",
+  "address_tree_info": "<base64 borsh序列化>",
+  "output_state_tree_index": 0,
+  "remaining_accounts": [
+    { "pubkey": "...", "is_signer": false, "is_writable": true }
+  ],
+  "program_id": "DID程序ID(base58)",
+  "platform_config_address": "PlatformConfig PDA地址(base58)"
+}
+```
+
+> `platform_config_address` 需作为 accounts 列表的第二个账户（readonly）传入 `initialize_did` 和 `update_did_with_vc` 指令。
+
+### 8.10 POST /v1/merchants/confirm
+
+SelfOnchain 模式专用。商户广播交易成功后，通知平台缓存商户数据，使后续操作（verify/status/update-vc/rotate-key）可用。
+
+**请求**:
+```json
+{
+  "merchant_did": "did:ignite:z...",
+  "tx_signature": "<Solana交易签名(base58)>",
+  "active_pubkey": "<商户公钥(base58)>",
+  "platform_vc_hash": "<hex 32字节>",
+  "did_signature": "<base64签名，消息: confirm:{did}:{tx_signature}:{nonce}>",
+  "nonce": "<server-nonce>"
+}
+```
+
+**响应**:
+```json
+{ "status": "confirmed" }
+```
+
+幂等：如果商户已缓存，返回 `{ "status": "already_confirmed" }`。
+
 ---
 
 ## 9. 安全注意事项
+
+### 9.0 平台签名验证（防重放 + 防冒充）
+
+链上程序通过 `PlatformConfig` PDA 存储平台 Ed25519 公钥。`initialize_did` 和 `update_did_with_vc` 在写入 vc_hash 前执行两层校验：
+
+1. **Subject Binding**: `credential_subject_pk == signer.key()` — 确保提交者就是 VC 的主体
+2. **平台签名验证**: `verify(platform_pubkey, credential_subject_pk || vc_hash, platform_signature)` — 确保平台已授权此绑定
+
+攻击者即使拦截了 `(vc_hash, platform_signature, credential_subject_pk)`，也无法用自己的 signer 提交：
+- 若用原始 `credential_subject_pk`，subject binding 检查失败（signer 不匹配）
+- 若篡改 `credential_subject_pk`，平台签名验证失败（签名消息不匹配）
+
+### 9.0b VC 吊销机制
+
+平台可通过 `POST /v1/vc/revoke` 吊销已签发的 VC。吊销流程：
+
+1. **链上**: 调用 `revoke_vc` 指令，创建 `RevokedVc` PDA（seeds: `[b"revoked-vc", vc_hash]`）
+2. **链下**: 在 sled 中缓存吊销记录（`revoked_vc:{vc_hash_hex}`）
+3. **VC 中**: 每个签发的 VC 包含 `credentialStatus` 字段，指向链上吊销注册表
+
+**验证方检查流程**:
+1. 验证 VC 的 Ed25519 签名和有效期
+2. 从 VC 中提取 `credentialStatus.program_id`（DID 程序地址）
+3. 计算 `vc_hash = SHA-256(vc_json)`
+4. 推导 PDA: `find_program_address(&[b"revoked-vc", vc_hash], program_id)`
+5. 查询该 PDA 是否存在 — 若存在，VC 已被吊销
+
+**权限控制**: 仅 `PlatformConfig.authority` 可以调用 `revoke_vc`，防止未授权吊销。
 
 ### 9.1 密钥管理
 
@@ -873,3 +1092,11 @@ curl "http://localhost:8081/v1/fees?operation=register&since=1718438400000&limit
 - 平台不记录 SelfOnchain 模式的费用（仅 Sponsored 模式记录）
 - SelfOnchain 模式下，商户自行承担交易签名和广播的全部责任
 - 建议商户客户端实现超时重试机制：若 blockhash 过期，重新请求未签名交易
+- `POST /v1/proof` 为公开端点，任何人可获取 ZK proof，但构建交易仍需商户私钥签名
+- SelfOnchain 商户广播后**必须**调用 `POST /v1/merchants/confirm` 通知平台，否则后续操作不可用
+
+### 9.6 VC 签发安全
+
+- `POST /v1/vc/issue` 要求 DID 签名（`issue_vc:{did}:{merchant_name}:{nonce}`），确保请求者持有 DID 私钥
+- 更新场景：平台会校验签名者是否为当前 controller 或 original key，防止未授权者请求新 VC
+- 首次签发（商户未注册）：仅校验 DID 签名，不要求已注册

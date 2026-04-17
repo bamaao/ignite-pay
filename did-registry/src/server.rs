@@ -17,8 +17,12 @@ pub fn build_router(state: RegistryState) -> Router {
         .route("/v1/merchants/rotate-key", post(crate::handlers::rotate_key::rotate_key))
         .route("/v1/merchants/status/{did}", get(crate::handlers::status::merchant_status))
         .route("/v1/merchants/update-vc", post(crate::handlers::update_vc::update_vc))
-        // VC issuance
+        .route("/v1/merchants/confirm", post(crate::handlers::confirm::confirm_register))
+        // VC issuance & revocation
         .route("/v1/vc/issue", post(crate::handlers::issue_vc::issue_vc))
+        .route("/v1/vc/revoke", post(crate::handlers::revoke_vc::revoke_vc))
+        // ZK Compression proof (public, no auth required)
+        .route("/v1/proof", post(crate::handlers::proof::get_proof))
         // Fee records
         .route("/v1/fees", get(crate::handlers::fees::list_fees))
         .with_state(state)

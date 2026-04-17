@@ -128,4 +128,33 @@ impl RegistryState {
     pub fn did_program_id(&self) -> Pubkey {
         self.did_service.did_program_id
     }
+
+    /// Sign (credential_subject_pk || vc_hash) with the platform Ed25519 key.
+    /// Returns 64-byte Ed25519 signature.
+    /// The credential_subject_pk is the VC subject's public key — the platform
+    /// vouches that this vc_hash belongs to this subject.
+    pub fn sign_vc_binding(&self, credential_subject_pk: &Pubkey, vc_hash: &[u8; 32]) -> [u8; 64] {
+        use ed25519_dalek::Signer;
+        let mut message = Vec::with_capacity(64);
+        message.extend_from_slice(credential_subject_pk.as_ref());
+        message.extend_from_slice(vc_hash);
+        let signature: ed25519_dalek::Signature = self.platform_signing_key.sign(&message);
+        signature.to_bytes()
+    }
+
+    /// Derive the PlatformConfig PDA address for the DID program.
+    pub fn platform_config_address(&self) -> Pubkey {
+        Pubkey::find_program_address(
+            &[b"platform-config"],
+            &self.did_service.did_program_id,
+        ).0
+    }
+
+    /// Derive the RevokedVc PDA address for a given vc_hash.
+    pub fn revoked_vc_address(&self, vc_hash: &[u8; 32]) -> Pubkey {
+        Pubkey::find_program_address(
+            &[b"revoked-vc", vc_hash],
+            &self.did_service.did_program_id,
+        ).0
+    }
 }

@@ -173,6 +173,10 @@ pub async fn register_merchant(
     // Submit to on-chain compressed account via DidService
     let did_hash = compute_did_hash(&req.merchant_did);
 
+    // Generate platform signature over (credential_subject_pk || vc_hash)
+    let platform_signature = state.sign_vc_binding(&active_pubkey, &vc_hash_bytes);
+    let platform_config_address = state.platform_config_address();
+
     match req.mode {
         OnchainMode::Sponsored => {
             match state
@@ -182,6 +186,10 @@ pub async fn register_merchant(
                     &proof_bytes,
                     &address_tree_info,
                     output_state_tree_index,
+                    vc_hash_bytes,
+                    platform_signature,
+                    &active_pubkey,
+                    &platform_config_address,
                     &remaining_accounts,
                 )
                 .await
@@ -234,6 +242,10 @@ pub async fn register_merchant(
                     &proof_bytes,
                     &address_tree_info,
                     output_state_tree_index,
+                    vc_hash_bytes,
+                    platform_signature,
+                    &active_pubkey,
+                    &platform_config_address,
                     &remaining_accounts,
                 )
                 .await

@@ -28,4 +28,12 @@ pub enum DidError {
     InvalidAddressTree,
     #[msg("Insufficient accounts for CPI")]
     InsufficientCpiAccounts,
+    #[msg("Platform config not initialized")]
+    PlatformNotInitialized,
+    #[msg("Invalid platform signature")]
+    InvalidPlatformSignature,
+    #[msg("VC already revoked")]
+    AlreadyRevoked,
+    #[msg("Unauthorized to revoke VC")]
+    UnauthorizedRevocation,
 }

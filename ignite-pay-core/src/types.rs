@@ -113,6 +113,10 @@ pub struct VerifiableCredential {
     pub expiration_date: DateTime<Utc>,
     /// The credential subject (merchant DID + claims).
     pub credential_subject: VCCredentialSubject,
+    /// Revocation status reference. Verifiers derive PDA
+    /// `seeds = [b"revoked-vc", sha256(vc_json)]` and check on-chain existence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_status: Option<CredentialStatus>,
     /// Cryptographic proof.
     pub proof: VCProof,
 }
@@ -137,6 +141,18 @@ pub struct VCProof {
     pub verification_method: String,
     /// Base64-encoded Ed25519 signature.
     pub proof_value: String,
+}
+
+/// Revocation status reference embedded in a VC.
+/// Verifiers compute vc_hash = SHA256(canonical_vc_json), derive PDA
+/// `seeds = [b"revoked-vc", vc_hash]` using program_id, and check
+/// on-chain existence. If PDA exists, the VC has been revoked.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialStatus {
+    #[serde(rename = "type")]
+    pub status_type: String,
+    /// The DID program ID where the RevokedVc PDA lives.
+    pub program_id: String,
 }
 
 #[cfg(test)]

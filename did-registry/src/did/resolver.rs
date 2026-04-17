@@ -45,7 +45,7 @@ pub fn verify_did_signature(did: &str, message: &str, signature_b64: &str) -> bo
 
 /// Extract the Ed25519 public key bytes from a did:ignite identifier.
 /// Format: did:ignite:z + Base58(0xed 0x01 + Ed25519_pubkey)
-fn extract_pubkey_from_did(did: &str) -> Option<[u8; 32]> {
+pub fn extract_pubkey_from_did(did: &str) -> Option<[u8; 32]> {
     let prefix = "did:ignite:z";
     if !did.starts_with(prefix) {
         return None;

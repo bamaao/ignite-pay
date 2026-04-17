@@ -35,6 +35,8 @@
 1. 商家向平台提交身份证明资料及自己的 `Original Public Key`。
 2. 平台审核通过后，签发结构化凭证（VC）。
 3. **关键安全点**：VC 载荷中必须包含 `subject: [Original_PK]`，将凭证与特定商户地址死锁。
+4. **DID 签名验证**：商家必须用 DID 私钥对请求签名（`issue_vc:{did}:{merchant_name}:{nonce}`），平台验证后才签发 VC，确保请求者确实持有该 DID。
+5. **更新场景**：若商家已注册，平台还会校验签名者是当前 controller 或 original key，防止未授权者请求新 VC。
 
 ### 3.3 商户自主上链 (On-chain Registration)
 1. 商家调用指令将 VC 写入其 ZK 压缩账户。
@@ -42,16 +44,29 @@
    * 验证交易发起者（Signer）是否为该商户的 `Original Public Key`。
    * 验证 VC 中的 `subject` 是否与该 `Signer` 一致。
    * 验证 VC 是否带有平台的合法数字签名。
+3. **两种上链模式**：
+   * **Sponsored（平台代付）**：平台签名并发送交易，商户无需 Solana 私钥，平台记录服务费。
+   * **SelfOnchain（商户自助）**：商户通过公开 `POST /v1/proof` 端点获取 ZK proof，本地构建交易并签名广播。或直接用 `light-sdk` + 自建 Photon RPC 完全独立。广播后需调用 `POST /v1/merchants/confirm` 通知平台。
 
 ---
 
-## 4. 安全防护方案：防止“冒充上链”
-针对“别有用心的人使用他人 VC 上链”或“商家用错账户上链”的风险，实施以下校验：
+## 4. 安全防护方案：防止"冒充上链"
+针对"别有用心的人使用他人 VC 上链"或"商家用错账户上链"的风险，实施以下校验：
 
-### A. 持有者绑定 (Holder Binding)
-合约在执行 `update_did` 指令时，必须解析 VC 明文数据：
-* **规则**：`Signer.key == VC.payload.subject`。
-* **目的**：确保 VC 是“实名制”的，攻击者无法使用偷来的 VC 绑定到自己的账户。
+### A. 链上平台签名验证（已实现）
+
+链上程序存储平台 Ed25519 公钥（`PlatformConfig` PDA，seeds: `[b"platform-config"]`），在 `initialize_did` 和 `update_did_with_vc` 指令中验证平台签名：
+
+* **签名消息**：`credential_subject_pk (32 bytes) || vc_hash (32 bytes)` = 64 字节
+* **验证逻辑**：`verify(platform_pubkey, credential_subject_pk || vc_hash, platform_signature)`
+* **目的**：确保 vc_hash 由平台授权，攻击者无法自行伪造 VC 上链
+
+### B. Subject Binding — 链上强制（已实现）
+
+链上指令额外接收 `credential_subject_pk: Pubkey` 参数，并强制校验：
+
+* **规则**：`credential_subject_pk == signer.key()`
+* **目的**：VC 主体必须是交易提交者。攻击者即使拦截了平台签名，也无法用不同账户上链——subject binding 检查会先行拒绝。
 
 ### B. 确定性地址派生 (PDA Derivation)
 利用 ZK Compression 的索引特性，将商户数据存储在基于其公钥计算出的固定位置：
@@ -94,16 +109,20 @@ pub struct MerchantCompressedDid {
 #### **第二步：平台签发 VC (信用授权)**
 平台不参与商家的 DID 文档修改，只做一件事——**签发凭证**：
 1.  商家将 DID 标识和必要的信息（如实名资料）发给平台。
-2.  平台验证通过后，用**平台的私钥**对“商家的 DID”签署一个声明。
+2.  平台验证通过后，用**平台的私钥**对"商家的 DID"签署一个声明。
 3.  平台将这个签好名的 **VC (Verifiable Credential)** 返回给商家。
+4.  **身份校验**：商家必须用 DID 私钥签名请求（`issue_vc:{did}:{name}:{nonce}`），平台验证后才签发。更新场景下还会校验签名者是 controller。
 
 #### **第三步：商家自主上链 (状态固化)**
-这是你提到的最关键的一步，商家拿着平台给的 VC，结合自己的 Solana 账户发起交易：
+这是最关键的一步，商家拿着平台给的 VC，结合自己的 Solana 账户发起交易：
 1.  **构造交易**：商家将自己的 DID 文档和平台给的 VC 哈希打包进交易参数。
 2.  **双重证明**：
     * **权限证明**：商家用自己的 Solana 账户（作为 `Signer`）支付 Gas 并证明自己是该 DID 的拥有者。
     * **背书证明**：交易中携带的 VC 包含平台的签名，证明该 DID 经过了平台认证。
 3.  **ZK 压缩存储**：Solana 合约校验两项证明无误后，将 DID 状态更新到 **ZK Compression** 状态树中。
+4.  **上链方式选择**：
+    * **Sponsored 模式**：平台用自己的 keypair 签名发送，商户无需 Solana 私钥参与。
+    * **SelfOnchain 模式**：商户通过 `POST /v1/proof` 公开端点获取 ZK proof，本地构建并签名交易。如果商户自建 Photon RPC，可完全独立不依赖平台。广播后需调用 `POST /v1/merchants/confirm` 通知平台。
 
 ---
 
@@ -119,24 +138,36 @@ pub struct MerchantCompressedDid {
 
 ### 3. 技术实现细节（针对你的 Ignite-Pay）
 
-在编写合约（Smart Contract）时，你需要确保 `update_did` 指令能够同时处理这两个来源的验证：
+在编写合约（Smart Contract）时，`update_did_with_vc` 指令的验证逻辑：
 
 ```rust
-// 伪代码逻辑
+// 实际链上逻辑（已实现）
 pub fn update_did_with_vc(
-    ctx: Context<UpdateDid>, 
-    vc_payload: VcData, 
-    platform_signature: [u8; 64]
+    ctx: Context<DidWithPlatformAccounts>,
+    proof: ValidityProof,
+    current_did: MerchantCompressedDid,
+    account_meta: CompressedAccountMeta,
+    vc_hash: [u8; 32],
+    nonce: u64,
+    platform_signature: [u8; 64],
+    credential_subject_pk: Pubkey,
 ) -> Result<()> {
-    // 1. 验证：当前交易的发起者（商家 Solana 账户）是否有权修改此 DID
-    require!(ctx.accounts.signer.key() == ctx.accounts.did_account.controller);
+    // 1. Controller 授权
+    require!(current_did.controller_pk == ctx.accounts.signer.key());
 
-    // 2. 验证：平台签发的 VC 是否真实有效
-    let platform_pubkey = PLATFORM_OFFICIAL_KEY;
-    verify_ed25519_signature(&platform_pubkey, &vc_payload, &platform_signature)?;
+    // 2. 防重放
+    require!(current_did.nonce == nonce);
 
-    // 3. 更新 ZK 压缩树状态
-    ctx.accounts.did_account.vc_hash = hash(vc_payload);
+    // 3. Subject Binding: signer 必须是 VC 主体
+    require!(credential_subject_pk == ctx.accounts.signer.key());
+
+    // 4. 平台签名验证: sign(credential_subject_pk || vc_hash)
+    let message = credential_subject_pk.as_ref() || vc_hash;
+    require!(verify_ed25519_signature(&message, &platform_signature, &platform_pubkey));
+
+    // 5. 更新 ZK 压缩树状态
+    did.vc_hash = vc_hash;
+    did.nonce += 1;
     Ok(())
 }
 ```
@@ -149,7 +180,7 @@ pub fn update_did_with_vc(
 * **平台**：作为 Issuer（签发者），通过 VC 建立了生态的信任准入门槛。
 * **AI Agent**：直接在链上读取被压缩的 DID 状态，实现毫秒级的信任决策。
 
-**目前商家上链的这笔 Gas 费，你打算让商家直接通过钱包支付，还是在你的 SDK 里集成一个“预充值”或“代付”机制来优化体验？**
+**目前商家上链支持两种模式：Sponsored（平台代付 Gas）和 SelfOnchain（商户自付 Gas），通过请求体中的 `mode` 字段选择。**
 
 ---
 
@@ -198,99 +229,96 @@ pub fn update_did_with_vc(
 
 ### 总结：你的架构应对方案
 
-为了确保 **Ignite-Pay** 的商户体系不乱，建议你在合约层实施以下检查闭环：
+为了确保 **Ignite-Pay** 的商户体系不乱，合约层已实施以下检查闭环：
 
-| 防御层级 | 检查项 | 目的 |
+| 防御层级 | 检查项 | 状态 |
 | :--- | :--- | :--- |
-| **VC 载荷校验** | `VC.subject == 商家声明的 ID` | 确保 VC 没被别人冒用。 |
-| **上链权限校验** | `Signer == VC.subject` (或有授权签名) | 确保 VC 没有被商家自己“乱挂”到别的账户。 |
-| **状态树定位** | `Tree_Index == Hash(VC.subject)` | 确保数据始终存在唯一的物理位置。 |
+| **链上签名验证** | `verify(platform_pk, subject_pk \|\| vc_hash, sig)` | 已实现 |
+| **Subject Binding** | `credential_subject_pk == signer.key()` | 已实现 |
+| **Controller 授权** | `current_did.controller_pk == signer.key()` | 已实现 |
+| **防重放 Nonce** | `current_did.nonce == nonce`，每次 +1 | 已实现 |
+| **PDA 地址隔离** | `seeds = [b"merchant-did", original_pk]` | 已实现 |
+| **VC 吊销** | `RevokedVc` PDA（seeds: `[b"revoked-vc", vc_hash]`），验证方查 PDA 存在即判定已吊销 | 已实现 |
 
 
 
 ### 为什么商家“乱换账户”对平台有风险？
 如果商家今天用 A 账户上链，明天用 B 账户上链，而你没有强制绑定，你的后台索引器（Indexer）会看到两个不同的实体。在支付结算时，AI Agent 可能会因为无法确定“哪个才是真正的收款地址”而导致交易失败。
 
-**在这种情况下，你更倾向于“严格绑定”（必须用 A 账户上链），还是“灵活授权”（允许 A 授权 B 代办上链）？**
+**当前实现采用"严格绑定"模式（`Signer == VC.subject`），但通过 Controller Key 轮换机制支持密钥更新。**
 
 ---
 ## 8. 安全
 
-**“重放攻击”或“身份冒充”漏洞**。
+### 链上防护机制（已实现）
 
-如果合约只校验“VC 是否由平台签名”，而没校验“谁有权拿着这个 VC 去上链”，那么任何人（攻击者）只要拦截到商家的 VC，就可以将其绑定到自己的 Solana 账户下。
+系统通过以下链上机制防止重放攻击和身份冒充：
 
-要堵住这个漏洞，核心在于实现 **“持有者绑定”（Holder Binding）**。以下是三种工业级的解决方案：
+#### 1. PlatformConfig PDA — 平台公钥链上存储
 
----
+```
+PlatformConfig PDA
+seeds: [b"platform-config"]
+存储: platform_ed25519_pubkey (32 bytes)
+初始化: init_platform 指令（一次性部署调用）
+```
 
-### 1. 方案一：在 VC 中“锁死”商家的 Solana 账户（最推荐）
+`initialize_did` 和 `update_did_with_vc` 读取此 PDA 中的公钥来验证平台签名。未初始化时所有 VC 绑定操作会被拒绝。
 
-平台在签发 VC 时，不能只签一个模糊的“商户合法”声明。VC 的内容必须明确包含该商家的 **公钥标识**。
+#### 2. 平台签名验证 — 防止伪造 VC
 
-* **VC 数据结构**：
-    ```json
-    {
-      "issuer": "平台公钥",
-      "subject": "商家的 DID 或 原始公钥 (Addr_A)", 
-      "claim": "该商户已认证"
-    }
-    ```
-* **合约逻辑**：
-    当有人拿着这个 VC 去更新 DID 压缩账户时，合约会执行硬性检查：
-    > **检查：** `交易发起者 (Signer)` 是否等于 `VC.subject`。
-    如果攻击者（Addr_B）拿着这个 VC 上链，合约会发现 `Addr_B != Addr_A`，直接拒绝执行。
+平台用 Ed25519 私钥对 `(credential_subject_pk || vc_hash)` 签名。链上验证：
+- 签名消息：`credential_subject_pk (32B) || vc_hash (32B)` = 64 字节
+- 验证通过才允许写入 `vc_hash`
+- 攻击者没有平台私钥，无法伪造签名
 
----
+#### 3. Subject Binding — 链上强制"实名制"
 
-### 2. 方案二：商家在指令中添加“自主意愿签名”
+链上指令额外接收 `credential_subject_pk: Pubkey`，强制校验 `credential_subject_pk == signer.key()`。
 
-如果你希望 DID 里的控制权是那个“纯粹的 Ed25519 密钥对”，那么流程需要加上商家的**二次确认**：
+攻击向量分析：
+- 拦截 `(vc_hash, platform_signature, credential_subject_pk)` 后用自己的 signer 提交 → Subject Binding 检查失败（signer ≠ credential_subject_pk）
+- 篡改 `credential_subject_pk` 为自己的公钥 → 平台签名验证失败（签名消息变了）
 
-1.  **商家生成 Proof**：商家用自己的私钥对 `(平台 VC + 当前 Slot/时间戳)` 进行签名。
-2.  **上链校验**：
-    * 合约首先验证 **平台签名**（证明 VC 真实性）。
-    * 合约接着验证 **商家签名**（证明商家确实想把这个 VC 挂在这个 DID 下）。
-* **安全点**：即使攻击者拿到了 VC，他没有商家的私钥，无法伪造“我想上链”的这份证明。
+#### 4. Controller + Nonce — 防止未授权更新
 
----
+- `update_did_with_vc` 要求 `current_did.controller_pk == signer.key()`
+- 链上 nonce 递增，每次 mutation 必须提交正确 nonce
 
-### 3. 方案三：限制 DID 账户的初始化权限
+### 仍需实现 → VC 吊销（已实现）
 
-在 **ZK Compression** 树中，你可以为每个商家预留一个唯一的“坑位”。
+平台可通过 `revoke_vc` 指令吊销已签发的 VC。链上创建 `RevokedVc` PDA（seeds: `[b"revoked-vc", vc_hash]`），验证方检查 PDA 存在即判定已吊销。仅 `PlatformConfig.authority` 有权调用。VC 中包含 `credentialStatus` 字段，指向链上吊销注册表的 `program_id`，供第三方验证方定位检查。
 
-* **地址派生**：商家的 DID 压缩账户地址必须通过 `Hash(商家的原始公钥)` 计算得出。
-* **权限校验**：合约在执行 `create_or_update_did` 时，会检查：
-    > “你正试图更新的这个位置，在数学上是否属于你的这个 Solana 账户？”
-* **安全点**：攻击者无法在自己的“坑位”里放你的 VC，因为合约会校验 VC 里的 `subject`；他也无法修改你的“坑位”，因为他没有你账户的签名权。
+#### 5. VC 吊销（revoke_vc）— 已实现
 
----
+链上 `RevokedVc` PDA 提供不可篡改的吊销记录：
 
-### 4. 针对你的 Ignite-Pay 的安全建议
+* **PDA Seeds**: `[b"revoked-vc", vc_hash]` — 每个 VC 对应唯一 PDA
+* **权限控制**: 仅 `PlatformConfig.authority` 可调用（链上强制）
+* **防重复**: `AlreadyRevoked` 错误防止重复吊销
+* **链下缓存**: did-registry 在 sled 中缓存吊销记录（`revoked_vc:{vc_hash_hex}`）
+* **credentialStatus**: 每个 VC 包含 `credentialStatus` 字段，第三方验证方通过 `program_id` 定位链上注册表
 
-为了防止你担心的“恶意抢注”，建议采取以下组合拳：
-
-1.  **双重绑定**：平台签发的 VC 必须包含商家的原始公钥。
-2.  **原子化校验**：合约指令中，必须同时传入 `(VC数据, 平台签名, 商家签名/Signer)`。
-3.  **防重放（Nonce）**：在压缩账户里记录一个 `nonce`（序号）。每次上链，`nonce` 必须加 1。这样攻击者即使拿到了商家的旧 VC，也无法再次上链覆盖新的数据。
-
-### 总结
-**“别有用心的人”之所以能得逞，是因为你的 VC 是一张“无记名支票”。**
-
-只要把 VC 变成一张**“实名支票”**（在 VC 内部写入商家的身份标识），并在合约中进行实名核对，这种冒充行为在数学上就是不可能实现的。
-
-**在你的设计中，平台签发 VC 时，是否已经包含了商家的标识符（如其最初的公钥）？**
+**验证方检查流程**:
+1. 验证 VC 的 Ed25519 签名和有效期
+2. 计算 `vc_hash = SHA-256(vc_json)`
+3. 推导 PDA: `find_program_address(&[b"revoked-vc", vc_hash], program_id)`
+4. 查询 PDA 是否存在 → 存在则已吊销
 
 ---
 
 ## 9. 开发实施路线图
 1. **合约开发 (Anchor)**：
    * 定义 `MerchantCompressedDid` 结构。
-   * 实现 `initialize_did` 指令（基于 PDA 派生）。
-   * 实现 `update_did_with_vc` 指令（包含签名验证和 Subject 匹配）。
+   * 定义 `PlatformConfig` PDA 结构（存储平台公钥）。
+   * 实现 `init_platform` 指令（一次性部署）。
+   * 实现 `initialize_did` 指令（平台签名验证 + Subject Binding）。
+   * 实现 `update_did_with_vc` 指令（平台签名验证 + Subject Binding + Nonce）。
 2. **SDK 开发 (Typescript/Rust)**：
    * 提供本地生成 Ed25519 密钥对的工具。
-   * 提供构造带有 VC 数据和签名的上链交易函数。
+   * 提供构造带有 VC 数据、平台签名和 credential_subject_pk 的上链交易函数。
 3. **平台后端**：
    * 实现符合 W3C 标准的 VC 签发逻辑。
+   * 实现 `sign_vc_binding(credential_subject_pk, vc_hash)` 方法。
+   * 实现 `platform_config_address()` PDA 地址推导。
 

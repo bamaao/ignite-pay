@@ -1,8 +1,11 @@
+pub mod confirm;
 pub mod fees;
 pub mod issue_vc;
 pub mod nonce;
+pub mod proof;
 pub mod resolve;
 pub mod register;
+pub mod revoke_vc;
 pub mod rotate_key;
 pub mod status;
 pub mod update_vc;

@@ -92,4 +92,22 @@ impl MerchantStore {
         }
         results
     }
+
+    /// Mark a VC as revoked. Stores revocation metadata keyed by vc_hash.
+    pub fn mark_vc_revoked(
+        &self,
+        vc_hash_hex: &str,
+        credential_subject_pk: &str,
+        reason: u8,
+    ) -> anyhow::Result<()> {
+        let key = format!("revoked_vc:{}", vc_hash_hex);
+        let value = serde_json::json!({
+            "vc_hash": vc_hash_hex,
+            "credential_subject_pk": credential_subject_pk,
+            "reason": reason,
+            "revoked_at": chrono::Utc::now().to_rfc3339(),
+        });
+        self.db.insert(key, serde_json::to_vec(&value)?)?;
+        Ok(())
+    }
 }

@@ -175,6 +175,11 @@ pub async fn update_vc(
     };
 
     // Submit update on-chain
+    // Generate platform signature over (credential_subject_pk || new_vc_hash)
+    let platform_signature = state.sign_vc_binding(&current_did.controller_pk, &new_vc_hash);
+    let platform_config_address = state.platform_config_address();
+    let credential_subject_pk = current_did.controller_pk;
+
     match req.mode {
         OnchainMode::Sponsored => {
             match state
@@ -186,6 +191,9 @@ pub async fn update_vc(
                     &account_meta,
                     new_vc_hash,
                     current_did.nonce,
+                    platform_signature,
+                    &credential_subject_pk,
+                    &platform_config_address,
                     &remaining_accounts,
                 )
                 .await
@@ -234,6 +242,9 @@ pub async fn update_vc(
                     &account_meta,
                     new_vc_hash,
                     current_did.nonce,
+                    platform_signature,
+                    &credential_subject_pk,
+                    &platform_config_address,
                     &remaining_accounts,
                 )
                 .await
