@@ -11,6 +11,7 @@ use light_client::indexer::Indexer;
 use crate::did::resolver::compute_did_hash;
 use crate::handlers::nonce::verify_and_consume_nonce;
 use crate::state::RegistryState;
+use ignite_pay_solana::types::OnchainMode;
 use light_sdk::instruction::account_meta::CompressedAccountMeta;
 
 /// Request body for updating the platform VC hash.
@@ -26,6 +27,9 @@ pub struct UpdateVcRequest {
     /// Borsh-serialized CompressedAccountMeta for the current account.
     #[serde(default)]
     pub account_meta_b64: Option<String>,
+    /// On-chain submission mode. Defaults to `sponsored` (backward compatible).
+    #[serde(default)]
+    pub mode: OnchainMode,
 }
 
 /// `POST /v1/merchants/update-vc` — Update the platform VC hash for a merchant.
@@ -171,34 +175,99 @@ pub async fn update_vc(
     };
 
     // Submit update on-chain
-    match state
-        .did_service
-        .update_did_with_vc(
-            &state.payer,
-            &proof_bytes,
-            &current_did,
-            &account_meta,
-            new_vc_hash,
-            current_did.nonce,
-            &remaining_accounts,
-        )
-        .await
-    {
-        Ok(sig) => {
-            state.cache_merchant(&did_hash, &updated_did);
-            info!("VC updated for {}: sig={}", req.merchant_did, sig);
+    match req.mode {
+        OnchainMode::Sponsored => {
+            match state
+                .did_service
+                .update_did_with_vc(
+                    &state.payer,
+                    &proof_bytes,
+                    &current_did,
+                    &account_meta,
+                    new_vc_hash,
+                    current_did.nonce,
+                    &remaining_accounts,
+                )
+                .await
+            {
+                Ok(sig) => {
+                    state.cache_merchant(&did_hash, &updated_did);
+
+                    // Record fee
+                    let store = crate::storage::sled_store::MerchantStore::new((*state.db).clone());
+                    if let Err(e) = store.record_fee(
+                        &did_hash,
+                        "update_vc",
+                        state.config.fees.update_vc_fee_lamports,
+                        "sponsored",
+                        &req.merchant_did,
+                    ) {
+                        tracing::warn!("Failed to record fee: {}", e);
+                    }
+
+                    info!("VC updated for {}: sig={}", req.merchant_did, sig);
+                    (StatusCode::OK, axum::Json(serde_json::json!({
+                        "signature": sig.to_string(),
+                    })))
+                    .into_response()
+                }
+                Err(e) => {
+                    tracing::error!("Failed to update VC on-chain: {}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(serde_json::json!({ "error": format!("On-chain error: {}", e) })),
+                    )
+                        .into_response()
+                }
+            }
+        }
+        OnchainMode::SelfOnchain => {
+            // Use the current controller as signer
+            let signer_pubkey = current_did.controller_pk;
+
+            let tx = match state
+                .did_service
+                .prepare_update_did_with_vc(
+                    &signer_pubkey,
+                    &proof_bytes,
+                    &current_did,
+                    &account_meta,
+                    new_vc_hash,
+                    current_did.nonce,
+                    &remaining_accounts,
+                )
+                .await
+            {
+                Ok(tx) => tx,
+                Err(e) => {
+                    tracing::error!("Failed to prepare unsigned transaction: {}", e);
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(serde_json::json!({ "error": format!("Prepare error: {}", e) })),
+                    )
+                        .into_response();
+                }
+            };
+
+            let tx_bytes = match bincode::serialize(&tx) {
+                Ok(b) => b,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(serde_json::json!({ "error": format!("Serialization error: {}", e) })),
+                    )
+                        .into_response();
+                }
+            };
+
+            let tx_b64 = base64::engine::general_purpose::STANDARD.encode(&tx_bytes);
+
+            info!("Prepared unsigned update-vc transaction for merchant {}", req.merchant_did);
             (StatusCode::OK, axum::Json(serde_json::json!({
-                "signature": sig.to_string(),
+                "transaction": tx_b64,
+                "message": "sign and broadcast within 90 seconds; blockhash expires",
             })))
             .into_response()
-        }
-        Err(e) => {
-            tracing::error!("Failed to update VC on-chain: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(serde_json::json!({ "error": format!("On-chain error: {}", e) })),
-            )
-                .into_response()
         }
     }
 }

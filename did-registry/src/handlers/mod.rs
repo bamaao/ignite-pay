@@ -1,3 +1,4 @@
+pub mod fees;
 pub mod issue_vc;
 pub mod nonce;
 pub mod resolve;

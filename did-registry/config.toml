@@ -14,3 +14,8 @@ photon_url = ""
 jwt_secret = "did-registry-secret"
 platform_public_key = ""
 platform_signing_key_path = ""
+
+[fees]
+register_fee_lamports = 5000
+update_vc_fee_lamports = 2000
+rotate_key_fee_lamports = 2000

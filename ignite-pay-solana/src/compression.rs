@@ -10,6 +10,7 @@ use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{Keypair, Signature};
 use solana_sdk::signer::Signer;
+use solana_sdk::transaction::Transaction;
 
 /// Compute the Anchor instruction discriminator: sha256("global:<name>")[..8]
 fn anchor_sighash(name: &str) -> [u8; 8] {
@@ -82,14 +83,100 @@ impl DidService {
         accounts
     }
 
-    /// Initialize a new compressed merchant DID.
-    /// The payer (original_signer) becomes both original_pk and initial controller_pk.
-    ///
-    /// The `proof_bytes` is a borsh-serialized `light_sdk::borsh_compat::ValidityProof`.
-    /// The `address_tree_info` and `output_state_tree_index` specify where the
-    /// compressed account will be stored.
-    /// The `remaining_accounts` must include the Light System Program accounts
-    /// and tree accounts as required by the CPI.
+    // ── Private instruction builders ──────────────────────────────────
+
+    /// Build the `initialize_did` instruction.
+    fn build_initialize_did_ix(
+        &self,
+        signer_pubkey: &Pubkey,
+        proof_bytes: &[u8],
+        address_tree_info: &PackedAddressTreeInfo,
+        output_state_tree_index: u8,
+        remaining_accounts: &[AccountMeta],
+    ) -> Result<Instruction> {
+        let mut data = Vec::with_capacity(8 + proof_bytes.len() + 8);
+        data.extend_from_slice(&anchor_sighash("initialize_did"));
+        data.extend_from_slice(proof_bytes);
+        data.extend_from_slice(&borsh::to_vec(address_tree_info).map_err(SolanaError::BorshError)?);
+        data.extend_from_slice(&output_state_tree_index.to_le_bytes());
+
+        let mut accounts = vec![
+            AccountMeta::new(*signer_pubkey, true),
+        ];
+        accounts.extend_from_slice(remaining_accounts);
+
+        Ok(Instruction {
+            program_id: self.did_program_id,
+            accounts,
+            data,
+        })
+    }
+
+    /// Build the `update_did_with_vc` instruction.
+    fn build_update_did_with_vc_ix(
+        &self,
+        signer_pubkey: &Pubkey,
+        proof_bytes: &[u8],
+        current_did: &MerchantDidAccount,
+        account_meta: &light_sdk::instruction::account_meta::CompressedAccountMeta,
+        vc_hash: [u8; 32],
+        nonce: u64,
+        remaining_accounts: &[AccountMeta],
+    ) -> Result<Instruction> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&anchor_sighash("update_did_with_vc"));
+        data.extend_from_slice(proof_bytes);
+        data.extend_from_slice(&borsh::to_vec(current_did).map_err(SolanaError::BorshError)?);
+        data.extend_from_slice(&borsh::to_vec(account_meta).map_err(SolanaError::BorshError)?);
+        data.extend_from_slice(&vc_hash);
+        data.extend_from_slice(&nonce.to_le_bytes());
+
+        let mut accounts = vec![
+            AccountMeta::new(*signer_pubkey, true),
+        ];
+        accounts.extend_from_slice(remaining_accounts);
+
+        Ok(Instruction {
+            program_id: self.did_program_id,
+            accounts,
+            data,
+        })
+    }
+
+    /// Build the `set_recovery_key` instruction.
+    fn build_set_recovery_key_ix(
+        &self,
+        signer_pubkey: &Pubkey,
+        proof_bytes: &[u8],
+        current_did: &MerchantDidAccount,
+        account_meta: &light_sdk::instruction::account_meta::CompressedAccountMeta,
+        recovery_pk: &Pubkey,
+        nonce: u64,
+        remaining_accounts: &[AccountMeta],
+    ) -> Result<Instruction> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&anchor_sighash("set_recovery_key"));
+        data.extend_from_slice(proof_bytes);
+        data.extend_from_slice(&borsh::to_vec(current_did).map_err(SolanaError::BorshError)?);
+        data.extend_from_slice(&borsh::to_vec(account_meta).map_err(SolanaError::BorshError)?);
+        data.extend_from_slice(recovery_pk.as_ref());
+        data.extend_from_slice(&nonce.to_le_bytes());
+
+        let mut accounts = vec![
+            AccountMeta::new(*signer_pubkey, true),
+        ];
+        accounts.extend_from_slice(remaining_accounts);
+
+        Ok(Instruction {
+            program_id: self.did_program_id,
+            accounts,
+            data,
+        })
+    }
+
+    // ── Sponsored (sign + send) ───────────────────────────────────────
+
+    /// Initialize a new compressed merchant DID (platform signs and sends).
     pub async fn initialize_did(
         &self,
         payer: &Keypair,
@@ -103,25 +190,15 @@ impl DidService {
             .get_latest_blockhash()
             .map_err(|e| SolanaError::RpcError(e.to_string()))?;
 
-        // Anchor discriminator + borsh(proof, address_tree_info, output_state_tree_index)
-        let mut data = Vec::with_capacity(8 + proof_bytes.len() + 8);
-        data.extend_from_slice(&anchor_sighash("initialize_did"));
-        data.extend_from_slice(proof_bytes);
-        data.extend_from_slice(&borsh::to_vec(address_tree_info).map_err(SolanaError::BorshError)?);
-        data.extend_from_slice(&output_state_tree_index.to_le_bytes());
+        let ix = self.build_initialize_did_ix(
+            &payer.pubkey(),
+            proof_bytes,
+            address_tree_info,
+            output_state_tree_index,
+            remaining_accounts,
+        )?;
 
-        let mut accounts = vec![
-            AccountMeta::new(payer.pubkey(), true),
-        ];
-        accounts.extend_from_slice(remaining_accounts);
-
-        let ix = Instruction {
-            program_id: self.did_program_id,
-            accounts,
-            data,
-        };
-
-        let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
+        let tx = Transaction::new_signed_with_payer(
             &[ix],
             Some(&payer.pubkey()),
             &[payer],
@@ -136,12 +213,7 @@ impl DidService {
         Ok(sig)
     }
 
-    /// Update the VC hash on an existing compressed DID.
-    /// Caller must be the current controller.
-    ///
-    /// The `proof_bytes` is a borsh-serialized `light_sdk::borsh_compat::ValidityProof`.
-    /// The `current_did` is the deserialized compressed account data.
-    /// The `account_meta` contains the merkle tree context for the existing account.
+    /// Update the VC hash on an existing compressed DID (platform signs and sends).
     pub async fn update_did_with_vc(
         &self,
         controller: &Keypair,
@@ -157,27 +229,17 @@ impl DidService {
             .get_latest_blockhash()
             .map_err(|e| SolanaError::RpcError(e.to_string()))?;
 
-        // Anchor discriminator + borsh(proof, current_did, account_meta, vc_hash, nonce)
-        let mut data = Vec::new();
-        data.extend_from_slice(&anchor_sighash("update_did_with_vc"));
-        data.extend_from_slice(proof_bytes);
-        data.extend_from_slice(&borsh::to_vec(current_did).map_err(SolanaError::BorshError)?);
-        data.extend_from_slice(&borsh::to_vec(account_meta).map_err(SolanaError::BorshError)?);
-        data.extend_from_slice(&vc_hash);
-        data.extend_from_slice(&nonce.to_le_bytes());
+        let ix = self.build_update_did_with_vc_ix(
+            &controller.pubkey(),
+            proof_bytes,
+            current_did,
+            account_meta,
+            vc_hash,
+            nonce,
+            remaining_accounts,
+        )?;
 
-        let mut accounts = vec![
-            AccountMeta::new(controller.pubkey(), true),
-        ];
-        accounts.extend_from_slice(remaining_accounts);
-
-        let ix = Instruction {
-            program_id: self.did_program_id,
-            accounts,
-            data,
-        };
-
-        let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
+        let tx = Transaction::new_signed_with_payer(
             &[ix],
             Some(&controller.pubkey()),
             &[controller],
@@ -192,8 +254,7 @@ impl DidService {
         Ok(sig)
     }
 
-    /// Set or change the recovery public key.
-    /// Caller must be the current controller.
+    /// Set or change the recovery public key (platform signs and sends).
     pub async fn set_recovery_key(
         &self,
         controller: &Keypair,
@@ -209,26 +270,17 @@ impl DidService {
             .get_latest_blockhash()
             .map_err(|e| SolanaError::RpcError(e.to_string()))?;
 
-        let mut data = Vec::new();
-        data.extend_from_slice(&anchor_sighash("set_recovery_key"));
-        data.extend_from_slice(proof_bytes);
-        data.extend_from_slice(&borsh::to_vec(current_did).map_err(SolanaError::BorshError)?);
-        data.extend_from_slice(&borsh::to_vec(account_meta).map_err(SolanaError::BorshError)?);
-        data.extend_from_slice(recovery_pk.as_ref());
-        data.extend_from_slice(&nonce.to_le_bytes());
+        let ix = self.build_set_recovery_key_ix(
+            &controller.pubkey(),
+            proof_bytes,
+            current_did,
+            account_meta,
+            recovery_pk,
+            nonce,
+            remaining_accounts,
+        )?;
 
-        let mut accounts = vec![
-            AccountMeta::new(controller.pubkey(), true),
-        ];
-        accounts.extend_from_slice(remaining_accounts);
-
-        let ix = Instruction {
-            program_id: self.did_program_id,
-            accounts,
-            data,
-        };
-
-        let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
+        let tx = Transaction::new_signed_with_payer(
             &[ix],
             Some(&controller.pubkey()),
             &[controller],
@@ -279,7 +331,7 @@ impl DidService {
             data,
         };
 
-        let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
+        let tx = Transaction::new_signed_with_payer(
             &[ix],
             Some(&recovery_signer.pubkey()),
             &[recovery_signer],
@@ -292,6 +344,106 @@ impl DidService {
             .map_err(|e| SolanaError::TransactionFailed(e.to_string()))?;
 
         Ok(sig)
+    }
+
+    // ── SelfOnchain (build unsigned transaction) ──────────────────────
+
+    /// Build an unsigned `initialize_did` transaction for the merchant to sign and broadcast.
+    pub async fn prepare_initialize_did(
+        &self,
+        signer_pubkey: &Pubkey,
+        proof_bytes: &[u8],
+        address_tree_info: &PackedAddressTreeInfo,
+        output_state_tree_index: u8,
+        remaining_accounts: &[AccountMeta],
+    ) -> Result<Transaction> {
+        let recent_blockhash = self
+            .rpc_client
+            .get_latest_blockhash()
+            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
+
+        let ix = self.build_initialize_did_ix(
+            signer_pubkey,
+            proof_bytes,
+            address_tree_info,
+            output_state_tree_index,
+            remaining_accounts,
+        )?;
+
+        let message = solana_sdk::message::Message::new_with_blockhash(
+            &[ix],
+            Some(signer_pubkey),
+            &recent_blockhash,
+        );
+        Ok(Transaction::new_unsigned(message))
+    }
+
+    /// Build an unsigned `update_did_with_vc` transaction for the merchant to sign and broadcast.
+    pub async fn prepare_update_did_with_vc(
+        &self,
+        signer_pubkey: &Pubkey,
+        proof_bytes: &[u8],
+        current_did: &MerchantDidAccount,
+        account_meta: &light_sdk::instruction::account_meta::CompressedAccountMeta,
+        vc_hash: [u8; 32],
+        nonce: u64,
+        remaining_accounts: &[AccountMeta],
+    ) -> Result<Transaction> {
+        let recent_blockhash = self
+            .rpc_client
+            .get_latest_blockhash()
+            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
+
+        let ix = self.build_update_did_with_vc_ix(
+            signer_pubkey,
+            proof_bytes,
+            current_did,
+            account_meta,
+            vc_hash,
+            nonce,
+            remaining_accounts,
+        )?;
+
+        let message = solana_sdk::message::Message::new_with_blockhash(
+            &[ix],
+            Some(signer_pubkey),
+            &recent_blockhash,
+        );
+        Ok(Transaction::new_unsigned(message))
+    }
+
+    /// Build an unsigned `set_recovery_key` transaction for the merchant to sign and broadcast.
+    pub async fn prepare_set_recovery_key(
+        &self,
+        signer_pubkey: &Pubkey,
+        proof_bytes: &[u8],
+        current_did: &MerchantDidAccount,
+        account_meta: &light_sdk::instruction::account_meta::CompressedAccountMeta,
+        recovery_pk: &Pubkey,
+        nonce: u64,
+        remaining_accounts: &[AccountMeta],
+    ) -> Result<Transaction> {
+        let recent_blockhash = self
+            .rpc_client
+            .get_latest_blockhash()
+            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
+
+        let ix = self.build_set_recovery_key_ix(
+            signer_pubkey,
+            proof_bytes,
+            current_did,
+            account_meta,
+            recovery_pk,
+            nonce,
+            remaining_accounts,
+        )?;
+
+        let message = solana_sdk::message::Message::new_with_blockhash(
+            &[ix],
+            Some(signer_pubkey),
+            &recent_blockhash,
+        );
+        Ok(Transaction::new_unsigned(message))
     }
 }
 

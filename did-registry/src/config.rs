@@ -6,6 +6,7 @@ pub struct Config {
     pub solana: SolanaConfig,
     pub light: LightConfig,
     pub auth: AuthConfig,
+    pub fees: FeesConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -35,6 +36,13 @@ pub struct AuthConfig {
     /// Path to a file containing 32 raw bytes of an Ed25519 private key
     /// used for signing VCs. If empty, an ephemeral key is generated (dev only).
     pub platform_signing_key_path: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct FeesConfig {
+    pub register_fee_lamports: u64,
+    pub update_vc_fee_lamports: u64,
+    pub rotate_key_fee_lamports: u64,
 }
 
 impl Config {

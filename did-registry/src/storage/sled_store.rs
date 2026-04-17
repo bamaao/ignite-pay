@@ -53,4 +53,43 @@ impl MerchantStore {
         let key = format!("vc:{}", vc_hash_hex);
         self.db.get(key).ok().flatten().map(|ivec| ivec.to_vec())
     }
+
+    /// Record a fee entry for an on-chain operation.
+    /// Key format: `fee:{operation}:{timestamp_ms}:{did_hash_hex}`
+    pub fn record_fee(
+        &self,
+        did_hash: &[u8],
+        operation: &str,
+        fee_lamports: u64,
+        mode: &str,
+        merchant_did: &str,
+    ) -> anyhow::Result<()> {
+        let timestamp_ms = chrono::Utc::now().timestamp_millis();
+        let key = format!(
+            "fee:{}:{}:{}",
+            operation,
+            timestamp_ms,
+            hex::encode(did_hash)
+        );
+        let value = serde_json::json!({
+            "merchant_did": merchant_did,
+            "operation": operation,
+            "fee_lamports": fee_lamports,
+            "timestamp": timestamp_ms,
+            "mode": mode,
+        });
+        self.db.insert(key, serde_json::to_vec(&value)?)?;
+        Ok(())
+    }
+
+    /// List fee records matching a prefix, up to `limit` entries.
+    pub fn list_fees(&self, prefix: &str, limit: usize) -> Vec<serde_json::Value> {
+        let mut results = Vec::new();
+        for item in self.db.scan_prefix(prefix).flatten().take(limit) {
+            if let Ok(val) = serde_json::from_slice(&item.1) {
+                results.push(val);
+            }
+        }
+        results
+    }
 }

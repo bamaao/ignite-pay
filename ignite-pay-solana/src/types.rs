@@ -48,6 +48,17 @@ pub enum PayMode {
     Sponsored,
 }
 
+/// On-chain submission mode for DID operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OnchainMode {
+    /// Platform signs and sends the transaction, recording a service fee.
+    #[default]
+    Sponsored,
+    /// Platform builds an unsigned transaction returned to the merchant for self-signing.
+    SelfOnchain,
+}
+
 /// Result of a successful on-chain payment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentResult {

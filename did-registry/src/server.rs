@@ -19,6 +19,8 @@ pub fn build_router(state: RegistryState) -> Router {
         .route("/v1/merchants/update-vc", post(crate::handlers::update_vc::update_vc))
         // VC issuance
         .route("/v1/vc/issue", post(crate::handlers::issue_vc::issue_vc))
+        // Fee records
+        .route("/v1/fees", get(crate::handlers::fees::list_fees))
         .with_state(state)
 }
 
