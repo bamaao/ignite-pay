@@ -1,25 +1,24 @@
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 
-/// A leaf node in the Concurrent Merkle Tree storing merchant identity.
+/// Compressed merchant DID account data (mirrors the on-chain struct).
+/// This data lives as a compressed account hash in a Light Protocol state tree,
+/// not as a traditional on-chain account. No discriminator or rent needed.
 #[derive(Debug, Clone, Serialize, Deserialize, borsh::BorshSerialize, borsh::BorshDeserialize)]
-pub struct MerchantLeaf {
-    /// SHA-256 hash of the merchant DID public key (from did:ignite string)
-    pub merchant_did_hash: [u8; 32],
-    /// Current active receiving public key (Solana payment address)
-    pub active_pubkey: Pubkey,
-    /// SHA-256 hash of the platform Verifiable Credential
-    pub platform_vc_hash: [u8; 32],
-    /// Merchant status: 0 = active, 1 = suspended, 2 = revoked
-    pub status: u8,
-    /// Slot when this leaf was last updated
-    pub slot_updated: u64,
+pub struct MerchantDidAccount {
+    /// Initial anchor public key (immutable).
+    pub original_pk: Pubkey,
+    /// Current controller public key.
+    pub controller_pk: Pubkey,
+    /// Recovery public key.
+    pub recovery_pk: Pubkey,
+    /// Platform verifiable credential hash.
+    pub vc_hash: [u8; 32],
+    /// Last update timestamp (Unix seconds).
+    pub last_updated: i64,
+    /// Anti-replay counter.
+    pub nonce: u64,
 }
-
-/// Merchant status constants.
-pub const MERCHANT_STATUS_ACTIVE: u8 = 0;
-pub const MERCHANT_STATUS_SUSPENDED: u8 = 1;
-pub const MERCHANT_STATUS_REVOKED: u8 = 2;
 
 /// Session token data persisted locally.
 #[derive(Debug, Clone, Serialize, Deserialize, borsh::BorshSerialize, borsh::BorshDeserialize)]
@@ -58,30 +57,6 @@ pub struct PaymentResult {
     pub slot: u64,
     /// Block time (unix timestamp) if available
     pub block_time: Option<i64>,
-}
-
-/// Merkle proof for a compressed leaf.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MerkleProof {
-    /// Index of the leaf in the tree
-    pub leaf_index: u32,
-    /// Sibling hashes from leaf to root
-    pub proof: Vec<[u8; 32]>,
-    /// Current tree root hash
-    pub root: [u8; 32],
-    /// Hash of the leaf
-    pub leaf_hash: [u8; 32],
-}
-
-/// Result of merchant on-chain verification.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MerchantVerification {
-    /// Whether the merchant is verified on-chain
-    pub verified: bool,
-    /// The merchant leaf data
-    pub leaf: MerchantLeaf,
-    /// The Merkle proof
-    pub proof: MerkleProof,
 }
 
 /// Parameters for SPL Token payments.

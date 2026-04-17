@@ -5,10 +5,13 @@ use base64::Engine;
 use serde::Deserialize;
 use tracing::info;
 
+use light_client::rpc::Rpc;
+use light_client::indexer::Indexer;
+
 use crate::did::resolver::compute_did_hash;
-use crate::error::RegistryError;
 use crate::handlers::nonce::verify_and_consume_nonce;
 use crate::state::RegistryState;
+use light_sdk::instruction::account_meta::CompressedAccountMeta;
 
 /// Request body for updating the platform VC hash.
 #[derive(Debug, Deserialize)]
@@ -20,6 +23,9 @@ pub struct UpdateVcRequest {
     pub platform_signature: String,
     /// Server-issued nonce to prevent replay. Obtain from GET /v1/auth/nonce.
     pub nonce: String,
+    /// Borsh-serialized CompressedAccountMeta for the current account.
+    #[serde(default)]
+    pub account_meta_b64: Option<String>,
 }
 
 /// `POST /v1/merchants/update-vc` — Update the platform VC hash for a merchant.
@@ -70,74 +76,119 @@ pub async fn update_vc(
 
     let did_hash = compute_did_hash(&req.merchant_did);
 
-    // Look up current leaf
-    let (leaf_index, old_leaf) = match state.get_cached_merchant(&did_hash) {
-        Some(data) => data,
+    // Look up current DID account from cache
+    let current_did = match state.get_cached_merchant(&did_hash) {
+        Some(did) => did,
         None => {
-            match state
-                .indexer
-                .find_merchant_leaf(&state.compression.tree_address, &req.merchant_did)
-                .await
-            {
-                Ok(Some(data)) => data,
-                Ok(None) => {
-                    return (
-                        StatusCode::NOT_FOUND,
-                        axum::Json(serde_json::json!({ "error": "Merchant not found" })),
-                    )
-                        .into_response();
-                }
-                Err(e) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        axum::Json(serde_json::json!({ "error": format!("Indexer error: {}", e) })),
-                    )
-                        .into_response();
-                }
-            }
-        }
-    };
-
-    // Get Merkle proof
-    let proof = match state
-        .indexer
-        .get_merkle_proof(&state.compression.tree_address, leaf_index)
-        .await
-    {
-        Ok(p) => p.proof,
-        Err(e) => {
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(serde_json::json!({ "error": format!("Failed to get proof: {}", e) })),
+                StatusCode::NOT_FOUND,
+                axum::Json(serde_json::json!({ "error": "Merchant not found" })),
             )
                 .into_response();
         }
     };
 
-    // Build new leaf
-    let slot = state
-        .compression
-        .rpc_client
-        .get_slot()
-        .map_err(|e| RegistryError::OnChain(e.to_string()))
-        .unwrap_or(old_leaf.slot_updated + 1);
+    // Parse account_meta from base64 if provided
+    let account_meta = match req.account_meta_b64 {
+        Some(ref b64) => {
+            let bytes = match base64::engine::general_purpose::STANDARD_NO_PAD.decode(b64) {
+                Ok(b) => b,
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        axum::Json(serde_json::json!({ "error": format!("Invalid account_meta: {}", e) })),
+                    )
+                        .into_response();
+                }
+            };
+            match <CompressedAccountMeta as borsh::BorshDeserialize>::deserialize(&mut bytes.as_slice()) {
+                Ok(meta) => meta,
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        axum::Json(serde_json::json!({ "error": format!("Failed to deserialize account_meta: {}", e) })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+        None => CompressedAccountMeta::default(),
+    };
 
-    let mut new_leaf = old_leaf.clone();
-    new_leaf.platform_vc_hash = new_vc_hash;
-    new_leaf.slot_updated = slot;
+    // Build updated DID account
+    let mut updated_did = current_did.clone();
+    updated_did.vc_hash = new_vc_hash;
+    updated_did.last_updated = chrono::Utc::now().timestamp();
+    updated_did.nonce = current_did.nonce + 1;
+
+    // Get validity proof from Light RPC
+    let light_rpc = state.light_rpc.lock().await;
+    let indexer = match light_rpc.indexer() {
+        Ok(i) => i,
+        Err(e) => {
+            tracing::error!("Indexer error: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": format!("Indexer error: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+    let proof_result = match indexer
+        .get_validity_proof(
+            vec![light_client::indexer::Hash::from(current_did.vc_hash)],
+            vec![],
+            None,
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Failed to get validity proof: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": format!("Proof error: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    let proof_context = proof_result.value;
+    let mut packed_accounts = light_account::PackedAccounts::default();
+    let _packed_tree_infos = proof_context.pack_tree_infos(&mut packed_accounts);
+    let remaining_accounts: Vec<solana_sdk::instruction::AccountMeta> =
+        packed_accounts.to_account_metas().0;
+
+    let proof_bytes = match borsh::to_vec(&proof_context.proof) {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": format!("Serialization error: {}", e) })),
+            )
+                .into_response();
+        }
+    };
 
     // Submit update on-chain
     match state
-        .compression
-        .update_merchant(&state.payer, &old_leaf, &new_leaf, leaf_index, &proof)
+        .did_service
+        .update_did_with_vc(
+            &state.payer,
+            &proof_bytes,
+            &current_did,
+            &account_meta,
+            new_vc_hash,
+            current_did.nonce,
+            &remaining_accounts,
+        )
         .await
     {
         Ok(sig) => {
-            state.cache_merchant(&did_hash, leaf_index, &new_leaf);
+            state.cache_merchant(&did_hash, &updated_did);
             info!("VC updated for {}: sig={}", req.merchant_did, sig);
             (StatusCode::OK, axum::Json(serde_json::json!({
                 "signature": sig.to_string(),
-                "slot": slot,
             })))
             .into_response()
         }

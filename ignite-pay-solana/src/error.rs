@@ -26,13 +26,10 @@ pub enum SolanaError {
     #[error("Compression error: {0}")]
     CompressionError(String),
 
-    #[error("Merkle proof verification failed")]
-    ProofVerificationFailed,
+    #[error("Proof error: {0}")]
+    ProofError(String),
 
-    #[error("Indexer error: {0}")]
-    IndexerError(String),
-
-    #[error("Merchant not found on chain: {0}")]
+    #[error("Merchant not found: {0}")]
     MerchantNotFound(String),
 
     #[error("Serialization error: {0}")]

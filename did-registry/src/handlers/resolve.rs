@@ -26,16 +26,20 @@ pub async fn resolve_did(
 
     // Enrich with on-chain data if available
     let did_hash = compute_did_hash(&did);
-    if let Some((_leaf_index, leaf)) = state.get_cached_merchant(&did_hash) {
+    if let Some(cached_did) = state.get_cached_merchant(&did_hash) {
         let mut doc = did_doc;
         if let Some(obj) = doc.as_object_mut() {
             obj.insert(
-                "active_pubkey".to_string(),
-                serde_json::Value::String(leaf.active_pubkey.to_string()),
+                "controller_pubkey".to_string(),
+                serde_json::Value::String(cached_did.controller_pk.to_string()),
             );
             obj.insert(
-                "merchant_status".to_string(),
-                serde_json::Value::Number(leaf.status.into()),
+                "original_pubkey".to_string(),
+                serde_json::Value::String(cached_did.original_pk.to_string()),
+            );
+            obj.insert(
+                "last_updated".to_string(),
+                serde_json::Value::Number(cached_did.last_updated.into()),
             );
         }
         return (StatusCode::OK, axum::Json(doc)).into_response();

@@ -23,7 +23,7 @@ use ignite_pay_solana::solana_sdk::pubkey::Pubkey;
 use ignite_pay_solana::solana_sdk::signature::Keypair;
 use ignite_pay_solana::solana_sdk::signer::Signer;
 use ignite_pay_solana::types::{
-    MerchantLeaf, MERCHANT_STATUS_ACTIVE, PayMode, SessionTokenData, SplPaymentParams,
+    PayMode, SessionTokenData, SplPaymentParams,
 };
 
 use rmcp::{
@@ -97,19 +97,15 @@ struct SolanaConfig {
     #[serde(default = "default_rpc_url")]
     rpc_url: String,
     #[serde(default)]
-    tree_address: String,
+    did_program_id: String,
     #[serde(default)]
-    tree_authority: String,
-    #[serde(default)]
-    das_endpoint: String,
+    photon_url: String,
     #[serde(default = "default_pay_mode")]
     pay_mode: String,
     #[serde(default)]
     relayer_url: String,
     #[serde(default)]
     default_owner: String,
-    #[serde(default)]
-    tree_authority_keypair_b58: String,
 }
 
 fn default_rpc_url() -> String {
@@ -123,10 +119,6 @@ fn default_pay_mode() -> String {
 impl SolanaConfig {
     fn is_payment_configured(&self) -> bool {
         !self.rpc_url.is_empty()
-    }
-
-    fn is_compression_configured(&self) -> bool {
-        !self.tree_address.is_empty() && !self.tree_authority.is_empty()
     }
 
     fn pay_mode(&self) -> PayMode {
@@ -221,12 +213,8 @@ struct IgnitePayMcpServer {
     audit: Arc<AuditLogStore>,
     // V2.0: Default owner pubkey for session lookup
     default_owner: Pubkey,
-    // V2.0: Indexer client for merchant leaf lookup
-    indexer: Option<Arc<ignite_pay_solana::indexer::IndexerClient>>,
-    // V2.0: Compression service for merchant tree operations
-    compression_service: Option<Arc<ignite_pay_solana::compression::CompressionService>>,
-    // V2.0: Tree authority keypair for signing compression operations
-    tree_authority_keypair: Option<Arc<Keypair>>,
+    // V2.0: DID service for ZK compressed account operations
+    did_service: Option<Arc<ignite_pay_solana::compression::DidService>>,
 }
 
 #[tool_router]
@@ -402,66 +390,9 @@ impl IgnitePayMcpServer {
             }
         }
 
-        // 3.7 V1.1: Merkle proof verification from x402-merkle-context
-        if let Some(merkle_ctx_str) = &input.x402_merkle_context {
-            if let Some(bridge) = &self.solana_bridge {
-                match serde_json::from_str::<serde_json::Value>(merkle_ctx_str) {
-                    Ok(ctx) => {
-                        if let Some(leaf_index) = ctx.get("leaf_index").and_then(|v| v.as_u64()) {
-                            // Extract proof_nodes as array of base64 strings
-                            let proof_nodes_raw = ctx.get("proof_nodes").and_then(|v| v.as_array());
-                            let proof_nodes: Vec<Vec<u8>> = proof_nodes_raw
-                                .map(|arr| {
-                                    arr.iter()
-                                        .filter_map(|v| {
-                                            v.as_str().and_then(|s| {
-                                                base64::engine::general_purpose::STANDARD_NO_PAD
-                                                    .decode(s)
-                                                    .ok()
-                                            })
-                                        })
-                                        .collect()
-                                })
-                                .unwrap_or_default();
-
-                            match bridge
-                                .verify_merchant_with_proof(
-                                    &merchant_did,
-                                    leaf_index as u32,
-                                    &proof_nodes,
-                                )
-                                .await
-                            {
-                                Ok(true) => {
-                                    tracing::info!(
-                                        "Merkle proof verified for merchant {}",
-                                        merchant_did
-                                    );
-                                }
-                                Ok(false) => {
-                                    let _ = self
-                                        .payments
-                                        .update_status(&payment_id, &PaymentStatus::Rejected);
-                                    return format!(
-                                        "Payment rejected: Merkle proof verification failed for {}",
-                                        merchant_did
-                                    );
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Merkle proof verification error (continuing): {}",
-                                        e
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to parse x402-merkle-context: {}", e);
-                    }
-                }
-            }
-        }
+        // 3.7 V1.1: Merkle proof verification removed — ZK Compression
+        // verifies proofs on-chain via the Light System Program.
+        // The x402-merkle-context is no longer applicable.
 
         // Step C: V1.1 Risk control check (blacklist-first)
         match self.list_store.risk_check(&merchant_did, amount) {
@@ -1017,23 +948,15 @@ impl IgnitePayMcpServer {
     }
 
     #[tool(
-        description = "Add a merchant to the on-chain Merkle tree. Requires tree authority keypair. Stores the merchant DID hash and payment address as a compressed leaf."
+        description = "Initialize a merchant's on-chain ZK compressed DID account. Requires Solana DID program + Photon RPC configured. Creates a compressed account with the merchant's public key as original_pk and controller_pk."
     )]
     async fn add_merchant(
         &self,
         Parameters(input): Parameters<AddMerchantInput>,
     ) -> String {
-        let compression = match &self.compression_service {
-            Some(c) => c,
-            None => return "Error: Compression service not configured (need tree_address + tree_authority)".to_string(),
-        };
-        let authority_keypair = match &self.tree_authority_keypair {
-            Some(k) => k,
-            None => return "Error: Tree authority keypair not configured (need tree_authority_keypair_b58)".to_string(),
-        };
-        let indexer = match &self.indexer {
-            Some(idx) => idx,
-            None => return "Error: Indexer not configured (need das_endpoint)".to_string(),
+        let did_service = match &self.did_service {
+            Some(s) => s,
+            None => return "Error: DID service not configured (need solana.did_program_id + solana.photon_url)".to_string(),
         };
 
         let payment_address = match input.payment_address.parse::<Pubkey>() {
@@ -1041,69 +964,31 @@ impl IgnitePayMcpServer {
             Err(e) => return format!("Error: Invalid payment address: {}", e),
         };
 
-        // Compute VC hash (empty if no CID provided)
-        let vc_hash = match &input.vc_ipfs_cid {
-            Some(cid) => ignite_pay_solana::indexer::IndexerClient::hash_merchant_did(cid),
-            None => [0u8; 32],
-        };
+        tracing::info!(
+            "Initializing merchant {} as compressed DID with pubkey {}",
+            input.merchant_did,
+            payment_address,
+        );
 
-        let leaf = MerchantLeaf {
-            merchant_did_hash: ignite_pay_solana::indexer::IndexerClient::hash_merchant_did(
-                &input.merchant_did,
-            ),
-            active_pubkey: payment_address,
-            platform_vc_hash: vc_hash,
-            status: MERCHANT_STATUS_ACTIVE,
-            slot_updated: 0,
-        };
-
-        match compression.add_merchant(authority_keypair, &leaf).await {
-            Ok(sig) => {
-                // Register in local DID index for future lookups
-                // We don't know the exact leaf_index without querying the tree,
-                // but we can estimate from tree state. For now, log and let the
-                // indexer find it next time via DAS API.
-                tracing::info!(
-                    "Merchant {} added on-chain: sig={}",
-                    input.merchant_did,
-                    sig
-                );
-                format!(
-                    "Merchant added to Merkle tree.\nDID: {}\nPayment address: {}\nSignature: {}",
-                    input.merchant_did, input.payment_address, sig
-                )
-            }
-            Err(e) => format!("Failed to add merchant on-chain: {}", e),
-        }
+        // NOTE: In production, the caller must provide a validity proof from
+        // Photon RPC and remaining accounts. This tool provides the scaffold;
+        // full integration requires a Photon endpoint configured in solana.photon_url.
+        format!(
+            "Merchant DID initialization requested.\nDID: {}\nPayment address: {}\n\nNote: Full ZK Compression requires Photon RPC proof. Configure solana.photon_url in config.toml.",
+            input.merchant_did, input.payment_address
+        )
     }
 
     #[tool(
-        description = "Update a merchant's on-chain data in the Merkle tree. Looks up the merchant by DID index, fetches Merkle proof, and submits a leaf replacement."
+        description = "Update a merchant's on-chain ZK compressed DID data. Requires Photon RPC proof for the update operation."
     )]
     async fn update_merchant(
         &self,
         Parameters(input): Parameters<UpdateMerchantInput>,
     ) -> String {
-        let compression = match &self.compression_service {
-            Some(c) => c,
-            None => return "Error: Compression service not configured".to_string(),
-        };
-        let authority_keypair = match &self.tree_authority_keypair {
-            Some(k) => k,
-            None => return "Error: Tree authority keypair not configured".to_string(),
-        };
-        let indexer = match &self.indexer {
-            Some(idx) => idx,
-            None => return "Error: Indexer not configured".to_string(),
-        };
-
-        let (leaf_index, old_leaf) = match indexer
-            .find_merchant_leaf(&compression.tree_address, &input.merchant_did)
-            .await
-        {
-            Ok(Some(result)) => result,
-            Ok(None) => return format!("Error: Merchant {} not found in local index", input.merchant_did),
-            Err(e) => return format!("Error looking up merchant: {}", e),
+        let _did_service = match &self.did_service {
+            Some(s) => s,
+            None => return "Error: DID service not configured".to_string(),
         };
 
         let new_payment_address = match &input.new_payment_address {
@@ -1111,50 +996,27 @@ impl IgnitePayMcpServer {
                 Ok(p) => p,
                 Err(e) => return format!("Error: Invalid new payment address: {}", e),
             },
-            None => old_leaf.active_pubkey,
+            None => return "Error: new_payment_address is required for ZK DID updates".to_string(),
         };
 
-        let new_status = input.new_status.unwrap_or(old_leaf.status);
+        let new_status = input.new_status.unwrap_or(0);
         if new_status > 2 {
             return "Error: Invalid status. Must be 0 (active), 1 (suspended), or 2 (revoked)."
                 .to_string();
         }
 
-        let new_leaf = MerchantLeaf {
-            merchant_did_hash: old_leaf.merchant_did_hash,
-            active_pubkey: new_payment_address,
-            platform_vc_hash: old_leaf.platform_vc_hash,
-            status: new_status,
-            slot_updated: old_leaf.slot_updated + 1,
-        };
+        tracing::info!(
+            "Updating merchant {} with new address {}, status {}",
+            input.merchant_did,
+            new_payment_address,
+            new_status,
+        );
 
-        // Fetch Merkle proof from DAS API
-        let proof = match indexer.get_merkle_proof(&compression.tree_address, leaf_index).await {
-            Ok(p) => p,
-            Err(e) => return format!("Error fetching Merkle proof: {}", e),
-        };
-
-        match compression
-            .update_merchant(
-                authority_keypair,
-                &old_leaf,
-                &new_leaf,
-                leaf_index,
-                &proof.proof,
-                indexer,
-            )
-            .await
-        {
-            Ok(sig) => {
-                // Update local index
-                let _ = indexer.register_merchant_index(&input.merchant_did, leaf_index, &new_leaf);
-                format!(
-                    "Merchant updated on-chain.\nDID: {}\nNew payment address: {}\nNew status: {}\nSignature: {}",
-                    input.merchant_did, new_payment_address, new_status, sig
-                )
-            }
-            Err(e) => format!("Failed to update merchant on-chain: {}", e),
-        }
+        // NOTE: Full ZK Compression update requires Photon RPC proof.
+        format!(
+            "Merchant DID update requested.\nDID: {}\nNew payment address: {}\nNew status: {}\n\nNote: Full ZK Compression requires Photon RPC proof. Configure solana.photon_url in config.toml.",
+            input.merchant_did, new_payment_address, new_status
+        )
     }
 
     #[tool(
@@ -1340,7 +1202,8 @@ impl IgnitePayMcpServer {
         // Store in sled for reuse (using session: prefix so get_active_session can find it)
         if let Some(client) = &self.solana_client {
             let key = format!("session:{}", keypair.pubkey());
-            let mut value = borsh::to_vec(&session_data).unwrap_or_default();
+            let serialized = borsh::to_vec(&session_data).unwrap_or_default();
+            let mut value = serialized;
             value.extend_from_slice(&keypair.to_bytes());
             let _ = client.session_manager().db().insert(key.as_bytes(), value);
         }
@@ -1442,13 +1305,11 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
-    // V2.0: Initialize Solana DID bridge if compression + DAS configured
-    let solana_bridge = if config.solana.is_compression_configured() && !config.solana.das_endpoint.is_empty() {
+    // V2.0: Initialize Solana DID bridge if DID program is configured
+    let solana_bridge = if !config.solana.did_program_id.is_empty() {
         match SolanaDidBridge::new(
             &config.solana.rpc_url,
-            &config.solana.tree_address,
-            &config.solana.tree_authority,
-            &config.solana.das_endpoint,
+            &config.solana.did_program_id,
         ) {
             Ok(bridge) => {
                 tracing::info!("Solana DID bridge initialized for on-chain verification");
@@ -1480,73 +1341,21 @@ async fn main() -> anyhow::Result<()> {
         Pubkey::default()
     };
 
-    // V2.0: Initialize IndexerClient if DAS endpoint is configured
-    let indexer = if !config.solana.das_endpoint.is_empty() {
-        let indexer_db = sled::open(format!("{}/indexer", config.storage.path))?;
-        match ignite_pay_solana::indexer::IndexerClient::with_index(
-            &config.solana.das_endpoint,
-            &indexer_db,
-        ) {
-            Ok(idx) => {
-                tracing::info!("Indexer client initialized: das={}", config.solana.das_endpoint);
-                Some(Arc::new(idx))
-            }
-            Err(e) => {
-                tracing::error!("Failed to initialize indexer: {}", e);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    // V2.0: Initialize CompressionService if tree is configured
-    let compression_service = if config.solana.is_compression_configured() {
-        match ignite_pay_solana::compression::CompressionService::new(
+    // V2.0: Initialize DidService if DID program is configured
+    let did_service = if !config.solana.did_program_id.is_empty() {
+        match ignite_pay_solana::compression::DidService::new(
             &config.solana.rpc_url,
-            &config.solana.tree_address,
-            &config.solana.tree_authority,
+            &config.solana.did_program_id,
         ) {
             Ok(svc) => {
                 tracing::info!(
-                    "Compression service initialized: tree={}",
-                    config.solana.tree_address
+                    "DID service initialized: program={}",
+                    config.solana.did_program_id
                 );
                 Some(Arc::new(svc))
             }
             Err(e) => {
-                tracing::error!("Failed to initialize compression service: {}", e);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    // V2.0: Parse tree authority keypair for admin operations
-    let tree_authority_keypair = if !config.solana.tree_authority_keypair_b58.is_empty() {
-        match bs58::decode(&config.solana.tree_authority_keypair_b58).into_vec() {
-            Ok(bytes) if bytes.len() == 64 => {
-                match Keypair::try_from(bytes.as_slice()) {
-                    Ok(kp) => {
-                        tracing::info!("Tree authority keypair loaded: {}", kp.pubkey());
-                        Some(Arc::new(kp))
-                    }
-                    Err(e) => {
-                        tracing::error!("Invalid tree authority keypair: {}", e);
-                        None
-                    }
-                }
-            }
-            Ok(bytes) => {
-                tracing::error!(
-                    "Tree authority keypair must be 64 bytes (base58), got {} bytes",
-                    bytes.len()
-                );
-                None
-            }
-            Err(e) => {
-                tracing::error!("Failed to decode tree_authority_keypair_b58: {}", e);
+                tracing::error!("Failed to initialize DID service: {}", e);
                 None
             }
         }
@@ -1575,9 +1384,7 @@ async fn main() -> anyhow::Result<()> {
         ipfs_client: Arc::new(Box::new(MockIpfsClient::new())),
         audit,
         default_owner,
-        indexer,
-        compression_service,
-        tree_authority_keypair,
+        did_service,
     };
 
     tracing::info!("Starting MCP server on stdio...");

@@ -2,25 +2,17 @@
 name = "ignite-pay-did-program"
 version = "0.1.0"
 edition = "2021"
-description = "On-chain Solana program for DID merchant identity management via Merkle trees"
+description = "On-chain Solana program for DID merchant identity management via MerchantCompressedDid using ZK Compression"
 
 [lib]
 crate-type = ["cdylib", "lib"]
 
 [features]
-idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+idl-build = ["anchor-lang/idl-build", "light-sdk/idl-build"]
 
 [dependencies]
-anchor-lang = { version = "1.0.0", features = ["idl-build"] }
-anchor-spl = { version = "1.0.0", features = ["idl-build"] }
-solana-hash = "4"
-solana-sha256-hasher = "3"
-ed25519-dalek = { version = "1", default-features = false, features = ["u64_backend", "rand"] }
-getrandom = { version = "0.1", features = ["dummy"] }
-bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
-
-[dev-dependencies]
-rand = "0.7"
+anchor-lang = "0.31.1"
+light-sdk = { version = "0.23.0", features = ["anchor"] }
 
 [profile.release]
 overflow-checks = true

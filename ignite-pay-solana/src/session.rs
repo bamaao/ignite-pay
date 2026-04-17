@@ -1,5 +1,6 @@
 use crate::error::{Result, SolanaError};
 use crate::types::SessionTokenData;
+use borsh::BorshDeserialize;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 use solana_sdk::signer::Signer;
@@ -78,7 +79,7 @@ impl SessionManager {
                 continue;
             }
             let data_len = value.len() - 64;
-            let session_data: SessionTokenData = borsh::from_slice(&value[..data_len])?;
+            let session_data: SessionTokenData = SessionTokenData::deserialize(&mut &value[..data_len])?;
 
             if session_data.owner == *owner && !self.is_expired(&session_data) {
                 let keypair_bytes: [u8; 64] = value[data_len..].try_into().map_err(|_| {
@@ -108,7 +109,7 @@ impl SessionManager {
                 return Ok(None);
             }
             let data_len = value.len() - 64;
-            let session_data: SessionTokenData = borsh::from_slice(&value[..data_len])?;
+            let session_data: SessionTokenData = SessionTokenData::deserialize(&mut &value[..data_len])?;
 
             let keypair_bytes: [u8; 64] = value[data_len..]
                 .try_into()
@@ -148,7 +149,7 @@ impl SessionManager {
                 return Err(SolanaError::SessionNotFound(key));
             }
             let data_len = value.len() - 64;
-            let mut session_data: SessionTokenData = borsh::from_slice(&value[..data_len])?;
+            let mut session_data: SessionTokenData = SessionTokenData::deserialize(&mut &value[..data_len])?;
 
             session_data.current_spent = session_data.current_spent.saturating_add(amount);
 

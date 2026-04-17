@@ -2,17 +2,21 @@ use std::sync::Arc;
 
 use crate::config::Config;
 use crate::did::ignite_store::IgniteDidStore;
-use ignite_pay_solana::compression::CompressionService;
-use ignite_pay_solana::indexer::IndexerClient;
-use ignite_pay_solana::types::MerchantLeaf;
+use ignite_pay_solana::compression::DidService;
+use ignite_pay_solana::types::MerchantDidAccount;
+use light_client::rpc::{LightClient, LightClientConfig, Rpc};
+use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signer::Signer;
 
 /// Shared application state for the DID registry service.
+/// Uses ZK Compression via LightClient (Photon RPC) for reading compressed
+/// accounts and obtaining validity proofs, and DidService for building
+/// and sending on-chain transactions.
 #[derive(Clone)]
 pub struct RegistryState {
     pub config: Config,
-    pub compression: Arc<CompressionService>,
-    pub indexer: Arc<IndexerClient>,
+    pub did_service: Arc<DidService>,
+    pub light_rpc: Arc<tokio::sync::Mutex<LightClient>>,
     pub did_store: Arc<IgniteDidStore>,
     pub db: Arc<sled::Db>,
     pub payer: Arc<solana_sdk::signature::Keypair>,
@@ -22,13 +26,15 @@ pub struct RegistryState {
 
 impl RegistryState {
     pub fn new(config: Config) -> anyhow::Result<Self> {
-        let compression = CompressionService::new(
+        let did_service = DidService::new(
             &config.solana.rpc_url,
-            &config.solana.tree_address,
-            &config.solana.tree_authority,
+            &config.solana.did_program_id,
         )?;
 
-        let indexer = IndexerClient::new(&config.indexer.das_endpoint)?;
+        // We need to create LightClient async, so we'll do it in a blocking context
+        // or use a placeholder. Since LightClient::new is async, we'll spawn it.
+        let photon_url = config.light.photon_url.clone();
+        let rpc_url = config.solana.rpc_url.clone();
 
         let db = sled::open("./did_registry_data")?;
 
@@ -45,10 +51,21 @@ impl RegistryState {
 
         tracing::info!("Registry payer pubkey: {}", payer.pubkey());
 
+        // Create LightClient synchronously (using tokio runtime handle)
+        let light_rpc = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let light_config = LightClientConfig::new(
+                    rpc_url,
+                    Some(photon_url),
+                );
+                LightClient::new(light_config).await
+            })
+        })?;
+
         Ok(Self {
             config,
-            compression: Arc::new(compression),
-            indexer: Arc::new(indexer),
+            did_service: Arc::new(did_service),
+            light_rpc: Arc::new(tokio::sync::Mutex::new(light_rpc)),
             did_store: Arc::new(did_store),
             db: Arc::new(db),
             payer: Arc::new(payer),
@@ -56,22 +73,27 @@ impl RegistryState {
         })
     }
 
-    /// Look up a merchant leaf from the local sled cache.
-    pub fn get_cached_merchant(&self, did_hash: &[u8; 32]) -> Option<(u32, MerchantLeaf)> {
-        let key = hex::encode(did_hash);
-        if let Some(bytes) = self.db.get(format!("merchant:{}", key)).ok().flatten() {
-            if let Ok((leaf_index, leaf)) = borsh::from_slice::<(u32, MerchantLeaf)>(&bytes) {
-                return Some((leaf_index, leaf));
+    /// Look up a cached merchant DID account from local sled cache.
+    pub fn get_cached_merchant(&self, did_hash: &[u8; 32]) -> Option<MerchantDidAccount> {
+        let store = crate::storage::sled_store::MerchantStore::new((*self.db).clone());
+        if let Some(bytes) = store.get_merchant(did_hash) {
+            if let Ok(did) = <MerchantDidAccount as borsh::BorshDeserialize>::deserialize(&mut bytes.as_slice()) {
+                return Some(did);
             }
         }
         None
     }
 
-    /// Cache a merchant leaf in sled.
-    pub fn cache_merchant(&self, did_hash: &[u8; 32], leaf_index: u32, leaf: &MerchantLeaf) {
-        let key = format!("merchant:{}", hex::encode(did_hash));
-        if let Ok(bytes) = borsh::to_vec(&(leaf_index, leaf)) {
-            let _ = self.db.insert(key, bytes);
+    /// Cache a merchant DID account in sled.
+    pub fn cache_merchant(&self, did_hash: &[u8; 32], did: &MerchantDidAccount) {
+        let store = crate::storage::sled_store::MerchantStore::new((*self.db).clone());
+        if let Ok(bytes) = borsh::to_vec(did) {
+            let _ = store.save_merchant(did_hash, &bytes);
         }
+    }
+
+    /// Get the DID program ID.
+    pub fn did_program_id(&self) -> Pubkey {
+        self.did_service.did_program_id
     }
 }

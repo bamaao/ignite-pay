@@ -2,14 +2,16 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use serde::Deserialize;
+use solana_sdk::pubkey::Pubkey;
 use tracing::info;
 
 use crate::did::resolver::compute_did_hash;
-use crate::error::RegistryError;
 use crate::handlers::nonce::verify_and_consume_nonce;
 use crate::state::RegistryState;
 use ignite_pay_core::verify_did_signature;
-use ignite_pay_solana::types::MerchantLeaf;
+use ignite_pay_solana::types::MerchantDidAccount;
+use light_client::rpc::Rpc;
+use light_client::indexer::Indexer;
 
 /// Request body for merchant registration.
 #[derive(Debug, Deserialize)]
@@ -22,15 +24,9 @@ pub struct RegisterMerchantRequest {
     pub did_signature: String,
     /// Server-issued nonce to prevent replay. Obtain from GET /v1/auth/nonce.
     pub nonce: String,
-    #[serde(default = "default_status")]
-    pub status: u8,
 }
 
-fn default_status() -> u8 {
-    0 // active
-}
-
-/// `POST /v1/merchants/register` — Register a merchant on-chain.
+/// `POST /v1/merchants/register` — Register a merchant on-chain as a ZK compressed DID.
 pub async fn register_merchant(
     State(state): State<RegistryState>,
     axum::Json(req): axum::Json<RegisterMerchantRequest>,
@@ -67,7 +63,7 @@ pub async fn register_merchant(
     }
 
     // Parse active_pubkey
-    let active_pubkey = match req.active_pubkey.parse::<solana_sdk::pubkey::Pubkey>() {
+    let active_pubkey = match req.active_pubkey.parse::<Pubkey>() {
         Ok(pk) => pk,
         Err(e) => {
             return (
@@ -90,30 +86,114 @@ pub async fn register_merchant(
         }
     };
 
-    // Build MerchantLeaf
-    let did_hash = compute_did_hash(&req.merchant_did);
-    let slot = state.compression.rpc_client
-        .get_slot()
-        .map_err(|e| RegistryError::OnChain(e.to_string()))
-        .unwrap_or(0);
+    info!("Registering merchant {} as compressed DID", req.merchant_did);
 
-    let leaf = MerchantLeaf {
-        merchant_did_hash: did_hash,
-        active_pubkey,
-        platform_vc_hash: vc_hash_bytes,
-        status: req.status,
-        slot_updated: slot,
+    // Get validity proof from Light RPC for new address creation
+    let light_rpc = state.light_rpc.lock().await;
+    let address_tree = light_rpc.get_address_tree_v1();
+    let (address, _seed) = state
+        .did_service
+        .derive_compressed_address(&active_pubkey, &address_tree.tree);
+
+    // Get new address proof (proves address doesn't exist yet)
+    let indexer = match light_rpc.indexer() {
+        Ok(i) => i,
+        Err(e) => {
+            tracing::error!("Indexer error: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": format!("Indexer error: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+    let proof_result = match indexer
+        .get_validity_proof(
+            vec![], // no existing accounts
+            vec![light_client::indexer::AddressWithTree {
+                address: light_client::indexer::Address::from(address),
+                tree: address_tree.tree,
+            }],
+            None,
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Failed to get validity proof: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": format!("Proof error: {}", e) })),
+            )
+                .into_response();
+        }
     };
 
-    info!("Registering merchant {} on-chain", req.merchant_did);
+    let proof_context = proof_result.value;
 
-    // Submit to on-chain Merkle tree
-    match state.compression.add_merchant(&state.payer, &leaf).await {
+    // Pack accounts and tree infos
+    let mut packed_accounts = light_account::PackedAccounts::default();
+    let packed_tree_infos = proof_context.pack_tree_infos(&mut packed_accounts);
+    let remaining_accounts: Vec<solana_sdk::instruction::AccountMeta> =
+        packed_accounts.to_account_metas().0;
+
+    // Serialize proof
+    let proof_bytes = match borsh::to_vec(&proof_context.proof) {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": format!("Serialization error: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    // Get address_tree_info and output_state_tree_index
+    let address_tree_info = match packed_tree_infos.address_trees.first() {
+        Some(info) => *info,
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": "No address tree info in proof" })),
+            )
+                .into_response();
+        }
+    };
+    let output_state_tree_index = packed_tree_infos
+        .state_trees
+        .as_ref()
+        .map(|st| st.output_tree_index)
+        .unwrap_or(0);
+
+    // Submit to on-chain compressed account via DidService
+    match state
+        .did_service
+        .initialize_did(
+            &state.payer,
+            &proof_bytes,
+            &address_tree_info,
+            output_state_tree_index,
+            &remaining_accounts,
+        )
+        .await
+    {
         Ok(sig) => {
-            info!("Merchant registered: sig={}", sig);
+            // Cache the new merchant DID locally
+            let did_hash = compute_did_hash(&req.merchant_did);
+            let did_account = MerchantDidAccount {
+                original_pk: active_pubkey,
+                controller_pk: active_pubkey,
+                recovery_pk: Pubkey::default(),
+                vc_hash: vc_hash_bytes,
+                last_updated: chrono::Utc::now().timestamp(),
+                nonce: 0,
+            };
+            state.cache_merchant(&did_hash, &did_account);
+
+            info!("Merchant registered as compressed DID: sig={}", sig);
             (StatusCode::OK, axum::Json(serde_json::json!({
                 "signature": sig.to_string(),
-                "slot": slot,
             })))
             .into_response()
         }

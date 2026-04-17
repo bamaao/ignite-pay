@@ -4,7 +4,7 @@ use serde::Deserialize;
 pub struct Config {
     pub server: ServerConfig,
     pub solana: SolanaConfig,
-    pub indexer: IndexerConfig,
+    pub light: LightConfig,
     pub auth: AuthConfig,
 }
 
@@ -17,14 +17,15 @@ pub struct ServerConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct SolanaConfig {
     pub rpc_url: String,
-    pub tree_address: String,
-    pub tree_authority: String,
+    /// DID program ID (ignite-pay-did-program)
+    pub did_program_id: String,
     pub payer_keypair_path: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct IndexerConfig {
-    pub das_endpoint: String,
+pub struct LightConfig {
+    /// Photon RPC URL for ZK Compression (e.g., https://photon.helius.com?api-key=KEY)
+    pub photon_url: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]

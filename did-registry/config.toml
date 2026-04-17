@@ -4,12 +4,11 @@ port = 8081
 
 [solana]
 rpc_url = "https://api.devnet.solana.com"
-tree_address = ""
-tree_authority = ""
+did_program_id = "D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D"
 payer_keypair_path = ""
 
-[indexer]
-das_endpoint = ""
+[light]
+photon_url = ""
 
 [auth]
 jwt_secret = "did-registry-secret"

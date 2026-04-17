@@ -2,7 +2,7 @@
 name = "ignite-pay-solana"
 version = "0.1.0"
 edition = "2021"
-description = "Solana integration for Ignite Pay: SPL Account Compression, Session Keys, and on-chain payments"
+description = "Solana integration for Ignite Pay: DID-based merchant identity, Session Keys, and on-chain payments"
 
 [dependencies]
 # Solana SDK & client
@@ -10,13 +10,15 @@ solana-sdk = "2.1"
 solana-client = "2.1"
 
 # SPL programs
-spl-account-compression = "1"
-spl-noop = "1"
 spl-token = "7"
 spl-associated-token-account = "6"
 
+# ZK Compression
+light-sdk = "0.23.0"
+light-client = "0.23.0"
+
 # Serialization
-borsh = "1"
+borsh = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -36,7 +38,7 @@ tokio = { version = "1", features = ["full"] }
 # Persistence
 sled = "0.34"
 
-# HTTP client (for Helius DAS API)
+# HTTP client
 reqwest = { version = "0.12", features = ["json"] }
 
 [dev-dependencies]

@@ -1,13 +1,15 @@
 use crate::error::{Result, SolanaError};
-use crate::indexer::IndexerClient;
-use crate::types::MerchantLeaf;
+use crate::types::MerchantDidAccount;
+use light_sdk::{
+    address::v1::derive_address,
+    instruction::PackedAddressTreeInfo,
+};
 use solana_client::rpc_client::RpcClient;
-use solana_sdk::hash::{hash, hashv};
+use solana_sdk::hash::hash;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{Keypair, Signature};
 use solana_sdk::signer::Signer;
-use solana_sdk::system_program;
 
 /// Compute the Anchor instruction discriminator: sha256("global:<name>")[..8]
 fn anchor_sighash(name: &str) -> [u8; 8] {
@@ -18,107 +20,103 @@ fn anchor_sighash(name: &str) -> [u8; 8] {
     disc
 }
 
-/// Derive the did-config PDA from the DID program.
-fn derive_did_config_pda(did_program_id: &Pubkey) -> (Pubkey, u8) {
-    Pubkey::find_program_address(&[b"did-config"], did_program_id)
-}
-
-/// Derive the did-tree-authority PDA from the DID program and merkle tree address.
-fn derive_tree_authority_pda(merkle_tree: &Pubkey, did_program_id: &Pubkey) -> (Pubkey, u8) {
-    Pubkey::find_program_address(
-        &[b"did-tree-authority", merkle_tree.as_ref()],
-        did_program_id,
-    )
-}
-
-/// Service for interacting with SPL Account Compression (Concurrent Merkle Tree)
-/// and the ignite-pay-did-program.
-pub struct CompressionService {
+/// Service for interacting with the ignite-pay-did-program using ZK compressed accounts.
+///
+/// Compressed DID accounts are stored as hashes in Light Protocol state Merkle trees
+/// rather than as traditional on-chain accounts. This means:
+/// - No rent-exemption required
+/// - Account data is passed as instruction data (not fetched from on-chain PDAs)
+/// - A validity proof is required for all operations
+/// - Tree accounts are passed as remaining accounts
+pub struct DidService {
     pub rpc_client: RpcClient,
-    pub tree_address: Pubkey,
-    pub tree_authority: Pubkey,
     pub did_program_id: Pubkey,
 }
 
-impl std::fmt::Debug for CompressionService {
+impl std::fmt::Debug for DidService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CompressionService")
-            .field("tree_address", &self.tree_address)
-            .field("tree_authority", &self.tree_authority)
+        f.debug_struct("DidService")
             .field("did_program_id", &self.did_program_id)
             .finish()
     }
 }
 
-impl CompressionService {
-    /// Create a new CompressionService.
-    pub fn new(
-        rpc_url: &str,
-        tree_address: &str,
-        authority: &str,
-        did_program_id: &str,
-    ) -> Result<Self> {
-        let tree_address = tree_address
-            .parse::<Pubkey>()
-            .map_err(|e| SolanaError::InvalidPubkey(e.to_string()))?;
-        let tree_authority = authority
-            .parse::<Pubkey>()
-            .map_err(|e| SolanaError::InvalidPubkey(e.to_string()))?;
+impl DidService {
+    /// Create a new DidService.
+    pub fn new(rpc_url: &str, did_program_id: &str) -> Result<Self> {
         let did_program_id = did_program_id
             .parse::<Pubkey>()
             .map_err(|e| SolanaError::InvalidPubkey(e.to_string()))?;
         Ok(Self {
             rpc_client: RpcClient::new(rpc_url.to_string()),
-            tree_address,
-            tree_authority,
             did_program_id,
         })
     }
 
-    /// Compute the leaf hash for a merchant leaf node.
-    /// Uses solana_sdk::hash::hashv to deterministically combine fields.
-    pub fn compute_leaf_hash(leaf: &MerchantLeaf) -> [u8; 32] {
-        let active_pubkey_bytes = leaf.active_pubkey.to_bytes();
-        let slot_bytes = leaf.slot_updated.to_le_bytes();
-        let status_bytes = [leaf.status];
-        hashv(&[
-            &leaf.merchant_did_hash,
-            &active_pubkey_bytes,
-            &leaf.platform_vc_hash,
-            &status_bytes,
-            &slot_bytes,
-        ])
-        .to_bytes()
+    /// Derive a compressed PDA address for a given original public key.
+    /// Seeds: [b"merchant-did", original_pk]
+    /// Returns (address_bytes, address_seed) for use with the Light System Program CPI.
+    pub fn derive_compressed_address(
+        &self,
+        original_pk: &Pubkey,
+        address_tree_pubkey: &Pubkey,
+    ) -> ([u8; 32], light_sdk::address::AddressSeed) {
+        derive_address(
+            &[b"merchant-did", original_pk.as_ref()],
+            address_tree_pubkey,
+            &self.did_program_id,
+        )
     }
 
-    /// Add a merchant leaf to the Merkle tree by appending.
-    /// Called by the platform authority.
-    #[deprecated = "Use register_merchant() instead, which routes through the DID program"]
-    #[allow(deprecated)]
-    pub async fn add_merchant(&self, payer: &Keypair, leaf: &MerchantLeaf) -> Result<Signature> {
-        let leaf_hash = Self::compute_leaf_hash(leaf);
+    /// Build the accounts list for a compressed DID instruction.
+    /// Includes: signer, system program, and remaining accounts for the Light CPI.
+    pub fn build_instruction_accounts(
+        &self,
+        signer: &Keypair,
+        remaining_accounts: &[AccountMeta],
+    ) -> Vec<AccountMeta> {
+        let mut accounts = vec![
+            AccountMeta::new(signer.pubkey(), true),
+        ];
+        accounts.extend_from_slice(remaining_accounts);
+        accounts
+    }
+
+    /// Initialize a new compressed merchant DID.
+    /// The payer (original_signer) becomes both original_pk and initial controller_pk.
+    ///
+    /// The `proof_bytes` is a borsh-serialized `light_sdk::borsh_compat::ValidityProof`.
+    /// The `address_tree_info` and `output_state_tree_index` specify where the
+    /// compressed account will be stored.
+    /// The `remaining_accounts` must include the Light System Program accounts
+    /// and tree accounts as required by the CPI.
+    pub async fn initialize_did(
+        &self,
+        payer: &Keypair,
+        proof_bytes: &[u8],
+        address_tree_info: &PackedAddressTreeInfo,
+        output_state_tree_index: u8,
+        remaining_accounts: &[AccountMeta],
+    ) -> Result<Signature> {
         let recent_blockhash = self
             .rpc_client
             .get_latest_blockhash()
             .map_err(|e| SolanaError::RpcError(e.to_string()))?;
 
-        let program_id = spl_account_compression::id();
-        let noop_program = spl_noop::id();
+        // Anchor discriminator + borsh(proof, address_tree_info, output_state_tree_index)
+        let mut data = Vec::with_capacity(8 + proof_bytes.len() + 8);
+        data.extend_from_slice(&anchor_sighash("initialize_did"));
+        data.extend_from_slice(proof_bytes);
+        data.extend_from_slice(&borsh::to_vec(address_tree_info).map_err(SolanaError::BorshError)?);
+        data.extend_from_slice(&output_state_tree_index.to_le_bytes());
 
-        // Build Anchor instruction: discriminator + borsh-serialized params
-        // append(leaf: [u8; 32]) → 8 + 32 = 40 bytes
-        let mut data = Vec::with_capacity(40);
-        data.extend_from_slice(&anchor_sighash("append"));
-        data.extend_from_slice(&leaf_hash);
-
-        let accounts = vec![
-            AccountMeta::new(self.tree_address, false),
-            AccountMeta::new_readonly(self.tree_authority, true),
-            AccountMeta::new_readonly(noop_program, false),
+        let mut accounts = vec![
+            AccountMeta::new(payer.pubkey(), true),
         ];
+        accounts.extend_from_slice(remaining_accounts);
 
         let ix = Instruction {
-            program_id,
+            program_id: self.did_program_id,
             accounts,
             data,
         };
@@ -138,61 +136,51 @@ impl CompressionService {
         Ok(sig)
     }
 
-    /// Update a merchant leaf in the Merkle tree (e.g., key rotation).
-    /// Requires the old leaf hash, new leaf, leaf index, a Merkle proof, and an IndexerClient for root retrieval.
-    #[deprecated = "Use update_vc(), update_status(), or rotate_key() instead, which route through the DID program"]
-    #[allow(deprecated)]
-    pub async fn update_merchant(
+    /// Update the VC hash on an existing compressed DID.
+    /// Caller must be the current controller.
+    ///
+    /// The `proof_bytes` is a borsh-serialized `light_sdk::borsh_compat::ValidityProof`.
+    /// The `current_did` is the deserialized compressed account data.
+    /// The `account_meta` contains the merkle tree context for the existing account.
+    pub async fn update_did_with_vc(
         &self,
-        payer: &Keypair,
-        old_leaf: &MerchantLeaf,
-        new_leaf: &MerchantLeaf,
-        leaf_index: u32,
-        proof: &[[u8; 32]],
-        indexer: &IndexerClient,
+        controller: &Keypair,
+        proof_bytes: &[u8],
+        current_did: &MerchantDidAccount,
+        account_meta: &light_sdk::instruction::account_meta::CompressedAccountMeta,
+        vc_hash: [u8; 32],
+        nonce: u64,
+        remaining_accounts: &[AccountMeta],
     ) -> Result<Signature> {
-        let old_hash = Self::compute_leaf_hash(old_leaf);
-        let new_hash = Self::compute_leaf_hash(new_leaf);
-        let root = indexer.get_tree_root(&self.tree_address).await?;
-
         let recent_blockhash = self
             .rpc_client
             .get_latest_blockhash()
             .map_err(|e| SolanaError::RpcError(e.to_string()))?;
 
-        let program_id = spl_account_compression::id();
-        let noop_program = spl_noop::id();
-
-        // replace_leaf(root: [u8;32], previous_leaf: [u8;32], new_leaf: [u8;32], index: u32)
-        // → 8 + 32 + 32 + 32 + 4 = 108 bytes
-        let mut data = Vec::with_capacity(108);
-        data.extend_from_slice(&anchor_sighash("replace_leaf"));
-        data.extend_from_slice(&root);
-        data.extend_from_slice(&old_hash);
-        data.extend_from_slice(&new_hash);
-        data.extend_from_slice(&leaf_index.to_le_bytes());
+        // Anchor discriminator + borsh(proof, current_did, account_meta, vc_hash, nonce)
+        let mut data = Vec::new();
+        data.extend_from_slice(&anchor_sighash("update_did_with_vc"));
+        data.extend_from_slice(proof_bytes);
+        data.extend_from_slice(&borsh::to_vec(current_did).map_err(SolanaError::BorshError)?);
+        data.extend_from_slice(&borsh::to_vec(account_meta).map_err(SolanaError::BorshError)?);
+        data.extend_from_slice(&vc_hash);
+        data.extend_from_slice(&nonce.to_le_bytes());
 
         let mut accounts = vec![
-            AccountMeta::new(self.tree_address, false),
-            AccountMeta::new_readonly(self.tree_authority, true),
-            AccountMeta::new_readonly(noop_program, false),
+            AccountMeta::new(controller.pubkey(), true),
         ];
-        // Proof nodes as remaining accounts
-        for node in proof {
-            let pubkey = Pubkey::new_from_array(*node);
-            accounts.push(AccountMeta::new_readonly(pubkey, false));
-        }
+        accounts.extend_from_slice(remaining_accounts);
 
         let ix = Instruction {
-            program_id,
+            program_id: self.did_program_id,
             accounts,
             data,
         };
 
         let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
             &[ix],
-            Some(&payer.pubkey()),
-            &[payer],
+            Some(&controller.pubkey()),
+            &[controller],
             recent_blockhash,
         );
 
@@ -204,97 +192,35 @@ impl CompressionService {
         Ok(sig)
     }
 
-    /// Fetch the current root hash via the IndexerClient (DAS API).
-    /// This is the recommended way to get the root — on-chain parsing is fragile.
-    pub async fn get_tree_root_via_indexer(
+    /// Set or change the recovery public key.
+    /// Caller must be the current controller.
+    pub async fn set_recovery_key(
         &self,
-        indexer: &IndexerClient,
-    ) -> Result<[u8; 32]> {
-        indexer.get_tree_root(&self.tree_address).await
-    }
-
-    /// Verify a Merkle proof locally (off-chain fast filter).
-    /// Walks the proof from leaf to root, hashing at each level.
-    pub fn verify_proof_locally(
-        &self,
-        leaf_hash: &[u8; 32],
-        proof: &[[u8; 32]],
-        root: &[u8; 32],
-    ) -> bool {
-        let mut current = *leaf_hash;
-        for sibling in proof {
-            let (left, right) = if current < *sibling {
-                (current, *sibling)
-            } else {
-                (*sibling, current)
-            };
-            current = hashv(&[&left, &right]).to_bytes();
-        }
-        current == *root
-    }
-
-    /// Register a new merchant via the DID program.
-    /// The merchant signs: did_hash || active_pubkey || platform_vc_hash || slot_le_bytes
-    pub async fn register_merchant(
-        &self,
-        payer: &Keypair,
-        merchant_did: &str,
-        active_pubkey: &Pubkey,
-        platform_vc_hash: &[u8; 32],
-        merchant_keypair: &Keypair,
+        controller: &Keypair,
+        proof_bytes: &[u8],
+        current_did: &MerchantDidAccount,
+        account_meta: &light_sdk::instruction::account_meta::CompressedAccountMeta,
+        recovery_pk: &Pubkey,
+        nonce: u64,
+        remaining_accounts: &[AccountMeta],
     ) -> Result<Signature> {
-        let slot = self
-            .rpc_client
-            .get_slot()
-            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
-
-        let did_hash = hash(merchant_did.as_bytes()).to_bytes();
-
-        // Build the message the merchant signs
-        let mut message = Vec::with_capacity(32 + 32 + 32 + 8);
-        message.extend_from_slice(&did_hash);
-        message.extend_from_slice(active_pubkey.as_ref());
-        message.extend_from_slice(platform_vc_hash);
-        message.extend_from_slice(&slot.to_le_bytes());
-
-        let signature = merchant_keypair.sign_message(&message);
-
         let recent_blockhash = self
             .rpc_client
             .get_latest_blockhash()
             .map_err(|e| SolanaError::RpcError(e.to_string()))?;
 
-        let (did_config, _) = derive_did_config_pda(&self.did_program_id);
-        let (did_tree_auth, _) =
-            derive_tree_authority_pda(&self.tree_address, &self.did_program_id);
-        let noop_program = spl_noop::id();
+        let mut data = Vec::new();
+        data.extend_from_slice(&anchor_sighash("set_recovery_key"));
+        data.extend_from_slice(proof_bytes);
+        data.extend_from_slice(&borsh::to_vec(current_did).map_err(SolanaError::BorshError)?);
+        data.extend_from_slice(&borsh::to_vec(account_meta).map_err(SolanaError::BorshError)?);
+        data.extend_from_slice(recovery_pk.as_ref());
+        data.extend_from_slice(&nonce.to_le_bytes());
 
-        // Build Anchor instruction data: discriminator + borsh-serialized params
-        let mut data = Vec::with_capacity(8 + 256);
-        data.extend_from_slice(&anchor_sighash("register_merchant"));
-        // merchant_did: String (borsh = u32 length prefix + utf8 bytes)
-        let did_bytes = merchant_did.as_bytes();
-        data.extend_from_slice(&(did_bytes.len() as u32).to_le_bytes());
-        data.extend_from_slice(did_bytes);
-        // active_pubkey: Pubkey (32 bytes)
-        data.extend_from_slice(active_pubkey.as_ref());
-        // platform_vc_hash: [u8; 32]
-        data.extend_from_slice(platform_vc_hash);
-        // signature: [u8; 64]
-        data.extend_from_slice(signature.as_ref());
-
-        let accounts = vec![
-            AccountMeta::new_readonly(did_config, false),
-            AccountMeta::new_readonly(did_tree_auth, false),
-            AccountMeta::new(self.tree_address, false),
-            AccountMeta::new(payer.pubkey(), true),
-            AccountMeta::new_readonly(noop_program, false),
-            AccountMeta::new_readonly(
-                solana_sdk::sysvar::clock::id(),
-                false,
-            ),
-            AccountMeta::new_readonly(system_program::id(), false),
+        let mut accounts = vec![
+            AccountMeta::new(controller.pubkey(), true),
         ];
+        accounts.extend_from_slice(remaining_accounts);
 
         let ix = Instruction {
             program_id: self.did_program_id,
@@ -304,8 +230,8 @@ impl CompressionService {
 
         let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
             &[ix],
-            Some(&payer.pubkey()),
-            &[payer, merchant_keypair],
+            Some(&controller.pubkey()),
+            &[controller],
             recent_blockhash,
         );
 
@@ -317,59 +243,35 @@ impl CompressionService {
         Ok(sig)
     }
 
-    /// Update a merchant's VC via the DID program.
-    /// Only the platform authority can call this.
-    pub async fn update_vc(
+    /// Recover controller by proving ownership of the recovery key.
+    /// Sets controller_pk to new_controller_pk.
+    pub async fn recover_controller(
         &self,
-        authority: &Keypair,
-        merchant_did_hash: &[u8; 32],
-        active_pubkey: &Pubkey,
-        old_vc_hash: &[u8; 32],
-        new_vc_hash: &[u8; 32],
-        status: u8,
-        old_slot: u64,
-        leaf_index: u32,
-        root: &[u8; 32],
-        proof: &[[u8; 32]],
+        recovery_signer: &Keypair,
+        proof_bytes: &[u8],
+        current_did: &MerchantDidAccount,
+        account_meta: &light_sdk::instruction::account_meta::CompressedAccountMeta,
+        new_controller_pk: &Pubkey,
+        nonce: u64,
+        remaining_accounts: &[AccountMeta],
     ) -> Result<Signature> {
         let recent_blockhash = self
             .rpc_client
             .get_latest_blockhash()
             .map_err(|e| SolanaError::RpcError(e.to_string()))?;
 
-        let (did_config, _) = derive_did_config_pda(&self.did_program_id);
-        let (did_tree_auth, _) =
-            derive_tree_authority_pda(&self.tree_address, &self.did_program_id);
-
-        // Build Anchor instruction data: discriminator + borsh-serialized params
-        // Parameters order: merchant_did_hash, active_pubkey, new_vc_hash, status,
-        //                   old_slot, leaf_index, root, old_vc_hash
-        let mut data = Vec::with_capacity(8 + 32 + 32 + 32 + 1 + 8 + 4 + 32 + 32);
-        data.extend_from_slice(&anchor_sighash("update_vc"));
-        data.extend_from_slice(merchant_did_hash);
-        data.extend_from_slice(active_pubkey.as_ref());
-        data.extend_from_slice(new_vc_hash);
-        data.extend_from_slice(&[status]);
-        data.extend_from_slice(&old_slot.to_le_bytes());
-        data.extend_from_slice(&leaf_index.to_le_bytes());
-        data.extend_from_slice(root);
-        data.extend_from_slice(old_vc_hash);
+        let mut data = Vec::new();
+        data.extend_from_slice(&anchor_sighash("recover_controller"));
+        data.extend_from_slice(proof_bytes);
+        data.extend_from_slice(&borsh::to_vec(current_did).map_err(SolanaError::BorshError)?);
+        data.extend_from_slice(&borsh::to_vec(account_meta).map_err(SolanaError::BorshError)?);
+        data.extend_from_slice(new_controller_pk.as_ref());
+        data.extend_from_slice(&nonce.to_le_bytes());
 
         let mut accounts = vec![
-            AccountMeta::new_readonly(did_config, false),
-            AccountMeta::new_readonly(did_tree_auth, false),
-            AccountMeta::new(self.tree_address, false),
-            AccountMeta::new_readonly(authority.pubkey(), true),
-            AccountMeta::new_readonly(
-                solana_sdk::sysvar::clock::id(),
-                false,
-            ),
+            AccountMeta::new(recovery_signer.pubkey(), true),
         ];
-        // Proof nodes as remaining accounts
-        for node in proof {
-            let pubkey = Pubkey::new_from_array(*node);
-            accounts.push(AccountMeta::new_readonly(pubkey, false));
-        }
+        accounts.extend_from_slice(remaining_accounts);
 
         let ix = Instruction {
             program_id: self.did_program_id,
@@ -379,189 +281,8 @@ impl CompressionService {
 
         let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
             &[ix],
-            Some(&authority.pubkey()),
-            &[authority],
-            recent_blockhash,
-        );
-
-        let sig = self
-            .rpc_client
-            .send_and_confirm_transaction(&tx)
-            .map_err(|e| SolanaError::TransactionFailed(e.to_string()))?;
-
-        Ok(sig)
-    }
-
-    /// Update a merchant's status via the DID program.
-    /// Only the platform authority can call this.
-    pub async fn update_status(
-        &self,
-        authority: &Keypair,
-        merchant_did_hash: &[u8; 32],
-        active_pubkey: &Pubkey,
-        platform_vc_hash: &[u8; 32],
-        old_status: u8,
-        new_status: u8,
-        old_slot: u64,
-        leaf_index: u32,
-        root: &[u8; 32],
-        proof: &[[u8; 32]],
-    ) -> Result<Signature> {
-        let recent_blockhash = self
-            .rpc_client
-            .get_latest_blockhash()
-            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
-
-        let (did_config, _) = derive_did_config_pda(&self.did_program_id);
-        let (did_tree_auth, _) =
-            derive_tree_authority_pda(&self.tree_address, &self.did_program_id);
-
-        // Build Anchor instruction data: discriminator + borsh-serialized params
-        // Parameters order: merchant_did_hash, active_pubkey, platform_vc_hash,
-        //                   old_status, new_status, old_slot, leaf_index, root
-        let mut data = Vec::with_capacity(8 + 32 + 32 + 32 + 1 + 1 + 8 + 4 + 32);
-        data.extend_from_slice(&anchor_sighash("update_status"));
-        data.extend_from_slice(merchant_did_hash);
-        data.extend_from_slice(active_pubkey.as_ref());
-        data.extend_from_slice(platform_vc_hash);
-        data.extend_from_slice(&[old_status]);
-        data.extend_from_slice(&[new_status]);
-        data.extend_from_slice(&old_slot.to_le_bytes());
-        data.extend_from_slice(&leaf_index.to_le_bytes());
-        data.extend_from_slice(root);
-
-        let mut accounts = vec![
-            AccountMeta::new_readonly(did_config, false),
-            AccountMeta::new_readonly(did_tree_auth, false),
-            AccountMeta::new(self.tree_address, false),
-            AccountMeta::new_readonly(authority.pubkey(), true),
-            AccountMeta::new_readonly(
-                solana_sdk::sysvar::clock::id(),
-                false,
-            ),
-        ];
-        // Proof nodes as remaining accounts
-        for node in proof {
-            let pubkey = Pubkey::new_from_array(*node);
-            accounts.push(AccountMeta::new_readonly(pubkey, false));
-        }
-
-        let ix = Instruction {
-            program_id: self.did_program_id,
-            accounts,
-            data,
-        };
-
-        let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
-            &[ix],
-            Some(&authority.pubkey()),
-            &[authority],
-            recent_blockhash,
-        );
-
-        let sig = self
-            .rpc_client
-            .send_and_confirm_transaction(&tx)
-            .map_err(|e| SolanaError::TransactionFailed(e.to_string()))?;
-
-        Ok(sig)
-    }
-
-    /// Rotate a merchant's active key via the DID program.
-    /// The merchant signs: did_hash || old_active_pubkey || new_active_pubkey || platform_vc_hash || new_slot_le_bytes
-    pub async fn rotate_key(
-        &self,
-        payer: &Keypair,
-        merchant_did: &str,
-        old_active_pubkey: &Pubkey,
-        new_active_pubkey: &Pubkey,
-        platform_vc_hash: &[u8; 32],
-        old_status: u8,
-        old_slot: u64,
-        leaf_index: u32,
-        root: &[u8; 32],
-        proof: &[[u8; 32]],
-        merchant_keypair: &Keypair,
-    ) -> Result<Signature> {
-        let slot = self
-            .rpc_client
-            .get_slot()
-            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
-
-        let did_hash = hash(merchant_did.as_bytes()).to_bytes();
-
-        // Build the message the merchant signs
-        let mut message = Vec::with_capacity(32 + 32 + 32 + 32 + 8);
-        message.extend_from_slice(&did_hash);
-        message.extend_from_slice(old_active_pubkey.as_ref());
-        message.extend_from_slice(new_active_pubkey.as_ref());
-        message.extend_from_slice(platform_vc_hash);
-        message.extend_from_slice(&slot.to_le_bytes());
-
-        let signature = merchant_keypair.sign_message(&message);
-
-        let recent_blockhash = self
-            .rpc_client
-            .get_latest_blockhash()
-            .map_err(|e| SolanaError::RpcError(e.to_string()))?;
-
-        let (did_config, _) = derive_did_config_pda(&self.did_program_id);
-        let (did_tree_auth, _) =
-            derive_tree_authority_pda(&self.tree_address, &self.did_program_id);
-
-        // Build Anchor instruction data: discriminator + borsh-serialized params
-        // Parameters order: merchant_did, old_active_pubkey, new_active_pubkey,
-        //                   platform_vc_hash, old_status, old_slot, leaf_index, root, signature
-        let mut data = Vec::with_capacity(8 + 256 + 32 + 32 + 32 + 1 + 8 + 4 + 32 + 64);
-        data.extend_from_slice(&anchor_sighash("rotate_key"));
-        // merchant_did: String (borsh = u32 length prefix + utf8 bytes)
-        let did_bytes = merchant_did.as_bytes();
-        data.extend_from_slice(&(did_bytes.len() as u32).to_le_bytes());
-        data.extend_from_slice(did_bytes);
-        // old_active_pubkey: Pubkey (32 bytes)
-        data.extend_from_slice(old_active_pubkey.as_ref());
-        // new_active_pubkey: Pubkey (32 bytes)
-        data.extend_from_slice(new_active_pubkey.as_ref());
-        // platform_vc_hash: [u8; 32]
-        data.extend_from_slice(platform_vc_hash);
-        // old_status: u8
-        data.extend_from_slice(&[old_status]);
-        // old_slot: u64
-        data.extend_from_slice(&old_slot.to_le_bytes());
-        // leaf_index: u32
-        data.extend_from_slice(&leaf_index.to_le_bytes());
-        // root: [u8; 32]
-        data.extend_from_slice(root);
-        // signature: [u8; 64]
-        data.extend_from_slice(signature.as_ref());
-
-        let mut accounts = vec![
-            AccountMeta::new_readonly(did_config, false),
-            AccountMeta::new_readonly(did_tree_auth, false),
-            AccountMeta::new(self.tree_address, false),
-            AccountMeta::new(payer.pubkey(), true),
-            AccountMeta::new_readonly(
-                solana_sdk::sysvar::clock::id(),
-                false,
-            ),
-            AccountMeta::new_readonly(system_program::id(), false),
-        ];
-        // Proof nodes as remaining accounts
-        for node in proof {
-            let pubkey = Pubkey::new_from_array(*node);
-            accounts.push(AccountMeta::new_readonly(pubkey, false));
-        }
-
-        let ix = Instruction {
-            program_id: self.did_program_id,
-            accounts,
-            data,
-        };
-
-        let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
-            &[ix],
-            Some(&payer.pubkey()),
-            &[payer, merchant_keypair],
+            Some(&recovery_signer.pubkey()),
+            &[recovery_signer],
             recent_blockhash,
         );
 
@@ -579,135 +300,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_compute_leaf_hash_deterministic() {
-        let leaf = MerchantLeaf {
-            merchant_did_hash: [1u8; 32],
-            active_pubkey: Pubkey::new_unique(),
-            platform_vc_hash: [2u8; 32],
-            status: crate::types::MERCHANT_STATUS_ACTIVE,
-            slot_updated: 100,
-        };
-        let h1 = CompressionService::compute_leaf_hash(&leaf);
-        let h2 = CompressionService::compute_leaf_hash(&leaf);
-        assert_eq!(h1, h2, "Leaf hash should be deterministic");
-    }
-
-    #[test]
-    fn test_compute_leaf_hash_different_inputs() {
-        let leaf1 = MerchantLeaf {
-            merchant_did_hash: [1u8; 32],
-            active_pubkey: Pubkey::new_unique(),
-            platform_vc_hash: [2u8; 32],
-            status: crate::types::MERCHANT_STATUS_ACTIVE,
-            slot_updated: 100,
-        };
-        let leaf2 = MerchantLeaf {
-            merchant_did_hash: [3u8; 32],
-            active_pubkey: Pubkey::new_unique(),
-            platform_vc_hash: [4u8; 32],
-            status: crate::types::MERCHANT_STATUS_REVOKED,
-            slot_updated: 200,
-        };
-        let h1 = CompressionService::compute_leaf_hash(&leaf1);
-        let h2 = CompressionService::compute_leaf_hash(&leaf2);
-        assert_ne!(h1, h2, "Different leaves should produce different hashes");
-    }
-
-    #[test]
-    fn test_compute_leaf_hash_status_matters() {
-        let mut leaf1 = MerchantLeaf {
-            merchant_did_hash: [1u8; 32],
-            active_pubkey: Pubkey::new_unique(),
-            platform_vc_hash: [2u8; 32],
-            status: crate::types::MERCHANT_STATUS_ACTIVE,
-            slot_updated: 100,
-        };
-        let leaf2 = MerchantLeaf {
-            merchant_did_hash: leaf1.merchant_did_hash,
-            active_pubkey: leaf1.active_pubkey,
-            platform_vc_hash: leaf1.platform_vc_hash,
-            status: crate::types::MERCHANT_STATUS_SUSPENDED,
-            slot_updated: leaf1.slot_updated,
-        };
-        let h1 = CompressionService::compute_leaf_hash(&leaf1);
-        let h2 = CompressionService::compute_leaf_hash(&leaf2);
-        assert_ne!(h1, h2, "Status change should produce different hash");
-    }
-
-    #[test]
-    fn test_verify_proof_locally_single_leaf() {
-        let leaf_hash = [5u8; 32];
-        let proof: Vec<[u8; 32]> = vec![];
-        let root = leaf_hash;
-        let service = CompressionService::new(
-            "https://api.devnet.solana.com",
-            "11111111111111111111111111111111",
-            "11111111111111111111111111111111",
-            "11111111111111111111111111111111",
-        )
-        .unwrap();
-        assert!(
-            service.verify_proof_locally(&leaf_hash, &proof, &root),
-            "Single leaf tree: root should equal leaf hash"
-        );
-    }
-
-    #[test]
-    fn test_verify_proof_locally_two_leaves() {
-        let leaf1 = [1u8; 32];
-        let leaf2 = [2u8; 32];
-        let (left, right) = if leaf1 < leaf2 {
-            (leaf1, leaf2)
-        } else {
-            (leaf2, leaf1)
-        };
-        let root = hashv(&[&left, &right]).to_bytes();
-
-        let service = CompressionService::new(
-            "https://api.devnet.solana.com",
-            "11111111111111111111111111111111",
-            "11111111111111111111111111111111",
-            "11111111111111111111111111111111",
-        )
-        .unwrap();
-
-        assert!(
-            service.verify_proof_locally(&leaf1, &[leaf2], &root),
-            "Proof for leaf1 should verify"
-        );
-        assert!(
-            service.verify_proof_locally(&leaf2, &[leaf1], &root),
-            "Proof for leaf2 should verify"
-        );
-    }
-
-    #[test]
-    fn test_verify_proof_locally_fails_wrong_root() {
-        let leaf = [1u8; 32];
-        let sibling = [2u8; 32];
-        let wrong_root = [99u8; 32];
-        let service = CompressionService::new(
-            "https://api.devnet.solana.com",
-            "11111111111111111111111111111111",
-            "11111111111111111111111111111111",
-            "11111111111111111111111111111111",
-        )
-        .unwrap();
-        assert!(
-            !service.verify_proof_locally(&leaf, &[sibling], &wrong_root),
-            "Should fail with wrong root"
-        );
-    }
-
-    #[test]
     fn test_anchor_sighash_deterministic() {
-        let h1 = anchor_sighash("append");
-        let h2 = anchor_sighash("append");
+        let h1 = anchor_sighash("initialize_did");
+        let h2 = anchor_sighash("initialize_did");
         assert_eq!(h1, h2);
-        let h3 = anchor_sighash("replace_leaf");
+        let h3 = anchor_sighash("update_did_with_vc");
         assert_ne!(
             h1, h3,
             "Different instruction names should have different sighashes"
         );
+    }
+
+    #[test]
+    fn test_derive_compressed_address() {
+        let service =
+            DidService::new("https://api.devnet.solana.com", "11111111111111111111111111111111")
+                .unwrap();
+        let original_pk = Pubkey::new_unique();
+        let tree_pk = Pubkey::new_unique();
+        let (addr1, seed1) = service.derive_compressed_address(&original_pk, &tree_pk);
+        let (addr2, seed2) = service.derive_compressed_address(&original_pk, &tree_pk);
+        assert_eq!(addr1, addr2, "Compressed address derivation should be deterministic");
+        assert_eq!(seed1.0, seed2.0, "Address seed should be deterministic");
+    }
+
+    #[test]
+    fn test_merchant_did_account_borsh_roundtrip() {
+        let account = MerchantDidAccount {
+            original_pk: Pubkey::new_unique(),
+            controller_pk: Pubkey::new_unique(),
+            recovery_pk: Pubkey::new_unique(),
+            vc_hash: [42u8; 32],
+            last_updated: 1700000000,
+            nonce: 5,
+        };
+        let bytes = borsh::to_vec(&account).unwrap();
+        let decoded: MerchantDidAccount =
+            borsh::BorshDeserialize::deserialize(&mut bytes.as_slice()).unwrap();
+        assert_eq!(decoded.original_pk, account.original_pk);
+        assert_eq!(decoded.controller_pk, account.controller_pk);
+        assert_eq!(decoded.recovery_pk, account.recovery_pk);
+        assert_eq!(decoded.vc_hash, account.vc_hash);
+        assert_eq!(decoded.last_updated, account.last_updated);
+        assert_eq!(decoded.nonce, account.nonce);
+    }
+
+    #[test]
+    fn test_compressed_address_differs_for_different_pks() {
+        let service =
+            DidService::new("https://api.devnet.solana.com", "11111111111111111111111111111111")
+                .unwrap();
+        let pk1 = Pubkey::new_unique();
+        let pk2 = Pubkey::new_unique();
+        let tree_pk = Pubkey::new_unique();
+        let (addr1, _) = service.derive_compressed_address(&pk1, &tree_pk);
+        let (addr2, _) = service.derive_compressed_address(&pk2, &tree_pk);
+        assert_ne!(addr1, addr2, "Different original PKs should produce different addresses");
     }
 }
