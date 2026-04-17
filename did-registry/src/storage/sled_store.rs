@@ -40,4 +40,17 @@ impl MerchantStore {
             None
         }
     }
+
+    /// Save a verifiable credential keyed by its SHA-256 hash (hex-encoded).
+    pub fn save_vc(&self, vc_hash_hex: &str, vc_json: &[u8]) -> anyhow::Result<()> {
+        let key = format!("vc:{}", vc_hash_hex);
+        self.db.insert(key, vc_json)?;
+        Ok(())
+    }
+
+    /// Get a verifiable credential by its SHA-256 hash (hex-encoded).
+    pub fn get_vc(&self, vc_hash_hex: &str) -> Option<Vec<u8>> {
+        let key = format!("vc:{}", vc_hash_hex);
+        self.db.get(key).ok().flatten().map(|ivec| ivec.to_vec())
+    }
 }

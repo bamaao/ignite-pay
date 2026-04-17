@@ -13,3 +13,4 @@ photon_url = ""
 [auth]
 jwt_secret = "did-registry-secret"
 platform_public_key = ""
+platform_signing_key_path = ""

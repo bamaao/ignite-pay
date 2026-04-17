@@ -32,6 +32,9 @@ pub struct LightConfig {
 pub struct AuthConfig {
     pub jwt_secret: String,
     pub platform_public_key: String,
+    /// Path to a file containing 32 raw bytes of an Ed25519 private key
+    /// used for signing VCs. If empty, an ephemeral key is generated (dev only).
+    pub platform_signing_key_path: String,
 }
 
 impl Config {

@@ -1,3 +1,4 @@
+pub mod issue_vc;
 pub mod nonce;
 pub mod resolve;
 pub mod register;

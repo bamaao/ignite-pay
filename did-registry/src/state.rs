@@ -8,6 +8,15 @@ use light_client::rpc::{LightClient, LightClientConfig, Rpc};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signer::Signer;
 
+/// Encode an Ed25519 public key as a `did:ignite:z...` DID.
+/// Mirrors the private `encode_did_ignite` in ignite-pay-core/src/identity.rs.
+fn encode_did_ignite(pub_key: &[u8; 32]) -> String {
+    let mut prefixed = vec![0xed, 0x01];
+    prefixed.extend_from_slice(pub_key);
+    let encoded = bs58::encode(&prefixed).into_string();
+    format!("did:ignite:z{}", encoded)
+}
+
 /// Shared application state for the DID registry service.
 /// Uses ZK Compression via LightClient (Photon RPC) for reading compressed
 /// accounts and obtaining validity proofs, and DidService for building
@@ -22,6 +31,10 @@ pub struct RegistryState {
     pub payer: Arc<solana_sdk::signature::Keypair>,
     /// Issued nonces for replay protection: nonce -> expiry timestamp
     pub nonces: Arc<dashmap::DashMap<String, i64>>,
+    /// Platform Ed25519 signing key for issuing VCs.
+    pub platform_signing_key: Arc<ed25519_dalek::SigningKey>,
+    /// Platform DID derived from the signing key's public key.
+    pub platform_did: String,
 }
 
 impl RegistryState {
@@ -51,6 +64,23 @@ impl RegistryState {
 
         tracing::info!("Registry payer pubkey: {}", payer.pubkey());
 
+        // Load platform signing key from file or generate ephemeral for dev
+        let platform_signing_key = if config.auth.platform_signing_key_path.is_empty() {
+            tracing::warn!("No platform signing key path configured, using ephemeral key (dev only)");
+            ed25519_dalek::SigningKey::from_bytes(&[42u8; 32]) // deterministic for dev
+        } else {
+            let key_bytes = std::fs::read(&config.auth.platform_signing_key_path)?;
+            if key_bytes.len() != 32 {
+                anyhow::bail!("Platform signing key file must contain exactly 32 bytes, got {}", key_bytes.len());
+            }
+            let mut bytes = [0u8; 32];
+            bytes.copy_from_slice(&key_bytes);
+            ed25519_dalek::SigningKey::from_bytes(&bytes)
+        };
+        let verifying_key = platform_signing_key.verifying_key();
+        let platform_did = encode_did_ignite(verifying_key.as_bytes());
+        tracing::info!("Platform DID: {}", platform_did);
+
         // Create LightClient synchronously (using tokio runtime handle)
         let light_rpc = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
@@ -70,6 +100,8 @@ impl RegistryState {
             db: Arc::new(db),
             payer: Arc::new(payer),
             nonces: Arc::new(dashmap::DashMap::new()),
+            platform_signing_key: Arc::new(platform_signing_key),
+            platform_did,
         })
     }
 
