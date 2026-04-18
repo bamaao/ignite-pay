@@ -1,3 +1,4 @@
+pub mod channel;
 pub mod compression;
 pub mod error;
 pub mod payment;

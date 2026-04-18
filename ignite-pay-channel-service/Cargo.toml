@@ -1,0 +1,48 @@
+[package]
+name = "ignite-pay-channel-service"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "channel-user"
+path = "src/bin/channel-user.rs"
+
+[[bin]]
+name = "channel-provider"
+path = "src/bin/channel-provider.rs"
+
+[[bin]]
+name = "channel-hub"
+path = "src/bin/channel-hub.rs"
+
+[dependencies]
+ignite-pay-state-channel = { path = "../ignite-pay-state-channel" }
+ignite-pay-solana = { path = "../ignite-pay-solana" }
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+tower-http = { version = "0.6", features = ["cors"] }
+http = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+borsh = "0.10"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1"
+toml = "0.8"
+dashmap = "6"
+ed25519-dalek = "1"
+hex = "0.4"
+bs58 = "0.5"
+sled = "0.34"
+solana-sdk = "2.1"
+solana-client = "2.1"
+spl-token = "7"
+spl-associated-token-account = "6"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

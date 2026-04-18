@@ -1,0 +1,22 @@
+[server]
+host = "0.0.0.0"
+port = 3003
+
+[solana]
+rpc_url = "https://api.devnet.solana.com"
+channel_program_id = "DJBHr35jL3JAGoU7bKMsEFmpeNMrCSK7oYQE4HJ3GBUe"
+keypair_path = "./keys/hub.key"
+
+[channel]
+default_tree_depth = 4
+default_challenge_duration = 5000
+default_min_challenge_delay = 1000
+default_settle_window = 10000
+auto_close_offset = 500000
+db_path = "./data/channel_hub"
+
+[compliance]
+spending_threshold = 1000000000
+per_channel_limit = 100000000
+window_slots = 100000
+travel_rule_threshold = 500000000
