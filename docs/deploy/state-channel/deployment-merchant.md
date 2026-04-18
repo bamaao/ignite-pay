@@ -2,21 +2,304 @@
 
 ## 1. 概述
 
-商户端（Party B，收款方）是状态通道的服务提供者。商户需要：
+商户端（Party B，收款方）是状态通道的服务提供者，负责接收用户支付、配签确认、管理 HTLC 原像、以及在结算时认领叶子。商户使用 `channel-provider` 二进制部署为持续运行的服务端进程。
 
-1. 生成并注册 `did:ignite` 去中心化身份
-2. 获取平台签发的 Verifiable Credential (VC)
-3. 将 DID 注册到链上 Concurrent Merkle Tree
-4. 接收用户通过通道发起的支付，管理 HTLC 原像
-5. 在结算时认领属于自己的 UTXO 叶子
-
-商户端通过 `ignite-pay-core` 和 `ignite-pay-state-channel` 离链库作为 Rust 库集成。
+支持两种部署方式：
+- **方式一（推荐）**：通过 `ignite-pay-channel-service` 的 `channel-provider` 二进制作为独立 HTTP 服务运行
+- **方式二**：通过 `ignite-pay-state-channel` 库集成到自有服务中
 
 ---
 
-## 2. DID 数字身份
+## 2. 服务部署
 
-### 2.1 生成 DID 密钥对
+### 2.1 编译
+
+```bash
+cd ignite-pay-channel-service
+cargo build --release --bin channel-provider
+```
+
+产物：`target/release/channel-provider`
+
+### 2.2 生成密钥
+
+```bash
+solana-keygen new --outfile ./keys/provider.key
+```
+
+> 如果 `keypair_path` 留空，服务启动时自动生成临时密钥（仅测试用）。
+
+### 2.3 配置文件
+
+创建 `config-provider.toml`：
+
+```toml
+[server]
+host = "0.0.0.0"        # 监听地址，生产环境建议 "127.0.0.1" + 反向代理
+port = 3002              # 监听端口
+
+[solana]
+rpc_url = "https://api.devnet.solana.com"
+channel_program_id = "DJBHr35jL3JAGoU7bKMsEFmpeNMrCSK7oYQE4HJ3GBUe"
+keypair_path = "./keys/provider.key"
+
+[channel]
+default_tree_depth = 4
+default_challenge_duration = 5000
+default_min_challenge_delay = 1000
+default_settle_window = 10000
+auto_close_offset = 0
+db_path = "./data/channel_provider"
+```
+
+> Provider 角色无需 `[compliance]` 配置段，合规由 User 端管理。
+
+### 2.4 启动服务
+
+```bash
+# 使用默认配置文件 config-provider.toml
+./channel-provider
+
+# 指定配置文件
+./channel-provider /path/to/config-provider.toml
+
+# 启用 debug 日志
+RUST_LOG=debug ./channel-provider
+```
+
+### 2.5 API 接口
+
+#### 通用端点
+
+| 方法 | 路径 | 说明 |
+|:-----|:-----|:-----|
+| GET | `/health` | 健康检查 |
+| WS | `/ws` | WebSocket 连接 |
+
+#### 通道管理端点
+
+| 方法 | 路径 | 说明 |
+|:-----|:-----|:-----|
+| POST | `/v1/channels/{id}/fund` | 注资通道（商户端存款） |
+| GET | `/v1/channels` | 列出通道 |
+| GET | `/v1/channels/{id}` | 查询通道状态 |
+
+#### 支付处理端点
+
+| 方法 | 路径 | 说明 |
+|:-----|:-----|:-----|
+| POST | `/v1/channels/{id}/cosign` | Provider 配签 |
+| POST | `/v1/channels/{id}/accept-payment` | 接受支付 |
+| POST | `/v1/channels/{id}/accept-batch` | 接受批量支付 |
+
+#### 结算端点
+
+| 方法 | 路径 | 说明 |
+|:-----|:-----|:-----|
+| POST | `/v1/channels/{id}/close` | 协作关闭 |
+| POST | `/v1/channels/{id}/challenge` | 发起争议 |
+| POST | `/v1/channels/{id}/submit-counter` | 提交反状态 |
+| POST | `/v1/channels/{id}/claim` | 认领叶子 |
+| POST | `/v1/channels/{id}/finalize` | 最终结算 |
+
+### 2.6 示例请求
+
+```bash
+# 健康检查
+curl http://localhost:3002/health
+
+# 商户注资通道
+curl -X POST http://localhost:3002/v1/channels/{channel_id}/fund \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount": 500000,
+    "token_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+  }'
+
+# 接受支付（验证并应用用户的 LeafUpdate）
+curl -X POST http://localhost:3002/v1/channels/{channel_id}/accept-payment \
+  -H "Content-Type: application/json" \
+  -d '{
+    "leaf_update": {
+      "channel_id": "hex...",
+      "sequence": 5,
+      "leaf_index": 2,
+      "prev_leaf_hash": "hex...",
+      "new_leaf": { ... },
+      "signature": [64 bytes]
+    }
+  }'
+
+# Provider 配签
+curl -X POST http://localhost:3002/v1/channels/{channel_id}/cosign \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sequence": 5,
+    "root": "hex..."
+  }'
+
+# 接受批量支付
+curl -X POST http://localhost:3002/v1/channels/{channel_id}/accept-batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "updates": [
+      { "channel_id": "hex...", "sequence": 5, ... },
+      { "channel_id": "hex...", "sequence": 6, ... }
+    ]
+  }'
+
+# 协作关闭通道
+curl -X POST http://localhost:3002/v1/channels/{channel_id}/close \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sequence": 10,
+    "root": "hex...",
+    "signature_a": [64 bytes],
+    "signature_b": [64 bytes]
+  }'
+
+# 认领叶子
+curl -X POST http://localhost:3002/v1/channels/{channel_id}/claim \
+  -H "Content-Type: application/json" \
+  -d '{
+    "leaf_index": 1,
+    "leaf_amount": 500000,
+    "leaf_hash": "hex...",
+    "leaf_data": "hex...",
+    "leaf_owner": "商户Solana公钥",
+    "proof": ["hex...", "hex...", "hex...", "hex..."],
+    "claimer_signature": [64 bytes]
+  }'
+
+# 提交反状态（争议响应）
+curl -X POST http://localhost:3002/v1/channels/{channel_id}/submit-counter \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sequence": 10,
+    "root": "hex...",
+    "signature_a": [64 bytes],
+    "signature_b": [64 bytes]
+  }'
+```
+
+### 2.7 WebSocket 实时通信
+
+商户端支持 WebSocket 连接，用于实时接收用户的 LeafUpdate、配签请求和 HTLC 状态变更。
+
+```javascript
+const ws = new WebSocket('ws://localhost:3002/ws');
+
+// 认证
+ws.onopen = () => {
+  const timestamp = Date.now();
+  const message = `channel-ws-auth:${timestamp}`;
+  const signature = await ed25519.sign(sha256(message), privateKey);
+
+  ws.send(JSON.stringify({
+    type: 'auth',
+    pubkey: base58Encode(publicKey),
+    signature: Array.from(signature),
+    timestamp
+  }));
+};
+
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  switch (msg.type) {
+    case 'leaf_update':
+      // 处理用户的 LeafUpdate
+      break;
+    case 'cosign_request':
+      // 响应配签请求
+      break;
+    case 'htlc_preimage':
+      // 处理 HTLC 原像揭示
+      break;
+  }
+};
+```
+
+详细 WebSocket 协议参见 [场景十二：WebSocket 实时通信](scenarios/12-websocket.md)。
+
+### 2.8 systemd 服务
+
+```ini
+[Unit]
+Description=Ignite Pay Channel Provider Service
+After=network.target
+
+[Service]
+Type=simple
+User=ignite
+WorkingDirectory=/opt/ignite-pay
+ExecStart=/opt/ignite-pay/channel-provider /opt/ignite-pay/config-provider.toml
+Environment=RUST_LOG=info
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 2.9 Nginx 反向代理
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name merchant.ignite-pay.example.com;
+
+    ssl_certificate     /etc/ssl/certs/ignite-pay.pem;
+    ssl_certificate_key /etc/ssl/private/ignite-pay.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:3002;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /ws {
+        proxy_pass http://127.0.0.1:3002;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+}
+```
+
+---
+
+## 3. 配置参数详解
+
+| 参数 | 类型 | 说明 |
+|:-----|:-----|:-----|
+| `server.host` | string | HTTP 监听地址 |
+| `server.port` | u16 | HTTP 监听端口（默认 3002） |
+| `solana.rpc_url` | string | Solana JSON RPC 端点 |
+| `solana.channel_program_id` | string | 链上通道程序 ID |
+| `solana.keypair_path` | string | Ed25519 密钥对文件路径 |
+| `channel.db_path` | string | sled 数据库路径 |
+| `channel.default_tree_depth` | u32 | 默认 Merkle 树深度 |
+| `channel.auto_close_offset` | u64 | 自动关闭偏移量（0 = 不自动关闭） |
+
+---
+
+## 4. 监控建议
+
+| 指标 | 阈值 | 处理 |
+|:-----|:-----|:-----|
+| 活跃通道数 | 趋势变化 | 关注业务量变化 |
+| 配签延迟 | > 500ms | 优化网络或节点性能 |
+| 结算窗口内认领率 | < 100% | 检查认领逻辑是否及时 |
+| HTLC 过期率 | > 1% | 检查原像揭示流程 |
+| sled 数据库大小 | > 2 GB | 归档历史数据 |
+| 支付接受失败率 | > 0.1% | 检查签名验证逻辑 |
+
+---
+
+## 5. DID 数字身份
+
+### 5.1 生成 DID 密钥对
 
 商户使用 `ignite-pay-core` 的 `identity` 模块生成 `did:ignite` 去中心化身份：
 
@@ -73,7 +356,7 @@ println!("商户 DID: {}", merchant_did);
 
 > **重要**：DID 签名密钥和 Solana 收款密钥是分离的。DID 密钥用于身份认证，Solana 收款密钥用于接收资金。
 
-### 2.2 DID Document 结构
+### 5.2 DID Document 结构
 
 ```json
 {
@@ -94,7 +377,7 @@ println!("商户 DID: {}", merchant_did);
 }
 ```
 
-### 2.3 申请平台背书 (VC)
+### 5.3 申请平台背书 (VC)
 
 向 Ignite Pay 平台提交以下信息：
 
@@ -150,7 +433,7 @@ let vc = VerifiableCredential::sign(
 }
 ```
 
-### 2.4 链上注册（SPL Account Compression）
+### 5.4 链上注册（SPL Account Compression）
 
 平台将商户信息压缩上链，使用 `ignite-pay-core` 的 `SolanaDidBridge`（需启用 `solana` feature）：
 
@@ -177,7 +460,7 @@ use ignite_pay_core::solana_did::SolanaDidBridge;
 | maxBufferSize | 64 | 并发更新缓冲区 |
 | DAS API | Helius 端点 | 用于查询 Merkle Proof |
 
-### 2.5 DID 持久化
+### 5.5 DID 持久化
 
 ```rust
 use ignite_pay_core::identity::{save_identity, load_did};
@@ -193,7 +476,7 @@ let did = load_did(&db)?;
 
 ---
 
-## 3. 角色与职责
+## 6. 角色与职责
 
 | 职责 | 说明 |
 |:-----|:-----|
@@ -207,9 +490,9 @@ let did = load_did(&db)?;
 
 ---
 
-## 4. 通道集成
+## 7. 通道集成（库集成模式）
 
-### 4.1 初始化 ChannelManager
+### 7.1 初始化 ChannelManager
 
 ```rust
 use ignite_pay_state_channel::channel::ChannelManager;
@@ -223,7 +506,7 @@ let provider_keypair = generate_keypair();
 let provider_pubkey = to_pubkey(&provider_keypair);
 ```
 
-### 4.2 加载通道
+### 7.2 加载通道
 
 当用户开通通道后，商户从链上事件或通信协议获取 `channel_id`，加载通道状态：
 
@@ -235,7 +518,7 @@ println!("通道状态: {:?}", state.metadata.status);
 println!("用户存款: {}", state.metadata.deposit_a);
 ```
 
-### 4.3 Provider 配资（可选）
+### 7.3 Provider 配资（可选）
 
 如果通道需要双端注资，商户可以注入资金：
 
@@ -252,9 +535,9 @@ let update = manager.fund_channel(
 
 ---
 
-## 5. 处理用户支付
+## 8. 处理用户支付（库集成模式）
 
-### 5.1 接收 LeafUpdate
+### 8.1 接收 LeafUpdate
 
 商户接收用户发送的 LeafUpdate，验证签名后应用：
 
@@ -270,7 +553,7 @@ if !verify_leaf_update_signature(&leaf_update, &state.metadata.user_pubkey) {
 manager.apply_leaf_update(&mut state, &leaf_update, &state.metadata.user_pubkey)?;
 ```
 
-### 5.2 Provider 配签
+### 8.2 Provider 配签
 
 商户对更新后的状态进行配签，表示同意新状态：
 
@@ -284,7 +567,7 @@ let cosignature = manager.provider_cosign_state(
 // 返回给用户作为确认
 ```
 
-### 5.3 批量更新处理
+### 8.3 批量更新处理
 
 ```rust
 // 用户可能一次发送多个 LeafUpdate
@@ -302,9 +585,9 @@ let result = manager.apply_leaf_update_batch(
 
 ---
 
-## 6. HTLC 管理（商户侧）
+## 9. HTLC 管理（库集成模式）
 
-### 6.1 服务完成后揭示原像
+### 9.1 服务完成后揭示原像
 
 当商户提供完服务后，需要揭示 HTLC 原像来完成支付：
 
@@ -334,7 +617,7 @@ let (hash_lock, preimage) = htlc_mgr.create_htlc(
 htlc_mgr.reveal_preimage(&hash_lock, &preimage)?;
 ```
 
-### 6.2 检查过期
+### 9.2 检查过期
 
 ```rust
 // 定期检查 HTLC 是否过期
@@ -344,7 +627,7 @@ for hash_lock in &expired {
 }
 ```
 
-### 6.3 HTLC 生命周期
+### 9.3 HTLC 生命周期
 
 ```
 Pending → (原像揭示) → Revealed → (链上解决) → Fulfilled
@@ -353,9 +636,9 @@ Pending → (超时) → Expired → (退款) → Refunded
 
 ---
 
-## 7. 结算操作
+## 10. 结算操作（库集成模式）
 
-### 7.1 认领叶子
+### 10.1 认领叶子
 
 在结算窗口内，商户提交 Merkle Proof 认领属于自己的 UTXO：
 
@@ -380,7 +663,7 @@ let claim_msg = claim_message(&channel_id, leaf_index as u32, claim_amount, curr
 let signature = provider_keypair.sign(&claim_msg);
 ```
 
-### 7.2 HTLC 认领
+### 10.2 HTLC 认领
 
 如果叶子是 HTLC 类型，使用链上 `verify_htlc` 指令：
 
@@ -397,7 +680,7 @@ let signature = provider_keypair.sign(&claim_msg);
 // - claimer_signature
 ```
 
-### 7.3 HTLC 退款
+### 10.3 HTLC 退款
 
 如果 HTLC 过期，商户不认领（资金退回用户），或用户使用 `htlc_refund` 指令：
 
@@ -406,7 +689,7 @@ let signature = provider_keypair.sign(&claim_msg);
 // 用户提交 htlc_refund 指令，资金返回 leaf.owner
 ```
 
-### 7.4 最终结算
+### 10.4 最终结算
 
 结算窗口结束后，任何一方调用 `finalize_settlement`：
 
@@ -420,9 +703,9 @@ let signature = provider_keypair.sign(&claim_msg);
 
 ---
 
-## 8. 合规支持
+## 11. 合规支持（库集成模式）
 
-### 8.1 消费限额
+### 11.1 消费限额
 
 如果通道启用了合规管理：
 
@@ -454,7 +737,7 @@ match action {
 }
 ```
 
-### 8.2 审计追踪
+### 11.2 审计追踪
 
 ```rust
 // 记录每次 LeafUpdate
@@ -470,7 +753,7 @@ for update in &trail {
 
 ---
 
-## 9. 密钥轮换
+## 12. 密钥轮换
 
 当商户需要更换 Solana 收款地址时：
 
@@ -484,7 +767,7 @@ for update in &trail {
 
 ---
 
-## 10. 多通道管理
+## 13. 多通道管理
 
 商户通常同时维护与多个用户的通道：
 
@@ -504,7 +787,7 @@ let htlc_mgr_2 = HtlcManager::with_db(db.clone(), channel_id_2);
 
 ---
 
-## 11. 安全检查清单
+## 14. 安全检查清单
 
 | 检查项 | 说明 | 状态 |
 |:-------|:-----|:-----|
