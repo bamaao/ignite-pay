@@ -98,6 +98,7 @@ Future<SessionKeyInfo> createSessionKeyForPayment({
 );
 
 /// Authenticate with the mediator and get a JWT token.
+/// Uses challenge-response: fetches a nonce, signs it with the DID key, and exchanges for JWT.
 Future<String> authenticateWithMediator({
   required String mediatorUrl,
   required String did,
@@ -114,6 +115,89 @@ Future<void> registerDeviceToken({
 }) => RustLib.instance.api.crateApiSimpleRegisterDeviceToken(
   mediatorUrl: mediatorUrl,
   authToken: authToken,
+  fcmToken: fcmToken,
+);
+
+/// Parse an OOB invitation URL (from QR code scan).
+/// Extracts the MCP DID, DID document, and mediator WS URL from the invitation.
+Future<OobInvitationData> parseOobInvitation({required String invitationUrl}) =>
+    RustLib.instance.api.crateApiSimpleParseOobInvitation(
+      invitationUrl: invitationUrl,
+    );
+
+/// List all session keys stored locally.
+Future<List<SessionKeyEntry>> listSessionKeys({required String storagePath}) =>
+    RustLib.instance.api.crateApiSimpleListSessionKeys(
+      storagePath: storagePath,
+    );
+
+/// Find the first active session key.
+Future<SessionKeyEntry?> findActiveSessionKey({required String storagePath}) =>
+    RustLib.instance.api.crateApiSimpleFindActiveSessionKey(
+      storagePath: storagePath,
+    );
+
+/// Build an unsigned register-session-key transaction for external wallet signing.
+Future<UnsignedRegisterTx> buildUnsignedRegisterTx({
+  required String storagePath,
+  required String rpcUrl,
+  required BigInt spendingLimit,
+  required PlatformInt64 durationSecs,
+}) => RustLib.instance.api.crateApiSimpleBuildUnsignedRegisterTx(
+  storagePath: storagePath,
+  rpcUrl: rpcUrl,
+  spendingLimit: spendingLimit,
+  durationSecs: durationSecs,
+);
+
+/// Complete registration after receiving the owner signature from an external wallet.
+Future<SessionKeyInfo> completeRegisterWithSignature({
+  required String storagePath,
+  required String ephemeralPubkey,
+  required String ownerSignatureB58,
+  required String rpcUrl,
+}) => RustLib.instance.api.crateApiSimpleCompleteRegisterWithSignature(
+  storagePath: storagePath,
+  ephemeralPubkey: ephemeralPubkey,
+  ownerSignatureB58: ownerSignatureB58,
+  rpcUrl: rpcUrl,
+);
+
+/// Revoke a session key on-chain.
+Future<String> revokeSessionKeyOnchain({
+  required String storagePath,
+  required String sessionPubkey,
+  required String rpcUrl,
+}) => RustLib.instance.api.crateApiSimpleRevokeSessionKeyOnchain(
+  storagePath: storagePath,
+  sessionPubkey: sessionPubkey,
+  rpcUrl: rpcUrl,
+);
+
+/// Delete a session key from local storage only.
+Future<void> deleteSessionKeyLocal({
+  required String storagePath,
+  required String sessionPubkey,
+}) => RustLib.instance.api.crateApiSimpleDeleteSessionKeyLocal(
+  storagePath: storagePath,
+  sessionPubkey: sessionPubkey,
+);
+
+/// Send a connection request to the MCP via the mediator.
+/// This is called after parsing the QR code invitation.
+Future<void> sendConnectionRequest({
+  required String storagePath,
+  required String mcpDid,
+  required String mcpDidDocJson,
+  required String mediatorWsUrl,
+  required String pushChannel,
+  String? fcmToken,
+}) => RustLib.instance.api.crateApiSimpleSendConnectionRequest(
+  storagePath: storagePath,
+  mcpDid: mcpDid,
+  mcpDidDocJson: mcpDidDocJson,
+  mediatorWsUrl: mediatorWsUrl,
+  pushChannel: pushChannel,
   fcmToken: fcmToken,
 );
 
@@ -160,4 +244,36 @@ class DidInfo {
           runtimeType == other.runtimeType &&
           did == other.did &&
           didDocJson == other.didDocJson;
+}
+
+/// Parsed OOB invitation data.
+class OobInvitationData {
+  final String mcpDid;
+  final String didDocJson;
+  final String mediatorWsUrl;
+  final String label;
+
+  const OobInvitationData({
+    required this.mcpDid,
+    required this.didDocJson,
+    required this.mediatorWsUrl,
+    required this.label,
+  });
+
+  @override
+  int get hashCode =>
+      mcpDid.hashCode ^
+      didDocJson.hashCode ^
+      mediatorWsUrl.hashCode ^
+      label.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OobInvitationData &&
+          runtimeType == other.runtimeType &&
+          mcpDid == other.mcpDid &&
+          didDocJson == other.didDocJson &&
+          mediatorWsUrl == other.mediatorWsUrl &&
+          label == other.label;
 }

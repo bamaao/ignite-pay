@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 
 use crate::api::identity::IdentityManager;
 use crate::api::notification::{DecryptedMessage, DidcommMessage};
-use crate::api::session::SessionKeyInfo;
+use crate::api::session::{SessionKeyEntry, SessionKeyInfo, UnsignedRegisterTx};
 use crate::api::ws_client::WsClient;
 
 // ── Global state ────────────────────────────────────────────────────────
@@ -36,15 +36,14 @@ pub struct AuthGrant {
 pub fn initialize_identity(storage_path: String) -> Result<DidInfo> {
     let mgr = IdentityManager::new(&storage_path)?;
 
-    // Store in global state for reuse
-    {
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(async {
-            let mut global = GLOBAL_IDENTITY.lock().await;
-            *global = Some(IdentityManager::new(&storage_path)?);
-            Ok::<(), anyhow::Error>(())
-        })?;
-    }
+    // Store in global state for reuse.
+    // Use or_create runtime to avoid depending on an existing Tokio reactor.
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async {
+        let mut global = GLOBAL_IDENTITY.lock().await;
+        *global = Some(IdentityManager::new(&storage_path)?);
+        Ok::<(), anyhow::Error>(())
+    })?;
 
     Ok(DidInfo {
         did: mgr.did().to_string(),
@@ -444,6 +443,58 @@ pub fn parse_oob_invitation(invitation_url: String) -> Result<OobInvitationData>
         mediator_ws_url,
         label,
     })
+}
+
+// ── Session Key Management Bridge Wrappers ─────────────────────────────
+
+/// List all session keys stored locally.
+pub fn list_session_keys(storage_path: String) -> Result<Vec<SessionKeyEntry>> {
+    crate::api::session::list_session_keys(storage_path)
+}
+
+/// Find the first active session key.
+pub fn find_active_session_key(storage_path: String) -> Result<Option<SessionKeyEntry>> {
+    crate::api::session::find_active_session_key(storage_path)
+}
+
+/// Build an unsigned register-session-key transaction for external wallet signing.
+pub async fn build_unsigned_register_tx(
+    storage_path: String,
+    rpc_url: String,
+    spending_limit: u64,
+    duration_secs: i64,
+) -> Result<UnsignedRegisterTx> {
+    crate::api::session::build_unsigned_register_tx(storage_path, rpc_url, spending_limit, duration_secs).await
+}
+
+/// Complete registration after receiving the owner signature from an external wallet.
+pub async fn complete_register_with_signature(
+    storage_path: String,
+    ephemeral_pubkey: String,
+    owner_signature_b58: String,
+    rpc_url: String,
+) -> Result<SessionKeyInfo> {
+    crate::api::session::complete_register_with_signature(
+        storage_path,
+        ephemeral_pubkey,
+        owner_signature_b58,
+        rpc_url,
+    )
+    .await
+}
+
+/// Revoke a session key on-chain.
+pub async fn revoke_session_key_onchain(
+    storage_path: String,
+    session_pubkey: String,
+    rpc_url: String,
+) -> Result<String> {
+    crate::api::session::revoke_session_key_onchain(storage_path, session_pubkey, rpc_url).await
+}
+
+/// Delete a session key from local storage only.
+pub fn delete_session_key_local(storage_path: String, session_pubkey: String) -> Result<()> {
+    crate::api::session::delete_session_key_local(storage_path, session_pubkey)
 }
 
 /// Parsed OOB invitation data.

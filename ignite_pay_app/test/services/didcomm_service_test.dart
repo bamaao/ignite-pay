@@ -136,6 +136,139 @@ class _MockRustLibApi extends RustLibApi {
         txSignature: 'mock_tx_sig',
         sessionPda: 'mock_pda',
       );
+
+  @override
+  Future<List<SessionKeyEntry>> crateApiSimpleListSessionKeys({
+    required String storagePath,
+  }) async =>
+      [];
+
+  @override
+  Future<List<SessionKeyEntry>> crateApiSessionListSessionKeys({
+    required String storagePath,
+  }) async =>
+      [];
+
+  @override
+  Future<SessionKeyEntry?> crateApiSimpleFindActiveSessionKey({
+    required String storagePath,
+  }) async =>
+      null;
+
+  @override
+  Future<SessionKeyEntry?> crateApiSessionFindActiveSessionKey({
+    required String storagePath,
+  }) async =>
+      null;
+
+  @override
+  Future<UnsignedRegisterTx> crateApiSimpleBuildUnsignedRegisterTx({
+    required String storagePath,
+    required String rpcUrl,
+    required BigInt spendingLimit,
+    required PlatformInt64 durationSecs,
+  }) async =>
+      UnsignedRegisterTx(
+        unsignedTxB58: 'mock_unsigned_tx',
+        sessionPda: 'mock_pda',
+        ephemeralPubkey: 'mock_ephemeral_pubkey',
+      );
+
+  @override
+  Future<UnsignedRegisterTx> crateApiSessionBuildUnsignedRegisterTx({
+    required String storagePath,
+    required String rpcUrl,
+    required BigInt spendingLimit,
+    required PlatformInt64 durationSecs,
+  }) async =>
+      UnsignedRegisterTx(
+        unsignedTxB58: 'mock_unsigned_tx',
+        sessionPda: 'mock_pda',
+        ephemeralPubkey: 'mock_ephemeral_pubkey',
+      );
+
+  @override
+  Future<SessionKeyInfo> crateApiSimpleCompleteRegisterWithSignature({
+    required String storagePath,
+    required String ephemeralPubkey,
+    required String ownerSignatureB58,
+    required String rpcUrl,
+  }) async =>
+      SessionKeyInfo(
+        ephemeralPubkey: ephemeralPubkey,
+        ephemeralSecretKey: 'mockSecretKey',
+        expiresAt: DateTime.now().millisecondsSinceEpoch + 3600000,
+        spendingLimit: BigInt.from(5000000000),
+        scopes: ['sol:transfer'],
+        txSignature: 'mock_tx_sig',
+        sessionPda: 'mock_pda',
+      );
+
+  @override
+  Future<SessionKeyInfo> crateApiSessionCompleteRegisterWithSignature({
+    required String storagePath,
+    required String ephemeralPubkey,
+    required String ownerSignatureB58,
+    required String rpcUrl,
+  }) async =>
+      SessionKeyInfo(
+        ephemeralPubkey: ephemeralPubkey,
+        ephemeralSecretKey: 'mockSecretKey',
+        expiresAt: DateTime.now().millisecondsSinceEpoch + 3600000,
+        spendingLimit: BigInt.from(5000000000),
+        scopes: ['sol:transfer'],
+        txSignature: 'mock_tx_sig',
+        sessionPda: 'mock_pda',
+      );
+
+  @override
+  Future<String> crateApiSimpleRevokeSessionKeyOnchain({
+    required String storagePath,
+    required String sessionPubkey,
+    required String rpcUrl,
+  }) async =>
+      'mock_revoke_tx_sig';
+
+  @override
+  Future<String> crateApiSessionRevokeSessionKeyOnchain({
+    required String storagePath,
+    required String sessionPubkey,
+    required String rpcUrl,
+  }) async =>
+      'mock_revoke_tx_sig';
+
+  @override
+  Future<void> crateApiSimpleDeleteSessionKeyLocal({
+    required String storagePath,
+    required String sessionPubkey,
+  }) async {}
+
+  @override
+  Future<void> crateApiSessionDeleteSessionKeyLocal({
+    required String storagePath,
+    required String sessionPubkey,
+  }) async {}
+
+  @override
+  Future<OobInvitationData> crateApiSimpleParseOobInvitation({
+    required String invitationUrl,
+  }) async =>
+      OobInvitationData(
+        mcpDid: 'did:ignite:mockMcp',
+        didDocJson: '{}',
+        mediatorWsUrl: 'ws://mock:3000/ws',
+        label: 'Mock MCP',
+      );
+
+  @override
+  Future<void> crateApiSimpleSendConnectionRequest({
+    required String storagePath,
+    required String mcpDid,
+    required String mcpDidDocJson,
+    required String mediatorWsUrl,
+    required String pushChannel,
+    String? fcmToken,
+  }) async {}
 }
 
 void main() {

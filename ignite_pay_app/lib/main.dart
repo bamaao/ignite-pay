@@ -8,8 +8,12 @@ import 'package:ignite_pay_app/challenge_screen.dart';
 import 'package:ignite_pay_app/policy_screen.dart';
 import 'package:ignite_pay_app/vault_screen.dart';
 import 'package:ignite_pay_app/qr_scanner_screen.dart';
+import 'package:ignite_pay_app/messages_screen.dart';
+import 'package:ignite_pay_app/settings_screen.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:ignite_pay_app/services/session_key_service.dart';
 import 'package:provider/provider.dart';
+import 'package:app_links/app_links.dart';
 
 // ---------------------------------------------------------------------------
 // Theme Constants
@@ -68,8 +72,187 @@ class SentinelApp extends StatelessWidget {
           ThemeData.dark().textTheme,
         ),
       ),
-      home: const SentinelDashboard(),
+      home: const _MainNavigator(),
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main Navigator with Bottom Nav Bar
+// ---------------------------------------------------------------------------
+class _MainNavigator extends StatefulWidget {
+  const _MainNavigator();
+
+  @override
+  State<_MainNavigator> createState() => _MainNavigatorState();
+}
+
+class _MainNavigatorState extends State<_MainNavigator> {
+  int _currentIndex = 0;
+  Stream<Uri>? _deepLinkStream;
+
+  final _pages = const [
+    SentinelDashboard(),
+    _MessagesTabPage(),
+    _SettingsTabPage(),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _initDeepLinks();
+  }
+
+  void _initDeepLinks() {
+    try {
+      final appLinks = AppLinks();
+      _deepLinkStream = appLinks.uriLinkStream;
+      _deepLinkStream!.listen(_handleDeepLink);
+    } catch (e) {
+      debugPrint('Deep links init failed (non-fatal): $e');
+    }
+  }
+
+  void _handleDeepLink(Uri uri) {
+    if (uri.scheme == 'ignitepay' && uri.host == 'onchain') {
+      final signature = uri.queryParameters['signature'];
+      if (signature != null) {
+        debugPrint('Deep link callback: signature=$signature');
+        final svc = SessionKeyService();
+        svc.completeRegistration(signature).then((session_info) {
+          debugPrint('Session key registered: ${session_info.ephemeralPubkey}');
+        }).catchError((e) {
+          debugPrint('Deep link registration failed: $e');
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _deepLinkStream = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: IndexedStack(
+        index: _currentIndex,
+        children: _pages,
+      ),
+      bottomNavigationBar: Container(
+        decoration: BoxDecoration(
+          color: _kSurfaceDark.withValues(alpha: 0.95),
+          border: Border(top: BorderSide(color: _kGlassBorder)),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _NavItem(
+                  icon: LucideIcons.home,
+                  label: 'Home',
+                  selected: _currentIndex == 0,
+                  onTap: () => setState(() => _currentIndex = 0),
+                ),
+                _NavItem(
+                  icon: LucideIcons.mail,
+                  label: 'Messages',
+                  selected: _currentIndex == 1,
+                  onTap: () => setState(() => _currentIndex = 1),
+                ),
+                _NavItem(
+                  icon: LucideIcons.settings,
+                  label: 'Settings',
+                  selected: _currentIndex == 2,
+                  onTap: () => setState(() => _currentIndex = 2),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _NavItem({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? _kNeonCyan : _kTextSecondary;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 22, color: color),
+            const SizedBox(height: 3),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 10,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Thin wrappers to embed pages in the tab
+class _MessagesTabPage extends StatelessWidget {
+  const _MessagesTabPage();
+  @override
+  Widget build(BuildContext context) {
+    return const _EmbeddedMessagesScreen();
+  }
+}
+
+class _SettingsTabPage extends StatelessWidget {
+  const _SettingsTabPage();
+  @override
+  Widget build(BuildContext context) {
+    return const _EmbeddedSettingsScreen();
+  }
+}
+
+// These are lightweight versions that skip the push navigation
+// since they're already embedded in tabs
+class _EmbeddedMessagesScreen extends StatelessWidget {
+  const _EmbeddedMessagesScreen();
+  @override
+  Widget build(BuildContext context) {
+    // Delegate to the full messages screen widget
+    return const MessagesScreen();
+  }
+}
+
+class _EmbeddedSettingsScreen extends StatelessWidget {
+  const _EmbeddedSettingsScreen();
+  @override
+  Widget build(BuildContext context) {
+    return const SettingsScreen();
   }
 }
 

@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `build_raw_transaction`, `build_register_ix_data`, `compact_u64_encode`, `derive_session_pda_simple`, `get_recent_blockhash`, `get_session_program_id_bytes`, `is_on_curve`, `send_transaction`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`
 
 /// Create a session key for payment authorization.
 /// This generates an ephemeral Ed25519 keypair locally and stores it in sled.
@@ -54,6 +54,119 @@ Future<SessionKeyInfo> createAndRegisterSessionKey({
   spendingLimit: spendingLimit,
   durationSecs: durationSecs,
 );
+
+/// List all session keys stored locally in sled.
+/// Scans keys matching prefix `"session:"` and parses the stored value.
+Future<List<SessionKeyEntry>> listSessionKeys({required String storagePath}) =>
+    RustLib.instance.api.crateApiSessionListSessionKeys(
+      storagePath: storagePath,
+    );
+
+/// Find the first active session key from local storage.
+Future<SessionKeyEntry?> findActiveSessionKey({required String storagePath}) =>
+    RustLib.instance.api.crateApiSessionFindActiveSessionKey(
+      storagePath: storagePath,
+    );
+
+/// Build an unsigned register-session-key transaction.
+/// Stores the ephemeral keypair as `"pending:{pubkey}"` in sled for later retrieval.
+/// Returns the unsigned tx bytes (base58), the PDA, and the ephemeral pubkey.
+Future<UnsignedRegisterTx> buildUnsignedRegisterTx({
+  required String storagePath,
+  required String rpcUrl,
+  required BigInt spendingLimit,
+  required PlatformInt64 durationSecs,
+}) => RustLib.instance.api.crateApiSessionBuildUnsignedRegisterTx(
+  storagePath: storagePath,
+  rpcUrl: rpcUrl,
+  spendingLimit: spendingLimit,
+  durationSecs: durationSecs,
+);
+
+/// Complete session key registration after receiving the owner signature from an external wallet.
+/// Reconstructs the signed transaction, submits it, and moves the key from pending to permanent storage.
+Future<SessionKeyInfo> completeRegisterWithSignature({
+  required String storagePath,
+  required String ephemeralPubkey,
+  required String ownerSignatureB58,
+  required String rpcUrl,
+}) => RustLib.instance.api.crateApiSessionCompleteRegisterWithSignature(
+  storagePath: storagePath,
+  ephemeralPubkey: ephemeralPubkey,
+  ownerSignatureB58: ownerSignatureB58,
+  rpcUrl: rpcUrl,
+);
+
+/// Revoke a session key on-chain by submitting a revoke_session instruction.
+Future<String> revokeSessionKeyOnchain({
+  required String storagePath,
+  required String sessionPubkey,
+  required String rpcUrl,
+}) => RustLib.instance.api.crateApiSessionRevokeSessionKeyOnchain(
+  storagePath: storagePath,
+  sessionPubkey: sessionPubkey,
+  rpcUrl: rpcUrl,
+);
+
+/// Delete a session key from local sled storage only (no on-chain action).
+Future<void> deleteSessionKeyLocal({
+  required String storagePath,
+  required String sessionPubkey,
+}) => RustLib.instance.api.crateApiSessionDeleteSessionKeyLocal(
+  storagePath: storagePath,
+  sessionPubkey: sessionPubkey,
+);
+
+/// A session key entry returned for listing / query.
+class SessionKeyEntry {
+  /// Base58-encoded ephemeral public key.
+  final String ephemeralPubkey;
+
+  /// Unix timestamp when the session expires.
+  final PlatformInt64 expiresAt;
+
+  /// Maximum spending limit in lamports.
+  final BigInt spendingLimit;
+
+  /// On-chain registration transaction signature (if registered on-chain).
+  final String? txSignature;
+
+  /// On-chain session PDA address (if registered on-chain).
+  final String? sessionPda;
+
+  /// Status: "active", "expired", or "unknown".
+  final String status;
+
+  const SessionKeyEntry({
+    required this.ephemeralPubkey,
+    required this.expiresAt,
+    required this.spendingLimit,
+    this.txSignature,
+    this.sessionPda,
+    required this.status,
+  });
+
+  @override
+  int get hashCode =>
+      ephemeralPubkey.hashCode ^
+      expiresAt.hashCode ^
+      spendingLimit.hashCode ^
+      txSignature.hashCode ^
+      sessionPda.hashCode ^
+      status.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SessionKeyEntry &&
+          runtimeType == other.runtimeType &&
+          ephemeralPubkey == other.ephemeralPubkey &&
+          expiresAt == other.expiresAt &&
+          spendingLimit == other.spendingLimit &&
+          txSignature == other.txSignature &&
+          sessionPda == other.sessionPda &&
+          status == other.status;
+}
 
 /// Session key information exposed to Flutter.
 class SessionKeyInfo {
@@ -110,4 +223,35 @@ class SessionKeyInfo {
           scopes == other.scopes &&
           txSignature == other.txSignature &&
           sessionPda == other.sessionPda;
+}
+
+/// An unsigned register transaction ready for external wallet signing.
+class UnsignedRegisterTx {
+  /// Base58-encoded unsigned transaction bytes.
+  final String unsignedTxB58;
+
+  /// Derived session PDA address (base58).
+  final String sessionPda;
+
+  /// Base58-encoded ephemeral public key.
+  final String ephemeralPubkey;
+
+  const UnsignedRegisterTx({
+    required this.unsignedTxB58,
+    required this.sessionPda,
+    required this.ephemeralPubkey,
+  });
+
+  @override
+  int get hashCode =>
+      unsignedTxB58.hashCode ^ sessionPda.hashCode ^ ephemeralPubkey.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UnsignedRegisterTx &&
+          runtimeType == other.runtimeType &&
+          unsignedTxB58 == other.unsignedTxB58 &&
+          sessionPda == other.sessionPda &&
+          ephemeralPubkey == other.ephemeralPubkey;
 }

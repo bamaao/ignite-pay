@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:ignite_pay_app/services/session_key_service.dart';
 
 // ---------------------------------------------------------------------------
 // Challenge Theme
@@ -68,6 +69,7 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   String _listAction = 'none';
   String _listLabel = '';
   String _listMaxAmount = '';
+  bool _checkingExistingKey = true;
 
   String get _merchantDid => widget.request?.merchantDid ?? 'did:solana:shopx merchants';
   int get _amount => widget.request?.amount ?? 500000000;
@@ -84,6 +86,7 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
       vsync: this,
       duration: const Duration(milliseconds: 2000),
     )..repeat(reverse: true);
+    _checkExistingSessionKey();
   }
 
   @override
@@ -92,34 +95,84 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
     super.dispose();
   }
 
+  Future<void> _checkExistingSessionKey() async {
+    final svc = SessionKeyService();
+    await svc.initialize();
+    final existing = await svc.checkExistingKey();
+    if (mounted) {
+      setState(() {
+        _checkingExistingKey = false;
+      });
+      if (existing != null) {
+        setState(() {
+          _authResult = 'Using existing session key';
+        });
+      }
+    }
+  }
+
   Future<void> _onAuthorize() async {
+    final svc = SessionKeyService();
+
+    // If an active key already exists, skip creation
+    if (svc.activeSessionKey != null) {
+      setState(() {
+        _isAuthorizing = true;
+        _authResult = 'Using existing session key...';
+      });
+      try {
+        await _sendAuthResponse();
+        setState(() => _authResult = 'Authorized with existing session key');
+        await Future.delayed(const Duration(milliseconds: 1200));
+        if (mounted) Navigator.of(context).pop('authorized');
+      } catch (e) {
+        setState(() {
+          _authResult = 'Error: $e';
+          _isAuthorizing = false;
+        });
+      }
+      return;
+    }
+
+    // Show signing method selector
+    final method = await _showSigningMethodSelector();
+    if (method == null || !mounted) return;
+
     setState(() {
       _isAuthorizing = true;
-      _authResult = 'Creating session key...';
+      _authResult = 'Registering session key on-chain...';
     });
+
     try {
-      // V2.0: Create a session key for this payment authorization.
-      // Spending limit is set to 10x the payment amount to allow multiple payments.
-      // Duration is 1 hour (3600 seconds).
-      final spendingLimit = _amount * 10;
-      final durationSecs = 3600;
+      switch (method) {
+        case SigningMethod.builtIn:
+          await svc.createWithBuiltInKey(
+            spendingLimit: _amount * 10,
+            durationSecs: 3600,
+          );
+          break;
+        case SigningMethod.deepLink:
+          final walletUrl = await svc.createWithDeepLink(
+            spendingLimit: _amount * 10,
+            durationSecs: 3600,
+          );
+          if (walletUrl != null) {
+            setState(() => _authResult = 'Open wallet to sign transaction...');
+            // The deep link flow will be completed via callback in main.dart
+            return; // Don't proceed to auth response yet
+          }
+          break;
+        case SigningMethod.mwa:
+          // MWA stub — falls through to built-in for now
+          await svc.createWithBuiltInKey(
+            spendingLimit: _amount * 10,
+            durationSecs: 3600,
+          );
+          break;
+      }
 
-      // Send auth response with session key data via DidcommService
-      await DidcommService().sendAuthResponseWithSessionKey(
-        paymentId: _paymentId,
-        authorized: true,
-        listAction: _listAction,
-        spendingLimit: spendingLimit,
-        durationSecs: durationSecs,
-        listLabel: _showLabelInput && _listLabel.isNotEmpty ? _listLabel : null,
-        listMaxAmount: _showMaxAmountInput && _listMaxAmount.isNotEmpty
-            ? int.tryParse(_listMaxAmount)
-            : null,
-      );
-
-      setState(() {
-        _authResult = 'Authorized with session key';
-      });
+      await _sendAuthResponse();
+      setState(() => _authResult = 'Authorized with session key');
       await Future.delayed(const Duration(milliseconds: 1200));
       if (mounted) Navigator.of(context).pop('authorized');
     } catch (e) {
@@ -128,6 +181,80 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
         _isAuthorizing = false;
       });
     }
+  }
+
+  Future<void> _sendAuthResponse() async {
+    await DidcommService().sendAuthResponseWithSessionKey(
+      paymentId: _paymentId,
+      authorized: true,
+      listAction: _listAction,
+      spendingLimit: _amount * 10,
+      durationSecs: 3600,
+      listLabel: _showLabelInput && _listLabel.isNotEmpty ? _listLabel : null,
+      listMaxAmount: _showMaxAmountInput && _listMaxAmount.isNotEmpty
+          ? int.tryParse(_listMaxAmount)
+          : null,
+    );
+  }
+
+  Future<SigningMethod?> _showSigningMethodSelector() {
+    return showModalBottomSheet<SigningMethod>(
+      context: context,
+      backgroundColor: _kSurfaceDark,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'SIGNING METHOD',
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: _kTextSecondary,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Choose how to sign the session key registration',
+                style: GoogleFonts.inter(fontSize: 13, color: _kTextSecondary),
+              ),
+              const SizedBox(height: 16),
+              _SigningMethodTile(
+                icon: LucideIcons.keyRound,
+                label: 'Built-in Key',
+                subtitle: 'Sign with DID-derived key (no wallet needed)',
+                color: _kSuccess,
+                onTap: () => Navigator.of(ctx).pop(SigningMethod.builtIn),
+              ),
+              const SizedBox(height: 8),
+              _SigningMethodTile(
+                icon: LucideIcons.link,
+                label: 'Phantom / Solflare',
+                subtitle: 'Open wallet app to sign (Deep Link)',
+                color: const Color(0xFFAB9FF2),
+                onTap: () => Navigator.of(ctx).pop(SigningMethod.deepLink),
+              ),
+              const SizedBox(height: 8),
+              _SigningMethodTile(
+                icon: LucideIcons.smartphone,
+                label: 'Mobile Wallet',
+                subtitle: 'MWA protocol (Android only)',
+                color: const Color(0xFF06B6D4),
+                onTap: () => Navigator.of(ctx).pop(SigningMethod.mwa),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _onDecline() {
@@ -203,6 +330,20 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
                     _ResultBanner(result: _authResult),
                     const SizedBox(height: 16),
                   ],
+                  if (_checkingExistingKey)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 16),
+                      child: Center(
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: _kAmber,
+                          ),
+                        ),
+                      ),
+                    ),
                   SlideToAuthorize(
                     onAuthorized: _onAuthorize,
                     enabled: !_isAuthorizing,
@@ -1021,6 +1162,76 @@ class _ListActionChip extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Signing Method Tile (for bottom sheet selector)
+// ---------------------------------------------------------------------------
+class _SigningMethodTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _SigningMethodTile({
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: _kSurfaceMid.withValues(alpha: 0.4),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _kGlassBorder),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: color.withValues(alpha: 0.2)),
+              ),
+              child: Icon(icon, size: 18, color: color),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: _kTextPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: GoogleFonts.inter(fontSize: 11, color: _kTextSecondary),
+                  ),
+                ],
+              ),
+            ),
+            Icon(LucideIcons.chevronRight, size: 16, color: _kTextSecondary),
+          ],
         ),
       ),
     );

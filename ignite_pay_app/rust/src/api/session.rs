@@ -1,5 +1,6 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Session key information exposed to Flutter.
@@ -19,6 +20,34 @@ pub struct SessionKeyInfo {
     pub tx_signature: Option<String>,
     /// On-chain session PDA address.
     pub session_pda: Option<String>,
+}
+
+/// A session key entry returned for listing / query.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionKeyEntry {
+    /// Base58-encoded ephemeral public key.
+    pub ephemeral_pubkey: String,
+    /// Unix timestamp when the session expires.
+    pub expires_at: i64,
+    /// Maximum spending limit in lamports.
+    pub spending_limit: u64,
+    /// On-chain registration transaction signature (if registered on-chain).
+    pub tx_signature: Option<String>,
+    /// On-chain session PDA address (if registered on-chain).
+    pub session_pda: Option<String>,
+    /// Status: "active", "expired", or "unknown".
+    pub status: String,
+}
+
+/// An unsigned register transaction ready for external wallet signing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnsignedRegisterTx {
+    /// Base58-encoded unsigned transaction bytes.
+    pub unsigned_tx_b58: String,
+    /// Derived session PDA address (base58).
+    pub session_pda: String,
+    /// Base58-encoded ephemeral public key.
+    pub ephemeral_pubkey: String,
 }
 
 /// Create a session key for payment authorization.
@@ -416,4 +445,433 @@ async fn send_transaction(
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("No signature in sendTransaction response"))?;
     Ok(signature.to_string())
+}
+
+// ── New public API: list, query, unsigned tx, complete, revoke, delete ────
+
+/// List all session keys stored locally in sled.
+/// Scans keys matching prefix `"session:"` and parses the stored value.
+pub fn list_session_keys(storage_path: String) -> Result<Vec<SessionKeyEntry>> {
+    let db = sled::open(&storage_path)?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
+
+    let mut entries = Vec::new();
+    let prefix = b"session:";
+    for item in db.scan_prefix(prefix) {
+        let (key, value) = item?;
+        let pubkey_b58 = String::from_utf8_lossy(&key[prefix.len()..]).to_string();
+
+        // Value layout: [64-byte keypair | 8-byte expires_at LE | 8-byte spending_limit LE]
+        if value.len() < 80 {
+            continue;
+        }
+        let expires_at = i64::from_le_bytes(value[64..72].try_into().unwrap());
+        let spending_limit = u64::from_le_bytes(value[72..80].try_into().unwrap());
+
+        let status = if expires_at < now {
+            "expired".to_string()
+        } else {
+            "active".to_string()
+        };
+
+        entries.push(SessionKeyEntry {
+            ephemeral_pubkey: pubkey_b58,
+            expires_at,
+            spending_limit,
+            tx_signature: None, // not persisted locally yet
+            session_pda: None,
+            status,
+        });
+    }
+
+    Ok(entries)
+}
+
+/// Find the first active session key from local storage.
+pub fn find_active_session_key(storage_path: String) -> Result<Option<SessionKeyEntry>> {
+    let entries = list_session_keys(storage_path)?;
+    Ok(entries.into_iter().find(|e| e.status == "active"))
+}
+
+/// Build an unsigned register-session-key transaction.
+/// Stores the ephemeral keypair as `"pending:{pubkey}"` in sled for later retrieval.
+/// Returns the unsigned tx bytes (base58), the PDA, and the ephemeral pubkey.
+pub async fn build_unsigned_register_tx(
+    storage_path: String,
+    rpc_url: String,
+    spending_limit: u64,
+    duration_secs: i64,
+) -> Result<UnsignedRegisterTx> {
+    let db = sled::open(&storage_path)?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
+    let expires_at = now + duration_secs;
+
+    // Generate ephemeral keypair
+    let mut csprng = rand::rngs::OsRng;
+    let ephemeral_signing = ed25519_dalek::SigningKey::generate(&mut csprng);
+    let ephemeral_pubkey = ephemeral_signing.verifying_key();
+    let ephemeral_pubkey_bytes = ephemeral_pubkey.to_bytes();
+    let ephemeral_secret_bytes = ephemeral_signing.to_bytes();
+
+    // Derive owner from DID (same as create_session_key_for_payment)
+    let identity_mgr = crate::api::identity::IdentityManager::new(&storage_path)?;
+    let did = identity_mgr.did();
+    let owner_seed = sha2::Sha256::digest(did.as_bytes());
+    let owner_seed_bytes: &[u8; 32] = owner_seed
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid seed length"))?;
+    let owner_signing = ed25519_dalek::SigningKey::from_bytes(owner_seed_bytes);
+    let owner_pubkey_bytes = owner_signing.verifying_key().to_bytes();
+
+    // Derive session PDA
+    let session_pda = derive_session_pda_simple(&owner_pubkey_bytes, &ephemeral_pubkey_bytes);
+
+    // Build instruction data (target_program = system program)
+    let target_program_bytes: [u8; 32] = bs58::decode("11111111111111111111111111111111")
+        .into_vec()?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid target program"))?;
+    let ix_data = build_register_ix_data(
+        &target_program_bytes,
+        expires_at,
+        spending_limit,
+        &["sol:transfer".to_string()],
+    );
+
+    // Fetch blockhash
+    let client = reqwest::Client::new();
+    let blockhash = get_recent_blockhash(&client, &rpc_url).await?;
+
+    // Build unsigned transaction message (same layout as build_raw_transaction, minus signatures)
+    let blockhash_bytes = bs58::decode(&blockhash).into_vec()?;
+    if blockhash_bytes.len() != 32 {
+        return Err(anyhow::anyhow!("Invalid blockhash"));
+    }
+    let blockhash_arr: [u8; 32] = blockhash_bytes.try_into().unwrap();
+
+    let system_program: [u8; 32] = [
+        0x06, 0x9b, 0x88, 0x64, 0xd1, 0x6a, 0xed, 0x71, 0x48, 0xb5, 0xd0, 0x40, 0xb1, 0x3e, 0xa0,
+        0x17, 0x42, 0xaf, 0x28, 0x37, 0xa0, 0xc8, 0x72, 0x21, 0x53, 0x25, 0x04, 0xb2, 0x5d, 0x2d,
+        0x5e, 0x06,
+    ];
+    let clock_sysvar: [u8; 32] = [
+        0x06, 0xa7, 0xd5, 0xde, 0x18, 0x4a, 0x62, 0xa4, 0x54, 0xd2, 0x8d, 0x8c, 0xf2, 0xf4, 0xdc,
+        0xb2, 0x3d, 0x50, 0x25, 0x6b, 0x3e, 0xfb, 0x75, 0xbf, 0x15, 0xbe, 0x6e, 0x2a, 0xb1, 0xc8,
+        0x91, 0x24,
+    ];
+
+    let session_program_id = get_session_program_id_bytes();
+    let account_keys: Vec<[u8; 32]> = vec![
+        owner_pubkey_bytes,
+        ephemeral_pubkey_bytes,
+        session_pda,
+        session_program_id,
+        target_program_bytes,
+        system_program,
+        clock_sysvar,
+    ];
+
+    let mut message = Vec::new();
+    message.push(2); // num_required_signatures
+    message.push(1); // num_readonly_signed
+    message.push(4); // num_readonly_unsigned
+    compact_u64_encode(&mut message, account_keys.len() as u64);
+    for key in &account_keys {
+        message.extend_from_slice(key);
+    }
+    message.extend_from_slice(&blockhash_arr);
+    compact_u64_encode(&mut message, 1); // 1 instruction
+    message.push(3); // program_id_index
+    let ix_accounts: Vec<u8> = vec![2, 0, 1, 4, 5, 6];
+    compact_u64_encode(&mut message, ix_accounts.len() as u64);
+    message.extend_from_slice(&ix_accounts);
+    compact_u64_encode(&mut message, ix_data.len() as u64);
+    message.extend_from_slice(&ix_data);
+
+    // Sign the message with the ephemeral key (owner slot left as zeros for external signing)
+    use ed25519_dalek::Signer;
+    let msg_hash = {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&message);
+        let hash = hasher.finalize();
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&hash);
+        arr
+    };
+    let ephemeral_sig = ephemeral_signing.sign(&msg_hash).to_bytes();
+
+    // Build transaction with placeholder owner sig (64 zero bytes) + ephemeral sig
+    let mut tx = Vec::new();
+    compact_u64_encode(&mut tx, 2);
+    tx.extend_from_slice(&[0u8; 64]); // placeholder owner signature
+    tx.extend_from_slice(&ephemeral_sig);
+    tx.extend_from_slice(&message);
+
+    let unsigned_tx_b58 = bs58::encode(&tx).into_string();
+    let ephemeral_pubkey_b58 = bs58::encode(&ephemeral_pubkey_bytes).into_string();
+    let session_pda_b58 = bs58::encode(&session_pda).into_string();
+
+    // Store pending keypair: "pending:{pubkey}" -> [64-byte keypair | 8-byte expires_at LE | 8-byte spending_limit LE]
+    let pending_key = format!("pending:{}", ephemeral_pubkey_b58);
+    let mut pending_value = Vec::new();
+    pending_value.extend_from_slice(&ephemeral_secret_bytes);
+    pending_value.extend_from_slice(&expires_at.to_le_bytes());
+    pending_value.extend_from_slice(&spending_limit.to_le_bytes());
+    db.insert(pending_key.as_bytes(), pending_value)?;
+
+    Ok(UnsignedRegisterTx {
+        unsigned_tx_b58,
+        session_pda: session_pda_b58,
+        ephemeral_pubkey: ephemeral_pubkey_b58,
+    })
+}
+
+/// Complete session key registration after receiving the owner signature from an external wallet.
+/// Reconstructs the signed transaction, submits it, and moves the key from pending to permanent storage.
+pub async fn complete_register_with_signature(
+    storage_path: String,
+    ephemeral_pubkey: String,
+    owner_signature_b58: String,
+    rpc_url: String,
+) -> Result<SessionKeyInfo> {
+    let db = sled::open(&storage_path)?;
+
+    // Retrieve pending keypair
+    let pending_key = format!("pending:{}", ephemeral_pubkey);
+    let pending_value = db
+        .remove(pending_key.as_bytes())?
+        .ok_or_else(|| anyhow::anyhow!("No pending session key for {}", ephemeral_pubkey))?;
+
+    // Parse pending value
+    if pending_value.len() < 80 {
+        return Err(anyhow::anyhow!("Invalid pending session key data"));
+    }
+    let ephemeral_secret_bytes: [u8; 64] = pending_value[..64].try_into().unwrap();
+    let expires_at = i64::from_le_bytes(pending_value[64..72].try_into().unwrap());
+    let spending_limit = u64::from_le_bytes(pending_value[72..80].try_into().unwrap());
+
+    // Decode owner signature
+    let owner_sig_bytes = bs58::decode(&owner_signature_b58).into_vec()?;
+    if owner_sig_bytes.len() != 64 {
+        return Err(anyhow::anyhow!("Invalid owner signature length"));
+    }
+
+    // Re-derive the owner and ephemeral pubkeys to rebuild the message
+    let ephemeral_signing = ed25519_dalek::SigningKey::from_bytes(&ephemeral_secret_bytes[..32].try_into().unwrap());
+    let ephemeral_pubkey_bytes = ephemeral_signing.verifying_key().to_bytes();
+
+    let identity_mgr = crate::api::identity::IdentityManager::new(&storage_path)?;
+    let did = identity_mgr.did();
+    let owner_seed = sha2::Sha256::digest(did.as_bytes());
+    let owner_seed_bytes: &[u8; 32] = owner_seed.as_slice().try_into().unwrap();
+    let owner_signing = ed25519_dalek::SigningKey::from_bytes(owner_seed_bytes);
+    let owner_pubkey_bytes = owner_signing.verifying_key().to_bytes();
+
+    // Derive session PDA
+    let session_pda = derive_session_pda_simple(&owner_pubkey_bytes, &ephemeral_pubkey_bytes);
+
+    // Build instruction data
+    let target_program_bytes: [u8; 32] = bs58::decode("11111111111111111111111111111111")
+        .into_vec()?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid target program"))?;
+    let ix_data = build_register_ix_data(
+        &target_program_bytes,
+        expires_at,
+        spending_limit,
+        &["sol:transfer".to_string()],
+    );
+
+    // Fetch fresh blockhash
+    let client = reqwest::Client::new();
+    let blockhash = get_recent_blockhash(&client, &rpc_url).await?;
+    let blockhash_bytes = bs58::decode(&blockhash).into_vec()?;
+    let blockhash_arr: [u8; 32] = blockhash_bytes.try_into().unwrap();
+
+    let system_program: [u8; 32] = [
+        0x06, 0x9b, 0x88, 0x64, 0xd1, 0x6a, 0xed, 0x71, 0x48, 0xb5, 0xd0, 0x40, 0xb1, 0x3e, 0xa0,
+        0x17, 0x42, 0xaf, 0x28, 0x37, 0xa0, 0xc8, 0x72, 0x21, 0x53, 0x25, 0x04, 0xb2, 0x5d, 0x2d,
+        0x5e, 0x06,
+    ];
+    let clock_sysvar: [u8; 32] = [
+        0x06, 0xa7, 0xd5, 0xde, 0x18, 0x4a, 0x62, 0xa4, 0x54, 0xd2, 0x8d, 0x8c, 0xf2, 0xf4, 0xdc,
+        0xb2, 0x3d, 0x50, 0x25, 0x6b, 0x3e, 0xfb, 0x75, 0xbf, 0x15, 0xbe, 0x6e, 0x2a, 0xb1, 0xc8,
+        0x91, 0x24,
+    ];
+    let session_program_id = get_session_program_id_bytes();
+    let account_keys: Vec<[u8; 32]> = vec![
+        owner_pubkey_bytes,
+        ephemeral_pubkey_bytes,
+        session_pda,
+        session_program_id,
+        target_program_bytes,
+        system_program,
+        clock_sysvar,
+    ];
+
+    let mut message = Vec::new();
+    message.push(2);
+    message.push(1);
+    message.push(4);
+    compact_u64_encode(&mut message, account_keys.len() as u64);
+    for key in &account_keys {
+        message.extend_from_slice(key);
+    }
+    message.extend_from_slice(&blockhash_arr);
+    compact_u64_encode(&mut message, 1);
+    message.push(3);
+    let ix_accounts: Vec<u8> = vec![2, 0, 1, 4, 5, 6];
+    compact_u64_encode(&mut message, ix_accounts.len() as u64);
+    message.extend_from_slice(&ix_accounts);
+    compact_u64_encode(&mut message, ix_data.len() as u64);
+    message.extend_from_slice(&ix_data);
+
+    // Sign with both keys
+    use ed25519_dalek::Signer;
+    let msg_hash = {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&message);
+        let hash = hasher.finalize();
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&hash);
+        arr
+    };
+    let owner_sig = owner_signing.sign(&msg_hash).to_bytes();
+    let ephemeral_sig = ephemeral_signing.sign(&msg_hash).to_bytes();
+
+    let mut tx = Vec::new();
+    compact_u64_encode(&mut tx, 2);
+    tx.extend_from_slice(&owner_sig);
+    tx.extend_from_slice(&ephemeral_sig);
+    tx.extend_from_slice(&message);
+
+    // Submit
+    let tx_signature = send_transaction(&client, &rpc_url, &tx).await?;
+
+    // Store permanently
+    let perm_key = format!("session:{}", ephemeral_pubkey);
+    let mut perm_value = Vec::new();
+    perm_value.extend_from_slice(&ephemeral_secret_bytes);
+    perm_value.extend_from_slice(&expires_at.to_le_bytes());
+    perm_value.extend_from_slice(&spending_limit.to_le_bytes());
+    db.insert(perm_key.as_bytes(), perm_value)?;
+
+    Ok(SessionKeyInfo {
+        ephemeral_pubkey: ephemeral_pubkey.clone(),
+        ephemeral_secret_key: bs58::encode(&ephemeral_secret_bytes).into_string(),
+        expires_at,
+        spending_limit,
+        scopes: vec!["sol:transfer".to_string()],
+        tx_signature: Some(tx_signature),
+        session_pda: Some(bs58::encode(&session_pda).into_string()),
+    })
+}
+
+/// Revoke a session key on-chain by submitting a revoke_session instruction.
+pub async fn revoke_session_key_onchain(
+    storage_path: String,
+    session_pubkey: String,
+    rpc_url: String,
+) -> Result<String> {
+    let db = sled::open(&storage_path)?;
+
+    // Retrieve session key data
+    let key = format!("session:{}", session_pubkey);
+    let value = db
+        .get(key.as_bytes())?
+        .ok_or_else(|| anyhow::anyhow!("Session key not found: {}", session_pubkey))?;
+    if value.len() < 80 {
+        return Err(anyhow::anyhow!("Invalid session key data"));
+    }
+    let ephemeral_secret_bytes: [u8; 64] = value[..64].try_into().unwrap();
+    let ephemeral_signing = ed25519_dalek::SigningKey::from_bytes(&ephemeral_secret_bytes[..32].try_into().unwrap());
+    let ephemeral_pubkey_bytes = ephemeral_signing.verifying_key().to_bytes();
+
+    // Derive owner
+    let identity_mgr = crate::api::identity::IdentityManager::new(&storage_path)?;
+    let did = identity_mgr.did();
+    let owner_seed = sha2::Sha256::digest(did.as_bytes());
+    let owner_seed_bytes: &[u8; 32] = owner_seed.as_slice().try_into().unwrap();
+    let owner_signing = ed25519_dalek::SigningKey::from_bytes(owner_seed_bytes);
+    let owner_pubkey_bytes = owner_signing.verifying_key().to_bytes();
+    let owner_keypair_bytes = owner_signing.to_bytes();
+
+    // Derive PDA
+    let session_pda = derive_session_pda_simple(&owner_pubkey_bytes, &ephemeral_pubkey_bytes);
+
+    // Build revoke instruction data: sighash of "global:revoke_session"
+    let ix_data = {
+        use sha2::{Digest, Sha256};
+        let sighash_preimage = b"global:revoke_session";
+        let mut hasher = Sha256::new();
+        hasher.update(sighash_preimage);
+        let sighash = hasher.finalize();
+        sighash[..8].to_vec()
+    };
+
+    // Build revoke transaction
+    let client = reqwest::Client::new();
+    let blockhash = get_recent_blockhash(&client, &rpc_url).await?;
+    let blockhash_bytes = bs58::decode(&blockhash).into_vec()?;
+    let blockhash_arr: [u8; 32] = blockhash_bytes.try_into().unwrap();
+
+    let session_program_id = get_session_program_id_bytes();
+    // Accounts: [session_pda(writable), owner(signer, writable)]
+    let account_keys: Vec<[u8; 32]> = vec![
+        owner_pubkey_bytes,
+        session_pda,
+        session_program_id,
+    ];
+
+    let mut message = Vec::new();
+    message.push(1); // num_required_signatures (owner only)
+    message.push(0); // num_readonly_signed
+    message.push(1); // num_readonly_unsigned (session_program)
+    compact_u64_encode(&mut message, account_keys.len() as u64);
+    for key in &account_keys {
+        message.extend_from_slice(key);
+    }
+    message.extend_from_slice(&blockhash_arr);
+    compact_u64_encode(&mut message, 1);
+    message.push(2); // program_id_index = session_program_id
+    let ix_accounts: Vec<u8> = vec![1, 0]; // [session_pda, owner]
+    compact_u64_encode(&mut message, ix_accounts.len() as u64);
+    message.extend_from_slice(&ix_accounts);
+    compact_u64_encode(&mut message, ix_data.len() as u64);
+    message.extend_from_slice(&ix_data);
+
+    // Sign
+    use ed25519_dalek::Signer;
+    let msg_hash = {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&message);
+        let hash = hasher.finalize();
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&hash);
+        arr
+    };
+    let owner_sig = owner_signing.sign(&msg_hash).to_bytes();
+
+    let mut tx = Vec::new();
+    compact_u64_encode(&mut tx, 1);
+    tx.extend_from_slice(&owner_sig);
+    tx.extend_from_slice(&message);
+
+    let tx_signature = send_transaction(&client, &rpc_url, &tx).await?;
+    Ok(tx_signature)
+}
+
+/// Delete a session key from local sled storage only (no on-chain action).
+pub fn delete_session_key_local(
+    storage_path: String,
+    session_pubkey: String,
+) -> Result<()> {
+    let db = sled::open(&storage_path)?;
+    let key = format!("session:{}", session_pubkey);
+    db.remove(key.as_bytes())?;
+    Ok(())
 }
