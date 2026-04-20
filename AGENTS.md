@@ -2,7 +2,7 @@
 
 ## 仓库概述
 
-Ignite Pay 是一个基于 Solana 的去中心化支付系统，包含链上程序（Anchor）、离链状态通道、DID 身份管理、DIDComm 安全通信、AI Agent 支付编排，以及移动端 SDK。项目采用多 crate 仓库结构，共 14 个 Rust crate + 文档。
+Ignite Pay 是一个基于 Solana 的去中心化支付系统，包含链上程序（Anchor）、离链状态通道、DID 身份管理、DIDComm 安全通信、AI Agent 支付编排，以及移动端 SDK。项目采用多 crate 仓库结构，共 15 个 Rust crate + 文档。
 
 ---
 
@@ -25,9 +25,10 @@ Layer 3 — 服务与应用
   ignite-pay-channel-service   状态通道 HTTP 服务（User / Provider / Hub 三个角色）
   didcomm-router               DIDComm 消息路由与中介服务
   did-registry                 DID 链上注册与查询服务
-  ignite-pay-mcp               AI Agent 支付编排 MCP 服务器
+  ignite-pay-mcp               AI Agent 支付编排 MCP 服务器（含状态通道支付）
+  ignite-pay-merchant-mcp      商户侧 MCP 服务器（QR 收款码 + 状态通道收款）
   ignite-pay-skill             Python SDK（PyO3）
-  ignite_pay_app               Flutter 移动端（Rust Bridge）
+  ignite_pay_app               Flutter 移动端（Rust Bridge，含扫码支付）
 
 Layer 4 — 测试
   ignite-pay-litesvm-tests     状态通道链上程序测试（litesvm 模拟器）
@@ -49,7 +50,7 @@ Layer 4 — 测试
 | 模块 | 说明 |
 |:-----|:-----|
 | `identity` | `did:ignite` 去中心化身份生成（Ed25519 + X25519）、DID Document 构建、持久化 |
-| `didcomm` | DIDComm 消息创建、JWE 加密封装/解包、DIDComm 协议实现 |
+| `didcomm` | DIDComm 消息创建、JWE 加密封装/解包、DIDComm 协议实现（含扫码支付请求/确认消息） |
 | `vc` | Verifiable Credential 签发、验证、IPFS 解析 |
 | `ipfs` | IPFS 客户端抽象（trait + Kubo 实现 + Mock） |
 | `list_store` | 基于 sled 的白名单/黑名单持久化与风控决策 |
@@ -240,13 +241,13 @@ Layer 4 — 测试
 
 **位置**: `ignite-pay-mcp/`
 **类型**: 二进制 (bin) — MCP 服务器
-**用途**: AI Agent 支付编排服务器，通过 Model Context Protocol (MCP) 暴露支付工具，处理 x402 HTTP 支付挑战，集成 DIDComm 加密授权和链上 Solana 支付。
+**用途**: AI Agent 支付编排服务器，通过 Model Context Protocol (MCP) 暴露支付工具，处理 x402 HTTP 支付挑战，集成 DIDComm 加密授权和链上 Solana 支付。V3.0 新增状态通道支付能力，当无活跃会话密钥时自动回退到状态通道支付。
 
 **MCP 工具**:
 
 | 工具 | 说明 |
 |:-----|:-----|
-| `process_x402_challenge` | 完整 x402 支付流程（解析挑战 → 验证 VC → 链上 DID 检查 → 风控 → 手机认证 → 执行支付） |
+| `process_x402_challenge` | 完整 x402 支付流程（解析挑战 → 验证 VC → 链上 DID 检查 → 风控 → 手机认证 → 执行支付），支持会话密钥和状态通道两种支付方式 |
 | `check_authorization` | 检查支付状态 |
 | `get_payment_history` | 查询支付历史 |
 | `get_identity` | 查看 DID 和连接状态 |
@@ -254,11 +255,17 @@ Layer 4 — 测试
 | `create_session` / `get_session_status` / `close_session` | 会话密钥管理 |
 | `execute_spl_payment` | 通过会话密钥执行 SPL Token 转账 |
 | `add_merchant` / `update_merchant` / `verify_merchant` | 链上 ZK DID 管理 |
+| `open_channel` | 与 Hub 建立状态通道（User 角色） |
+| `channel_pay` | 通过状态通道发起支付 |
+| `get_channel_status` | 查询通道状态（余额、序列号、叶子数） |
+| `close_channel` | 协作关闭状态通道 |
+| `settle_channel` | 发起链上结算 |
 
 **关键模块**:
 
 | 模块 | 说明 |
 |:-----|:-----|
+| `channel` | 状态通道 User Side 客户端（`ChannelClient`），与 Hub HTTP API 通信 |
 | `payment` | 支付存储、待授权存储、支付类型 |
 | `mediator` | DIDComm Mediator WebSocket 连接（配对/邀请） |
 | `audit` | 支付与列表事件审计存储 |
@@ -293,18 +300,62 @@ Layer 4 — 测试
 
 **位置**: `ignite_pay_app/rust/`
 **类型**: Flutter Rust Bridge 库 (cdylib + staticlib)
-**用途**: Ignite Pay 移动端 Flutter 应用的 Rust 原生层，通过 Flutter Rust Bridge 提供 DID 身份、DIDComm 通信等原生功能。
+**用途**: Ignite Pay 移动端 Flutter 应用的 Rust 原生层，通过 Flutter Rust Bridge 提供 DID 身份、DIDComm 通信等原生功能。支持扫码支付：解析商户 QR 码 → 确认支付 → 通过状态通道完成付款。
 
 **关键模块**:
 
 | 模块 | 说明 |
 |:-----|:-----|
+| `api/channel` | 状态通道 bridge 函数（解析 QR、开通道、支付、关闭、结算） |
+| `api/channel_store` | 通道状态 sled 持久化（`ChannelStore`） |
 | `api` | Flutter 可调用的 API 函数 |
 | `frb_generated` | Flutter Rust Bridge 自动生成绑定 |
 
+**Flutter 层关键文件**:
+
+| 文件 | 说明 |
+|:-----|:-----|
+| `lib/services/channel_service.dart` | Dart 通道服务层（`ChannelService`） |
+| `lib/qr_payment_screen.dart` | 扫码支付确认 UI（暗色玻璃拟物风格） |
+
 ---
 
-### 13. ignite-pay-litesvm-tests
+### 13. ignite-pay-merchant-mcp
+
+**位置**: `ignite-pay-merchant-mcp/`
+**类型**: 二进制 (bin) — MCP 服务器
+**用途**: 商户侧 AI Agent MCP 服务器。生成收款二维码、接收状态通道支付、管理订单和收款记录。商户在状态通道中充当 Provider 角色。
+
+**MCP 工具**:
+
+| 工具 | 说明 |
+|:-----|:-----|
+| `generate_payment_qr` | 生成收款二维码（`ignite://pay?d=<base64url>` 格式） |
+| `check_payment` | 按 order_id 查询收款状态 |
+| `get_payment_history` | 收款历史记录 |
+| `get_channel_status` | 通道状态（余额、序列号、Provider 余额） |
+| `open_channel_with_hub` | 提示商户 Provider pubkey 供用户开通道 |
+| `close_channel` | 协作关闭通道 |
+| `settle_channel` | 链上结算（claim + finalize） |
+| `get_identity` | 商户 DID、Hub 连接状态 |
+
+**关键模块**:
+
+| 模块 | 说明 |
+|:-----|:-----|
+| `channel` | `MerchantChannelClient` — Provider 角色状态通道客户端（接收支付、配签、结算） |
+| `payment` | `PaymentOrderStore` — 订单 sled 持久化（创建、确认、查询、列表） |
+| `qr` | QR 码生成与解析（`PaymentQrData` 结构、`ignite://pay` 协议格式） |
+| `mediator` | `MerchantMediator` — DIDComm Mediator 连接（发送支付确认消息） |
+| `audit` | `AuditLogStore` — 商户操作审计日志 |
+| `config` | TOML 配置加载（merchant、mediator、storage、solana、hub） |
+| `tools` | MCP 工具输入类型定义 |
+
+**QR 码格式**: `ignite://pay?d=<base64url(JSON)>`，JSON 包含 `type: "ignite-pay-request"`、`merchant_did`、`amount`、`description`、`order_id`、`hub_endpoint`、`timestamp`。
+
+---
+
+### 14. ignite-pay-litesvm-tests
 
 **位置**: `tests/svm-litesvm/`
 **类型**: 测试库 (lib)
@@ -314,7 +365,7 @@ Layer 4 — 测试
 
 ---
 
-### 14. ignite-pay-mollusk-tests
+### 15. ignite-pay-mollusk-tests
 
 **位置**: `tests/svm-mollusk/`
 **类型**: 测试库 (lib)
@@ -345,5 +396,5 @@ Layer 4 — 测试
 | 链上测试 | litesvm、mollusk |
 | Python 绑定 | PyO3 |
 | 移动端 | Flutter + Flutter Rust Bridge |
-| AI 集成 | MCP (Model Context Protocol)、x402 支付协议 |
+| AI 集成 | MCP (Model Context Protocol)、x402 支付协议、状态通道扫码支付 |
 | 消息中介 | DIDComm Router (WebSocket) |

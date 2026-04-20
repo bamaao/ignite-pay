@@ -622,3 +622,69 @@ pub fn load_merchant_policy(
 ) -> Result<Option<MerchantPolicy>> {
     crate::api::session::load_merchant_policy(storage_path, merchant_did)
 }
+
+// ── State Channel Bridge Wrappers ──────────────────────────────────────
+
+/// Parse a payment QR code (ignite://pay?d=... format).
+/// Returns merchant DID, amount, description, order ID, and hub endpoint.
+pub fn parse_payment_qr(qr_data: String) -> Result<crate::api::channel::PaymentQrData> {
+    crate::api::channel::parse_payment_qr(qr_data)
+}
+
+/// List all stored state channels.
+pub fn list_channels(storage_path: String) -> Result<Vec<crate::api::channel_store::ChannelInfo>> {
+    crate::api::channel::list_channels(storage_path)
+}
+
+/// Get channel state info.
+pub fn get_channel_state(
+    storage_path: String,
+    channel_id: String,
+) -> Result<crate::api::channel::ChannelStateInfo> {
+    crate::api::channel::get_channel_state(storage_path, channel_id)
+}
+
+/// Open a state channel with a Hub.
+pub async fn open_channel(
+    storage_path: String,
+    hub_endpoint: String,
+    deposit: u64,
+    tree_depth: u32,
+) -> Result<crate::api::channel::OpenChannelResult> {
+    crate::api::channel::open_channel(storage_path, hub_endpoint, deposit, tree_depth).await
+}
+
+/// Pay through a state channel.
+pub async fn channel_pay(
+    storage_path: String,
+    channel_id: String,
+    hub_endpoint: String,
+    amount: u64,
+    recipient_pubkey: String,
+) -> Result<crate::api::channel::PaymentResult> {
+    crate::api::channel::channel_pay(
+        storage_path,
+        channel_id,
+        hub_endpoint,
+        amount,
+        recipient_pubkey,
+    )
+    .await
+}
+
+/// Close a state channel.
+pub async fn close_channel(
+    storage_path: String,
+    channel_id: String,
+) -> Result<String> {
+    crate::api::channel::close_channel(storage_path, channel_id).await
+}
+
+/// Settle a state channel.
+pub async fn settle_channel(
+    storage_path: String,
+    channel_id: String,
+    hub_endpoint: String,
+) -> Result<String> {
+    crate::api::channel::settle_channel(storage_path, channel_id, hub_endpoint).await
+}

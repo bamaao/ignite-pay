@@ -2002,6 +2002,7 @@ dependencies = [
  "ed25519-dalek",
  "flutter_rust_bridge",
  "futures-util",
+ "hex",
  "ignite-pay-core",
  "jsonwebtoken",
  "once_cell",

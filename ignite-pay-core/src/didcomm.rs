@@ -296,6 +296,57 @@ fn build_authorization_response_v1_inner(
     .to(vec![to_did.to_string()])
 }
 
+/// Build a state channel payment request message.
+/// Sent from the merchant MCP to the user App (via mediator) for QR code payments.
+pub fn build_channel_payment_request(
+    from_did: &str,
+    to_did: &str,
+    merchant_did: &str,
+    amount: u64,
+    description: &str,
+    order_id: &str,
+    hub_endpoint: &str,
+    timestamp: i64,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/channel-payment-request",
+        json!({
+            "merchant_did": merchant_did,
+            "amount": amount,
+            "description": description,
+            "order_id": order_id,
+            "hub_endpoint": hub_endpoint,
+            "timestamp": timestamp,
+        }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build a state channel payment confirmation message.
+/// Sent from the merchant MCP to the user App after successful channel payment.
+pub fn build_channel_payment_confirm(
+    from_did: &str,
+    to_did: &str,
+    order_id: &str,
+    channel_id: &str,
+    leaf_index: u32,
+    sequence: u64,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/channel-payment-confirm",
+        json!({
+            "order_id": order_id,
+            "status": "confirmed",
+            "channel_id": channel_id,
+            "leaf_index": leaf_index,
+            "sequence": sequence,
+        }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
 /// Build a list-sync notification message.
 /// Sent from the MCP server to the phone after updating whitelist/blacklist.
 pub fn build_list_sync_notification(
@@ -678,6 +729,53 @@ mod tests {
         assert_eq!(msg.typ, "https://didcomm.org/peer-did-discovery/1.0/discover");
         assert_eq!(msg.from.as_ref().unwrap(), PHONE_DID);
         assert_eq!(msg.body["did_document"]["id"], PHONE_DID);
+    }
+
+    // --- build_channel_payment_request ---
+
+    #[test]
+    fn test_build_channel_payment_request() {
+        let msg = build_channel_payment_request(
+            TEST_DID,
+            PHONE_DID,
+            "did:ignite:zMerchant",
+            100_000,
+            "Coffee",
+            "order-123",
+            "https://hub.example.com",
+            1700000000,
+        );
+        assert_eq!(msg.typ, "https://didcomm.org/ignite-pay/1.0/channel-payment-request");
+        assert_eq!(msg.from.as_ref().unwrap(), TEST_DID);
+        assert_eq!(msg.to.as_ref().unwrap().first().unwrap(), PHONE_DID);
+        assert_eq!(msg.body["merchant_did"], "did:ignite:zMerchant");
+        assert_eq!(msg.body["amount"], 100_000);
+        assert_eq!(msg.body["description"], "Coffee");
+        assert_eq!(msg.body["order_id"], "order-123");
+        assert_eq!(msg.body["hub_endpoint"], "https://hub.example.com");
+        assert_eq!(msg.body["timestamp"], 1700000000);
+    }
+
+    // --- build_channel_payment_confirm ---
+
+    #[test]
+    fn test_build_channel_payment_confirm() {
+        let msg = build_channel_payment_confirm(
+            TEST_DID,
+            PHONE_DID,
+            "order-123",
+            "hexchannelid",
+            3,
+            15,
+        );
+        assert_eq!(msg.typ, "https://didcomm.org/ignite-pay/1.0/channel-payment-confirm");
+        assert_eq!(msg.from.as_ref().unwrap(), TEST_DID);
+        assert_eq!(msg.to.as_ref().unwrap().first().unwrap(), PHONE_DID);
+        assert_eq!(msg.body["order_id"], "order-123");
+        assert_eq!(msg.body["status"], "confirmed");
+        assert_eq!(msg.body["channel_id"], "hexchannelid");
+        assert_eq!(msg.body["leaf_index"], 3);
+        assert_eq!(msg.body["sequence"], 15);
     }
 
     // --- pack/unpack roundtrip ---

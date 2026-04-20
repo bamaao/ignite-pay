@@ -1,31 +1,20 @@
 [package]
-name = "ignite-pay-mcp"
+name = "ignite-pay-merchant-mcp"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "ignite-pay-mcp"
+name = "ignite-pay-merchant-mcp"
 path = "src/main.rs"
 
 [dependencies]
-# Shared library
+# Shared libraries
 ignite-pay-core = { path = "../ignite-pay-core", features = ["solana"] }
-ignite-pay-solana = { path = "../ignite-pay-solana" }
 ignite-pay-state-channel = { path = "../ignite-pay-state-channel" }
-
-# HTTP client for Hub communication
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
-
-# Hex encoding for channel IDs
-hex = "0.4"
-
-# ed25519-dalek v1 — used by ignite-pay-state-channel for Keypair operations.
-# We need this alongside v2 (pulled in by ignite-pay-core) to reconstruct keypairs
-# for signing leaf updates in the state channel.
-ed25519-dalek-v1 = { package = "ed25519-dalek", version = "1" }
+ignite-pay-solana = { path = "../ignite-pay-solana" }
 
 # MCP SDK
-rmcp = { version = "1.3", features = ["transport-io"] }
+rmcp = { version = "=1.4.0", features = ["transport-io"] }
 schemars = "1"
 
 # Async
@@ -39,24 +28,30 @@ borsh = "0.10"
 
 # Encoding
 bs58 = "0.5"
-
-# DIDComm (still needed for direct DIDCommAgent usage)
-affinidi-messaging-didcomm = "0.13"
 base64 = "0.22"
 
-# WebSocket (pure Rust TLS, no system OpenSSL needed)
+# ed25519-dalek v1 for state channel Keypair operations
+ed25519-dalek-v1 = { package = "ed25519-dalek", version = "1" }
+
+# DIDComm
+affinidi-messaging-didcomm = "=0.13.0"
+
+# WebSocket
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 
 # State persistence
 sled = "0.34"
 
+# HTTP client for Hub communication
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# QR code generation
+qrcode = "0.14"
+
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-
-# QR code generation
-qrcode = "0.14"
 
 # Misc
 uuid = { version = "1", features = ["v4"] }
@@ -64,6 +59,7 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 toml = "0.8"
 dashmap = "6"
+hex = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

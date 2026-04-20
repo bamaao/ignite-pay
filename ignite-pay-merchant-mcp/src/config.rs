@@ -1,0 +1,56 @@
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+pub struct Config {
+    pub merchant: MerchantConfig,
+    pub mediator: MediatorConfig,
+    pub storage: StorageConfig,
+    pub solana: SolanaConfig,
+    pub hub: HubConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MerchantConfig {
+    #[serde(default)]
+    pub did: String,
+    pub hub_endpoint: String,
+    pub hub_ws_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MediatorConfig {
+    pub ws_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StorageConfig {
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SolanaConfig {
+    #[serde(default = "default_rpc_url")]
+    pub rpc_url: String,
+    #[serde(default)]
+    pub program_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HubConfig {
+    #[serde(default)]
+    pub token_mint: String,
+    #[serde(default)]
+    pub provider_pubkey: String,
+}
+
+fn default_rpc_url() -> String {
+    "https://api.devnet.solana.com".to_string()
+}
+
+pub fn load_config() -> anyhow::Result<Config> {
+    let config_path =
+        std::env::var("IGNITE_MERCHANT_CONFIG").unwrap_or_else(|_| "config.toml".to_string());
+    let content = std::fs::read_to_string(&config_path)?;
+    let config: Config = toml::from_str(&content)?;
+    Ok(config)
+}

@@ -30,6 +30,7 @@ rand = "0.8"
 sha2 = "0.10"
 url = "2"
 rusqlite = { version = "0.31", features = ["bundled"] }
+hex = "0.4"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

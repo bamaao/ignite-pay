@@ -1,12 +1,14 @@
+use ignite_pay_mcp::channel::ChannelClient;
 use ignite_pay_mcp::mediator::MediatorConnection;
 use ignite_pay_mcp::payment::{
     execute_mock_payment, AuthResponse, PaymentRequest, PaymentStatus, PendingAuthStore,
 };
 use ignite_pay_mcp::audit::AuditLogStore;
 use ignite_pay_mcp::tools::{
-    AddMerchantInput, AuthorizationCheckInput, CloseSessionInput, CreateSessionInput,
-    PaymentHistoryInput, SessionStatusInput, SplPaymentInput, UpdateMerchantInput,
-    VerifyMerchantInput, X402ChallengeInput,
+    AddMerchantInput, AuthorizationCheckInput, ChannelPayInput, CloseChannelInput,
+    CloseSessionInput, CreateSessionInput, GetChannelStatusInput, OpenChannelInput,
+    PaymentHistoryInput, SessionStatusInput, SettleChannelInput, SplPaymentInput,
+    UpdateMerchantInput, VerifyMerchantInput, X402ChallengeInput,
 };
 
 use base64::Engine;
@@ -106,6 +108,9 @@ struct SolanaConfig {
     relayer_url: String,
     #[serde(default)]
     default_owner: String,
+    /// State channel Hub HTTP endpoint (e.g., "http://localhost:3003").
+    #[serde(default)]
+    hub_endpoint: String,
 }
 
 fn default_rpc_url() -> String {
@@ -139,17 +144,19 @@ fn load_config() -> Result<Config, anyhow::Error> {
 
 // ── Payment Execution ──────────────────────────────────────────────────────
 
-/// Execute a payment using a session key on Solana, or fall back to mock.
+/// Execute a payment using a session key on Solana, state channel, or fall back to mock.
 ///
-/// V2.0 flow:
+/// V3.0 flow:
 /// 1. If Solana client + session key available → real on-chain payment via session key
-/// 2. On failure → return error (do NOT silently fall back to mock)
-/// 3. If no Solana client → mock payment
-/// 4. If Solana client but no session → return error
+/// 2. If state channel client + open channel available → state channel payment
+/// 3. On failure → return error (do NOT silently fall back to mock)
+/// 4. If no Solana client → mock payment
+/// 5. If Solana client but no session/channel → return error
 async fn execute_payment(
     solana_client: &Option<Arc<IgnitePayClient>>,
     payment: &PaymentRequest,
     session: &Option<SessionKeypair>,
+    channel_client: &Option<Arc<ChannelClient>>,
 ) -> Result<String, String> {
     match (solana_client, session) {
         (Some(client), Some(sess)) => {
@@ -181,7 +188,35 @@ async fn execute_payment(
                 Err(e) => Err(format!("On-chain payment failed: {}", e)),
             }
         }
-        (Some(_), None) => Err("No active session key".to_string()),
+        (Some(_), None) => {
+            // Try state channel payment
+            if let Some(channel) = channel_client {
+                if let Some(channel_id) = channel.get_open_channel_id() {
+                    tracing::info!(
+                        "Executing state channel payment: {} to {} via channel {}",
+                        payment.amount,
+                        payment.recipient,
+                        &channel_id[..16.min(channel_id.len())],
+                    );
+                    match channel.channel_pay(&channel_id, payment.amount, &payment.recipient).await {
+                        Ok(result) => {
+                            tracing::info!(
+                                "State channel payment succeeded: channel={}, seq={}, leaf={}",
+                                &result.channel_id[..16.min(result.channel_id.len())],
+                                result.sequence,
+                                result.leaf_index
+                            );
+                            Ok(format!("channel:{}:seq:{}:leaf:{}", result.channel_id, result.sequence, result.leaf_index))
+                        }
+                        Err(e) => Err(format!("State channel payment failed: {}", e)),
+                    }
+                } else {
+                    Err("No active session key or open state channel".to_string())
+                }
+            } else {
+                Err("No active session key".to_string())
+            }
+        }
         _ => {
             tracing::warn!("Mock payment (no Solana client configured)");
             Ok(execute_mock_payment(payment))
@@ -215,6 +250,8 @@ struct IgnitePayMcpServer {
     default_owner: Pubkey,
     // V2.0: DID service for ZK compressed account operations
     did_service: Option<Arc<ignite_pay_solana::compression::DidService>>,
+    // V3.0: State channel client for channel-based payments
+    channel_client: Option<Arc<ChannelClient>>,
 }
 
 #[tool_router]
@@ -404,7 +441,7 @@ impl IgnitePayMcpServer {
             }
             Ok(RiskControlDecision::AutoApproved { max_amount, label }) => {
                 let session = self.get_active_session();
-                return match execute_payment(&self.solana_client, &payment, &session).await {
+                return match execute_payment(&self.solana_client, &payment, &session, &self.channel_client).await {
                     Ok(tx_sig) => {
                         let _ = self
                             .payments
@@ -441,7 +478,7 @@ impl IgnitePayMcpServer {
         // 4. Check auto-approve (global threshold)
         if self.auto_approve_max > 0 && amount <= self.auto_approve_max {
             let session = self.get_active_session();
-            match execute_payment(&self.solana_client, &payment, &session).await {
+            match execute_payment(&self.solana_client, &payment, &session, &self.channel_client).await {
                 Ok(tx_sig) => {
                     if let Err(e) = self
                         .payments
@@ -517,7 +554,7 @@ impl IgnitePayMcpServer {
                 let session = self
                     .get_session_from_auth_response(&resp)
                     .or_else(|| self.get_active_session());
-                match execute_payment(&self.solana_client, &payment, &session).await {
+                match execute_payment(&self.solana_client, &payment, &session, &self.channel_client).await {
                     Ok(tx_sig) => {
                         let _ = self
                             .payments
@@ -1048,6 +1085,128 @@ impl IgnitePayMcpServer {
             Err(e) => format!("Verification error: {}", e),
         }
     }
+
+    // ── State Channel Tools ──────────────────────────────────────────────
+
+    #[tool(
+        description = "Open a state channel with a Hub for off-chain payments. Requires Hub HTTP endpoint, deposit amount, and provider pubkey."
+    )]
+    async fn open_channel(&self, Parameters(input): Parameters<OpenChannelInput>) -> String {
+        let client = match &self.channel_client {
+            Some(c) => c,
+            None => return "Error: State channel client not configured. Set solana.hub_endpoint in config.toml.".to_string(),
+        };
+
+        let token_mint = input.token_mint.as_deref().unwrap_or("11111111111111111111111111111111");
+
+        match client.open_channel(
+            &input.provider_pubkey,
+            token_mint,
+            input.deposit,
+            input.tree_depth,
+        ).await {
+            Ok(result) => format!(
+                "Channel opened.\nChannel ID: {}\nSequence: {}\nRoot: {}",
+                result.channel_id, result.sequence, result.current_root
+            ),
+            Err(e) => format!("Error opening channel: {}", e),
+        }
+    }
+
+    #[tool(
+        description = "Send a payment through an open state channel. Requires channel ID, amount, and recipient pubkey."
+    )]
+    async fn channel_pay(&self, Parameters(input): Parameters<ChannelPayInput>) -> String {
+        let client = match &self.channel_client {
+            Some(c) => c,
+            None => return "Error: State channel client not configured.".to_string(),
+        };
+
+        match client.channel_pay(
+            &input.channel_id,
+            input.amount,
+            &input.recipient,
+        ).await {
+            Ok(result) => format!(
+                "Payment sent.\nChannel: {}\nSequence: {}\nLeaf: {}\nNew root: {}",
+                result.channel_id, result.sequence, result.leaf_index, result.new_root
+            ),
+            Err(e) => format!("Channel payment failed: {}", e),
+        }
+    }
+
+    #[tool(
+        description = "Get state channel status. If channel_id is provided, shows details for that channel. Otherwise lists all channels."
+    )]
+    async fn get_channel_status(
+        &self,
+        Parameters(input): Parameters<GetChannelStatusInput>,
+    ) -> String {
+        let client = match &self.channel_client {
+            Some(c) => c,
+            None => return "Error: State channel client not configured.".to_string(),
+        };
+
+        match &input.channel_id {
+            Some(id) => match client.get_channel_status(id) {
+                Ok(status) => format!(
+                    "Channel: {}\nStatus: {}\nSequence: {}\nLeaves: {}\nBalance: {}\nDeposited: {}",
+                    status.channel_id, status.status, status.sequence,
+                    status.leaf_count, status.user_balance, status.total_deposited
+                ),
+                Err(e) => format!("Error: {}", e),
+            },
+            None => match client.list_channels() {
+                Ok(channels) => {
+                    if channels.is_empty() {
+                        return "No channels found.".to_string();
+                    }
+                    let mut result = format!("Channels ({}):\n\n", channels.len());
+                    for id in &channels {
+                        match client.get_channel_status(id) {
+                            Ok(s) => result.push_str(&format!(
+                                "- {} | {} | seq={} | balance={}\n",
+                                &id[..16.min(id.len())], s.status, s.sequence, s.user_balance
+                            )),
+                            Err(_) => result.push_str(&format!("- {} | (error loading)\n", &id[..16.min(id.len())])),
+                        }
+                    }
+                    result
+                }
+                Err(e) => format!("Error: {}", e),
+            },
+        }
+    }
+
+    #[tool(
+        description = "Cooperatively close an open state channel. The channel must be in Open status."
+    )]
+    async fn close_channel(&self, Parameters(input): Parameters<CloseChannelInput>) -> String {
+        let client = match &self.channel_client {
+            Some(c) => c,
+            None => return "Error: State channel client not configured.".to_string(),
+        };
+
+        match client.close_channel(&input.channel_id).await {
+            Ok(msg) => msg,
+            Err(e) => format!("Error closing channel: {}", e),
+        }
+    }
+
+    #[tool(
+        description = "Initiate settlement of a state channel on-chain. After settlement, use claim + finalize to withdraw funds."
+    )]
+    async fn settle_channel(&self, Parameters(input): Parameters<SettleChannelInput>) -> String {
+        let client = match &self.channel_client {
+            Some(c) => c,
+            None => return "Error: State channel client not configured.".to_string(),
+        };
+
+        match client.settle_channel(&input.channel_id).await {
+            Ok(msg) => msg,
+            Err(e) => format!("Error settling channel: {}", e),
+        }
+    }
 }
 
 impl IgnitePayMcpServer {
@@ -1367,6 +1526,29 @@ async fn main() -> anyhow::Result<()> {
     mediator.connect(Arc::clone(&pending)).await?;
     tracing::info!("Connecting to mediator at {}...", config.mediator.ws_url);
 
+    // V3.0: Initialize state channel client if Hub endpoint is configured
+    let channel_client = if !config.solana.hub_endpoint.is_empty() {
+        let channel_db = sled::open(format!("{}/channel", config.storage.path))?;
+        // Use the default owner keypair bytes for channel operations, or generate new ones
+        let keypair_bytes = ChannelClient::generate_keypair();
+        match ChannelClient::new(&config.solana.hub_endpoint, channel_db, &keypair_bytes) {
+            Ok(client) => {
+                tracing::info!(
+                    "State channel client initialized: hub={}",
+                    config.solana.hub_endpoint
+                );
+                Some(Arc::new(client))
+            }
+            Err(e) => {
+                tracing::error!("Failed to initialize state channel client: {}", e);
+                None
+            }
+        }
+    } else {
+        tracing::info!("No hub_endpoint configured, state channel payments disabled");
+        None
+    };
+
     // Build and run MCP server
     let server = IgnitePayMcpServer {
         tool_router: IgnitePayMcpServer::tool_router(),
@@ -1385,6 +1567,7 @@ async fn main() -> anyhow::Result<()> {
         audit,
         default_owner,
         did_service,
+        channel_client,
     };
 
     tracing::info!("Starting MCP server on stdio...");

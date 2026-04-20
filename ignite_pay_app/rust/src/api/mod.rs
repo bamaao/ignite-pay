@@ -1,4 +1,6 @@
 pub mod auth;
+pub mod channel;
+pub mod channel_store;
 pub mod identity;
 pub mod log_store;
 pub mod notification;

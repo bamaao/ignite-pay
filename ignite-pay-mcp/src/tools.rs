@@ -132,6 +132,62 @@ pub struct VerifyMerchantInput {
     pub expected_address: String,
 }
 
+// State channel tools
+
+/// Input for the `open_channel` tool.
+fn default_tree_depth() -> u32 {
+    8
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct OpenChannelInput {
+    /// Hub HTTP endpoint URL (e.g., "http://localhost:3003").
+    pub hub_endpoint: String,
+    /// Amount to deposit into the channel (in smallest token units).
+    pub deposit: u64,
+    /// Merkle tree depth (default 8, max 12).
+    #[serde(default = "default_tree_depth")]
+    pub tree_depth: u32,
+    /// Provider (Hub) Solana public key (base58).
+    pub provider_pubkey: String,
+    /// SPL token mint address (base58). Defaults to native SOL.
+    #[serde(default)]
+    pub token_mint: Option<String>,
+}
+
+/// Input for the `channel_pay` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ChannelPayInput {
+    /// Channel ID (hex string).
+    pub channel_id: String,
+    /// Amount to pay (in smallest token units).
+    pub amount: u64,
+    /// Recipient Solana public key (base58).
+    pub recipient: String,
+}
+
+/// Input for the `get_channel_status` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetChannelStatusInput {
+    /// Channel ID (hex string). If empty, returns all open channels.
+    #[serde(default)]
+    pub channel_id: Option<String>,
+}
+
+/// Input for the `close_channel` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CloseChannelInput {
+    /// Channel ID (hex string).
+    pub channel_id: String,
+}
+
+/// Input for the `settle_channel` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SettleChannelInput {
+    /// Channel ID (hex string).
+    pub channel_id: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

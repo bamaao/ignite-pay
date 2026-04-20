@@ -1,0 +1,27 @@
+# Merchant MCP configuration
+
+[merchant]
+# Merchant DID (auto-generated on first run if empty)
+did = ""
+# Hub HTTP endpoint for state channel operations
+hub_endpoint = "http://localhost:3003"
+# Hub WebSocket endpoint
+hub_ws_url = "ws://localhost:3003/ws"
+
+[mediator]
+# DIDComm mediator WebSocket URL
+ws_url = "ws://localhost:4000/ws"
+
+[storage]
+path = "./data/merchant-mcp"
+
+[solana]
+rpc_url = "https://api.devnet.solana.com"
+# Program ID for the state channel on-chain program
+program_id = ""
+
+[hub]
+# Default token mint for channel payments (empty = native SOL)
+token_mint = ""
+# Provider public key (Hub's pubkey, set to match the Hub you connect to)
+provider_pubkey = ""
