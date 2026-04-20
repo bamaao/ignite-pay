@@ -63,9 +63,17 @@ pub fn htlc_refund(
     let channel = &mut ctx.accounts.channel;
     let current_slot = ctx.accounts.clock.slot;
 
-    // Check settle_deadline
-    let deadline = channel.settle_deadline
-        .ok_or(ChannelError::InvalidStatus)?;
+    // Check deadline: in Challenged state, derive from challenge_slot + challenge_duration;
+    // in Settling state, use settle_deadline.
+    let deadline = if channel.status == ChannelStatus::Challenged {
+        let cs = channel.challenge_slot
+            .ok_or(ChannelError::InvalidStatus)?;
+        cs.checked_add(channel.challenge_duration)
+            .ok_or(ChannelError::ArithmeticOverflow)?
+    } else {
+        channel.settle_deadline
+            .ok_or(ChannelError::InvalidStatus)?
+    };
     require!(
         current_slot <= deadline,
         ChannelError::SettlementExpired

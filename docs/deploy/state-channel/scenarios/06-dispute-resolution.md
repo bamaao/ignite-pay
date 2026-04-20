@@ -124,4 +124,5 @@ mgr.settle_after_timeout(&mut state, current_slot, settle_window)?;
 - `min_challenge_delay` 防止 front-running 攻击（不可过早发起争议）
 - `submit_counter_state` 要求 sig_a + sig_b 两个签名，证明双方同意该状态
 - 超时结算后，流程与协作关闭相同：claim 叶子 → finalize
+- 在 `Challenged` 状态期间（`challenge_duration` 倒计时内），也可执行 HTLC 认领或退款操作（截止时间为 `challenge_slot + challenge_duration`）
 - Challenger 的签名使用 `ed_kp.sign(msg)` 生成，消息中包含 slot 防止重放

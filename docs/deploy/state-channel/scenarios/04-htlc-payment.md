@@ -143,8 +143,8 @@ htlc_mgr.mark_fulfilled(&hash_lock)?;
 
 | 指令 | 函数 | 触发条件 |
 |:-----|:-----|:---------|
-| `verify_htlc` | `build_verify_htlc_ix` | 结算阶段，受益人提供原像认领 |
-| `htlc_refund` | `build_htlc_refund_ix` | 结算阶段，timelock 过期后退款 |
+| `verify_htlc` | `build_verify_htlc_ix` | Challenged 或 Settling 阶段，受益人提供原像认领 |
+| `htlc_refund` | `build_htlc_refund_ix` | Challenged 或 Settling 阶段，timelock 过期后退款 |
 
 ## 8. 错误处理
 

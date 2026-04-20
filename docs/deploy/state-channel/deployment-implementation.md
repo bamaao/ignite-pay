@@ -88,7 +88,7 @@ cargo test
 |:-----|:---|:-----|
 | `HTLC_SAFETY_MARGIN` | 1000 slots | HTLC timelock 安全余量（~6.7 分钟） |
 | `HOP_MARGIN` | 1000 slots | 多跳 timelock 递减步长（~6.7 分钟） |
-| 最大 `tree_depth` | 8 | 链上程序限制，最多 256 叶子 |
+| 最大 `tree_depth` | 12 | 链上程序限制，最多 4096 叶子 |
 
 ---
 
@@ -135,12 +135,14 @@ status: ChannelStatus          — Open / Challenged / Settling / Closed
 sequence: u64                  — 当前序列号
 current_root: [u8; 32]         — 当前 Merkle 根
 total_deposited: u64           — 总存款
+total_claimed: u64             — 已认领总额
 vault_a / vault_b: Pubkey      — 双方 Token 账户
 deposit_a / deposit_b: u64     — 各方存款
 challenge_duration: u64        — 争议期（slots）
 min_challenge_delay: u64       — 最短争议延迟
-settle_deadline: Option<u64>   — 结算窗口截止
-tree_depth: u32                — Merkle 树深度
+challenge_slot: Option<u64>    — 争议发起 slot（Challenged 状态下设置）
+settle_deadline: Option<u64>   — 结算窗口截止（Settling 状态下设置）
+tree_depth: u32                — Merkle 树深度（最大 12）
 claimed_leaves: Vec<u32>       — 已认领叶子索引
 auto_close_slot: Option<u64>   — 自动关闭 slot
 ```
@@ -167,6 +169,7 @@ ChannelAccount::space(tree_depth)
 // tree_depth=3 → 8 叶子 → 约 520 bytes
 // tree_depth=4 → 16 叶子 → 约 552 bytes
 // tree_depth=8 → 256 叶子 → 约 1112 bytes
+// tree_depth=12 → 4096 叶子 → 约 16472 bytes
 ```
 
 ---
@@ -329,25 +332,39 @@ cargo test
 
 ### 7.1 两层签名
 
-**Leaf 级签名**（LeafUpdate）：
+**Leaf 级签名**（LeafUpdate）— 链下验证：
 ```
 message = SHA-256(channel_id || sequence || leaf_index || prev_leaf_hash || new_leaf_hash)
 signature = Ed25519.sign(message, signer_private_key)
 ```
 
-**State 级签名**（SignedState）：
+**State 级签名**（SignedState）— 链下预哈希，链上验证：
 ```
-message = SHA-256(channel_id || sequence || root)
+链下: message = SHA-256(channel_id || sequence || root)
 sig_a = Ed25519.sign(message, user_private_key)
 sig_b = Ed25519.sign(message, provider_private_key)
 ```
 
-### 7.2 Claim 签名
+### 7.2 链上签名消息格式
 
-用于链上 claim/verify_htlc/htlc_refund：
+链上合约构造原始字节拼接（不哈希），通过 Solana ed25519 指令内省验证。按格式分三族：
+
+**族 A — OpenChannel**（用户单签）：
 ```
-message = SHA-256("claim" || channel_id || leaf_index || amount || current_slot)
+message = channel_id || deposit_a(8 LE) || tree_depth(4 LE) || initial_root
 ```
+
+**族 B — CooperativeSettle / SubmitCounterState**（双方双签）：
+```
+message = channel_id || sequence(8 LE) || root
+```
+
+**族 C — Claim / VerifyHTLC / HTLCRefund / HTLCRefund / FinalizeSettlement / TriggerChallenge**（单签）：
+```
+message = channel_id || current_slot(8 LE) || current_root
+```
+
+> **注意**: 链下 `claim_message()` 辅助函数使用 `SHA-256("claim" || channel_id || leaf_index || amount || current_slot)` 格式，与链上族 C 格式不同。链上 Claim 验证使用 `channel_id || current_slot || current_root`，不含 leaf 级字段。
 
 ---
 

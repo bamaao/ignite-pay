@@ -117,7 +117,9 @@ mgr.claim_htlc_refund(
 ## 9. 注意事项
 
 - HTLC 认领和退款都只能在 `Challenged` 或 `Settling` 状态下执行
+- 在 `Challenged` 状态下，`settle_deadline` 尚未设置，链上使用 `challenge_slot + challenge_duration` 作为操作截止时间
+- 在 `Settling` 状态下，使用 `settle_deadline` 作为操作截止时间
 - `verify_htlc` 需要 11 个参数，是最复杂的链上指令
 - Merkle proof 必须基于当前 `current_root` 生成
-- claimer 签名消息格式：`channel_id || leaf_index || amount || current_slot`
+- claimer 签名消息格式（链上）：`channel_id || current_slot || current_root`
 - 退款时链上会验证 `timelock_slot < current_slot`

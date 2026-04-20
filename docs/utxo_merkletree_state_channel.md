@@ -402,7 +402,7 @@ timelock_slot 必须满足:
 
 通道参数:
   leaf_count = 101    // 100 个支付叶子 + 1 个找零叶子
-  tree_depth = 16     // 最大 65536 叶子，空间充足
+  tree_depth = 8      // 最多 4096 叶子（链上程序限制 tree_depth ≤ 12）
 
 初始叶子:
   UTXO_0 ~ UTXO_99:  each $0.01, owner=user, type=Standard
@@ -448,12 +448,12 @@ timelock_slot 必须满足:
   用户                                       Solana 链上
     │                                            │
     │  1. 提交 OpenChannel 交易                    │
-    │  { authority_a: user_pubkey,                 │
-    │    authority_b: provider_pubkey,              │
+    │  { user_pubkey: user_pubkey,                 │
+    │    provider_pubkey: provider_pubkey,          │
     │    token_mint: USDC,                          │
     │    deposit_amount: 10_000_000,                │
     │    root_init: [u8; 32],    ← 初始 Root       │
-    │    tree_depth: 16,                            │
+    │    tree_depth: 8,                             │
     │    leaf_count: 1,           ← 初始仅 1 个叶子 │
     │    challenge_duration: 86400,                 │
     │    min_challenge_delay: 7200,                 │
@@ -483,12 +483,12 @@ timelock_slot 必须满足:
     │  2. 发送通道创建请求 + 面额方案              │
     │  { channel_id, deposit: 10 USDC,            │
     │    denominations: [100×$0.01 + Rest],        │
-    │    tree_config: {depth:16, count:101} }      │
+    │    tree_config: {depth:8, count:101} }       │
     │ ──────────────────────────────────────────>│
     │                                            │
     │  3. 服务商确认并返回自己的公钥                │
     │  <──────────────────────────────────────────│
-    │  { authority_b: <pubkey>, accepted: true }   │
+    │  { provider_pubkey: <pubkey>, accepted: true }   │
     │                                            │
     │  4. 用户在本地构造分裂 Merkle Tree:           │
     │     a. 按 denominations 创建 101 个 UTXOLeaf │
@@ -1260,13 +1260,31 @@ pub struct ChannelAccount {
     pub channel_id: [u8; 32],
 
     /// 付款方 (用户)
-    pub authority_a: Pubkey,
+    pub user_pubkey: Pubkey,
 
     /// 收款方 (服务商)
-    pub authority_b: Pubkey,
+    pub provider_pubkey: Pubkey,
 
     /// 质押的 SPL Token Mint (如 USDC)
     pub token_mint: Pubkey,
+
+    /// 通道状态
+    pub status: ChannelStatus,
+
+    /// 当前全局状态版本号 (严格递增，挑战时只接受 > 此值的提交)
+    pub sequence: u64,
+
+    /// 当前 Merkle Root (链上唯一真相)
+    pub current_root: [u8; 32],
+
+    /// 累计质押总额 (deposit_a + deposit_b)
+    pub total_deposited: u64,
+
+    /// 通道创建时的 slot (用于计算 min_challenge_delay)
+    pub open_slot: u64,
+
+    /// 挑战开始时的 Solana slot
+    pub challenge_slot: Option<u64>,
 
     /// 用户的质押 Token Account
     pub vault_a: Pubkey,
@@ -1274,17 +1292,11 @@ pub struct ChannelAccount {
     /// 服务商的质押 Token Account (可选，双向注资时使用)
     pub vault_b: Pubkey,
 
-    /// 当前 Merkle Root (链上唯一真相)
-    pub current_root: [u8; 32],
+    /// 用户初始质押金额 (通道开启时记录，用于结算时退回未认领资金)
+    pub deposit_a: u64,
 
-    /// 当前全局状态版本号 (严格递增，挑战时只接受 > 此值的提交)
-    pub sequence: u64,
-
-    /// 通道状态
-    pub status: ChannelStatus,
-
-    /// 挑战开始时的 Solana slot
-    pub challenge_slot: Option<u64>,
+    /// 服务商初始质押金额 (双向注资时使用)
+    pub deposit_b: u64,
 
     /// 挑战期长度 (Solana slots)
     pub challenge_duration: u64,
@@ -1293,36 +1305,28 @@ pub struct ChannelAccount {
     /// 防止恶意方在通道刚开启时立即触发挑战 (防前跑攻击)
     pub min_challenge_delay: u64,
 
-    /// 通道创建时的 slot (用于计算 min_challenge_delay)
-    pub open_slot: u64,
+    /// 已认领金额追踪 — 结算窗口中已通过 Claim/VerifyHTLC/HTLCRefund 提取的总额
+    /// 用于判断结算是否完成
+    pub total_claimed: u64,
 
-    /// 自动关闭 slot — 到期后任何人都可触发结算
-    /// 防止双方同时离线导致资金永久锁定
-    pub auto_close_slot: Option<u64>,
+    /// 结算窗口结束 slot (进入 Settling 状态时设置)
+    pub settle_deadline: Option<u64>,
 
     /// Merkle Tree 参数
-    pub tree_depth: u32,        // 如 16，决定 Merkle Proof 的层级深度
+    pub tree_depth: u32,        // 最大 12（链上限制），决定 Merkle Proof 的层级深度
     pub leaf_count: u32,        // 开通时为 1，链下协商后为实际叶子数（如 101）
                                  // 注意: 此字段在链下协商后不会自动更新，
                                  // 仅作为信息字段。链上验证仅依赖 current_root，
                                  // 不使用 leaf_count。
 
-    /// 用户初始质押金额 (通道开启时记录，用于结算时退回未认领资金)
-    pub deposit_a: u64,
-
-    /// 服务商初始质押金额 (双向注资时使用)
-    pub deposit_b: u64,
-
-    /// 已认领金额追踪 — 结算窗口中已通过 Claim/VerifyHTLC/HTLCRefund 提取的总额
-    /// 用于判断结算是否完成
-    pub total_claimed: u64,
-
     /// 已认领叶子索引集合 — 防止同一叶子被重复认领
     /// 仅在 Settling 状态下使用
+    /// 链上使用 Vec<u32>（Anchor 序列化），离链使用 BTreeSet<u32>
     pub claimed_leaves: Vec<u32>,
 
-    /// 结算窗口结束 slot (进入 Settling 状态时设置)
-    pub settle_deadline: Option<u64>,
+    /// 自动关闭 slot — 到期后任何人都可触发结算
+    /// 防止双方同时离线导致资金永久锁定
+    pub auto_close_slot: Option<u64>,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq)]
@@ -1343,6 +1347,7 @@ pub enum ChannelStatus {
 | 指令 (Instruction) | 触发方 | 功能描述 |
 |:---|:---|:---|
 | `OpenChannel` | 用户 | 用户单方质押 SPL Token 到 Vault，记录 `deposit_a`，初始化 `current_root = Root_init`（全部资金归用户的单叶子树），设置 `sequence = 0`，记录 `open_slot`。仅需用户签名，无需服务商预先签名 |
+| `FundChannel` | 服务商 | 服务商向已开通的通道追加质押（双向注资）。转移 SPL Token 到 `vault_b`，更新 `deposit_b`、`total_deposited`、`leaf_count`。仅服务商可调用 |
 | `CooperativeSettle` | 双方 | 双方提交最新 `(root, sequence, sig_a, sig_b)`，合约验证双方签名且 `sequence > on_chain.sequence` 后，将通道状态设为 `Settling`，设置 `settle_deadline = current_slot + CLAIM_WINDOW`。注意：此指令**不直接分配资金**，仅开启结算窗口 |
 | `TriggerChallenge` | 单方 | 提交 `(root, sequence, sig)` (己方签名)。前置条件：`current_slot >= open_slot + min_challenge_delay`。合约验证签名有效且 `sequence > on_chain.sequence`，将状态设为 `Challenged`，记录 `challenge_slot` |
 | `SubmitCounterState` | 对手方 | 挑战期内提交更新的 `(root, sequence, sig_a, sig_b)` 双签状态且 `sequence > on_chain.sequence`，合约验证双方签名后更新 Root 和 Sequence。双签要求确保只有双方共同同意的状态才能作为反证提交，防止任何一方单方面伪造状态 |
@@ -1365,47 +1370,88 @@ pub enum ChannelStatus {
 
 **根级签名**：由双方各自对完整的 (root, sequence) 对签名。此签名用于链上指令，证明双方同意某个全局状态。
 
-#### 根级签名实现
+#### 链下签名消息构造
 
-CooperativeSettle 和 TriggerChallenge/SubmitCounterState 需要验证根级链下签名。签名对象和验证方式：
+链下库 (`signing.rs`) 对所有消息先做 SHA-256 哈希再签名，返回 `[u8; 32]`：
 
 ```rust
-/// 签名消息内容
-fn state_message(channel_id: &[u8; 32], sequence: u64, root: &[u8; 32]) -> [u8; 72] {
-    let mut msg = [0u8; 72];
-    msg[..32].copy_from_slice(channel_id);
-    msg[32..40].copy_from_slice(&sequence.to_le_bytes());
-    msg[40..72].copy_from_slice(root);
-    msg
+/// 叶子更新消息 — 链下 LeafUpdate 签名
+fn leaf_update_message(
+    channel_id: &[u8; 32], sequence: u64, leaf_index: u32,
+    prev_leaf_hash: &[u8; 32], new_leaf_hash: &[u8; 32],
+) -> [u8; 32] {
+    // SHA-256(channel_id || sequence || leaf_index || prev_leaf_hash || new_leaf_hash)
+    // 预映像长度: 32 + 8 + 4 + 32 + 32 = 108 bytes
 }
 
-/// 合约内验证 (Anchor)
-/// 使用 Solana 内置的 ed25519 程序验证签名
-fn verify_state_signature(
-    ctx: &Context<SomeInstruction>,
-    channel_id: &[u8; 32],
-    sequence: u64,
-    root: &[u8; 32],
-    signature: &Signature,
-    signer_pubkey: &Pubkey,
-) -> Result<()> {
-    let msg = state_message(channel_id, sequence, root);
-    // 通过 Solana ed25519 syscall 验证
-    require!(
-        signature.verify(signer_pubkey.as_ref(), &msg),
-        ErrorCode::InvalidStateSignature
-    );
-    Ok(())
+/// 状态消息 — 链下 Root 签名
+fn state_message(channel_id: &[u8; 32], sequence: u64, root: &[u8; 32]) -> [u8; 32] {
+    // SHA-256(channel_id || sequence || root)
+    // 预映像长度: 32 + 8 + 32 = 72 bytes
+}
+
+/// 索赔消息 — Claim 签名
+fn claim_message(
+    channel_id: &[u8; 32], leaf_index: u32, amount: u64, current_slot: u64,
+) -> [u8; 32] {
+    // SHA-256("claim" || channel_id || leaf_index || amount || current_slot)
+    // 预映像长度: 5 + 32 + 4 + 8 + 8 = 57 bytes
 }
 ```
 
-**签名格式**：Ed25519 纯签名，签名内容为 `SHA-256(channel_id || sequence || root)`。
+#### 链上签名消息构造
 
-**合约验证逻辑**：
-- `CooperativeSettle`：需要 `sig_a` + `sig_b` 双签
-- `TriggerChallenge`：只需提交方单签
-- `SubmitCounterState`：需要 `sig_a` + `sig_b` 双签（确保提交的状态是双方同意的最新状态，防止一方提交伪造或过期的单签状态）
-- 所有提交必须满足 `sequence > on_chain.sequence`（防回滚攻击）
+链上合约对各指令构造原始字节拼接（不哈希），直接传入 Solana ed25519 指令内省进行签名验证。Ed25519 在验证时内部执行 SHA-512 处理。按消息格式分为三族：
+
+**族 A — OpenChannel（76 bytes）**：
+
+```
+[channel_id: 32] || [deposit_a: 8 LE] || [tree_depth: 4 LE] || [initial_root: 32]
+```
+
+- 签名者: `channel.user_pubkey`（用户单签）
+- 唯一包含 `deposit_a`(u64) 和 `tree_depth`(u32) 的消息格式
+
+**族 B — CooperativeSettle / SubmitCounterState（72 bytes）**：
+
+```
+[channel_id: 32] || [sequence: 8 LE] || [root: 32]
+```
+
+- 签名者: `sig_a` + `sig_b` 双签（双方）
+- `sequence` 和 `root` 来自指令参数（非链上存储值）
+
+**族 C — TriggerChallenge / Claim / VerifyHTLC / HTLCRefund / FinalizeSettlement（72 bytes）**：
+
+```
+[channel_id: 32] || [current_slot: 8 LE] || [current_root: 32]
+```
+
+- 签名者: 单签（提交方/索赔方/调用方）
+- `current_slot` 来自 `Clock::slot`（链上时钟），`current_root` 来自 `channel.current_root`（链上存储）
+- **注意**: 此处使用 `current_slot` 而非 `sequence`，与族 B 格式不同
+
+**SettleAfterTimeout**: 无签名验证。
+
+#### 链上 vs 链下签名差异
+
+| 对比项 | 链下 (`signing.rs`) | 链上 (`lib.rs`) |
+|:-------|:--------------------|:----------------|
+| 哈希处理 | 预先 SHA-256 → `[u8; 32]` | 不哈希，传入原始字节 |
+| 状态消息字段 | `channel_id \|\| sequence \|\| root` | 同（族 B） |
+| Claim 消息 | `"claim" \|\| channel_id \|\| leaf_index \|\| amount \|\| current_slot` | `channel_id \|\| current_slot \|\| current_root`（不含 leaf 级字段） |
+
+> **注意**: 链下 `claim_message` 与链上 `Claim` 指令的签名消息格式不同。链下包含 `"claim"` 前缀和叶级字段，而链上使用通道级的 `current_slot || current_root`。这意味着链下生成的 Claim 签名不能直接用于链上 Claim 指令，需要在提交链上交易前重新构造签名。
+
+#### 合约验证逻辑
+
+- `OpenChannel`: 用户单签，验证 `user_pubkey`
+- `CooperativeSettle`: 需要 `sig_a` + `sig_b` 双签
+- `TriggerChallenge`: 只需提交方单签
+- `SubmitCounterState`: 需要 `sig_a` + `sig_b` 双签（确保提交的状态是双方同意的最新状态，防止一方提交伪造或过期的单签状态）
+- `Claim` / `VerifyHTLC` / `HTLCRefund`: 索赔方单签
+- `FinalizeSettlement`: 调用方单签
+- 所有涉及 `sequence` 的提交必须满足 `sequence > on_chain.sequence`（防回滚攻击）
 
 #### 服务商回签协议 (Provider Co-signing)
 
@@ -2295,18 +2341,20 @@ ignite-pay-program/
 
 #### 11.4.3 指令签名
 
-| # | 指令 | 参数 | 账户 |
-|---|------|------|------|
-| 1 | open_channel | channel_id, deposit_a, tree_depth, open_slot, challenge_duration, min_challenge_delay, initial_root | channel (init), user_pubkey, provider_pubkey, token_mint, vault_a, vault_b, payer |
-| 2 | fund_channel | deposit_b | channel (mut), signer (provider), source_vault, vault_b |
-| 3 | cooperative_settle | sequence, root, settle_window, sig_a, sig_b | channel (mut), clock |
-| 4 | trigger_challenge | challenger_signature | channel (mut), challenger, clock |
-| 5 | submit_counter_state | sequence, root, sig_a, sig_b | channel (mut) |
-| 6 | settle_after_timeout | settle_window | channel (mut), clock |
-| 7 | claim | leaf_index, claim_amount, leaf_owner, leaf_hash, proof, claimer_signature | channel (mut), claimer, clock |
-| 8 | verify_htlc | leaf_index, preimage, hash_lock, leaf_amount, beneficiary, leaf_hash, proof, claimer_signature | channel (mut), claimer, clock |
-| 9 | htlc_refund | leaf_index, timelock_slot, leaf_amount, leaf_owner, leaf_hash, proof, claimer_signature | channel (mut), claimer, clock |
-| 10 | finalize_settlement | caller_signature | channel (mut), caller, vault_a, vault_b, escrow_vault, clock |
+| # | 指令 | 签名消息族 | 签名者 | 参数 | 账户 |
+|---|------|-----------|--------|------|------|
+| 1 | open_channel | **族 A** | 用户单签 | channel_id, deposit_a, tree_depth, open_slot, challenge_duration, min_challenge_delay, initial_root | channel (init), user_pubkey, provider_pubkey, token_mint, vault_a, vault_b, payer |
+| 2 | fund_channel | — | 无签名 | deposit_b | channel (mut), signer (provider), source_vault, vault_b |
+| 3 | cooperative_settle | **族 B** | 双签 sig_a+sig_b | sequence, root, settle_window, sig_a, sig_b | channel (mut), clock |
+| 4 | trigger_challenge | **族 C** | 提交方单签 | submitted_sequence, submitted_root, challenger_signature | channel (mut), challenger, clock |
+| 5 | submit_counter_state | **族 B** | 双签 sig_a+sig_b | sequence, root, sig_a, sig_b | channel (mut) |
+| 6 | settle_after_timeout | — | 无签名 | settle_window | channel (mut), clock |
+| 7 | claim | **族 C** | 索赔方单签 | leaf_index, claim_amount, leaf_owner, leaf_hash, proof, claimer_signature | channel (mut), claimer, clock |
+| 8 | verify_htlc | **族 C** | 索赔方单签 | leaf_index, preimage, hash_lock, leaf_amount, beneficiary, leaf_hash, proof, claimer_signature | channel (mut), claimer, clock |
+| 9 | htlc_refund | **族 C** | 索赔方单签 | leaf_index, timelock_slot, leaf_amount, leaf_owner, leaf_hash, proof, claimer_signature | channel (mut), claimer, clock |
+| 10 | finalize_settlement | **族 C** | 调用方单签 | caller_signature | channel (mut), caller, vault_a, vault_b, escrow_vault, clock |
+
+签名消息族定义见 §4.3。
 
 #### 11.4.4 CPI 细节
 

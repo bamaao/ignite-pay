@@ -75,9 +75,9 @@ impl ChannelAccount {
     /// - auto_close_slot: 1 + 8 (Option<u64>)
     ///
     /// Max claimed_leaves bounded by tree_depth: 2^tree_depth entries.
-    /// With tree_depth up to 8, max = 256 entries.
+    /// With tree_depth up to 12, max = 4096 entries.
     pub fn space(tree_depth: u32) -> usize {
-        let max_leaves = 1u32 << tree_depth.min(8); // cap at 256
+        let max_leaves = 1u32 << tree_depth.min(12); // cap at 4096
         8 + // discriminator
         32 + // channel_id
         32 + // user_pubkey

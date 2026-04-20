@@ -658,7 +658,7 @@ let leaf_hash = leaf.hash();
 let leaf_data = borsh::to_vec(leaf)?;
 let leaf_owner = leaf.owner;  // 应为 provider_pubkey
 
-// 签名
+// 签名（链下辅助函数，链上验证使用 channel_id || current_slot || current_root）
 let claim_msg = claim_message(&channel_id, leaf_index as u32, claim_amount, current_slot);
 let signature = provider_keypair.sign(&claim_msg);
 ```
@@ -679,6 +679,8 @@ let signature = provider_keypair.sign(&claim_msg);
 // - leaf_data
 // - claimer_signature
 ```
+
+> **截止时间**：在 `Challenged` 状态下，截止时间为 `challenge_slot + challenge_duration`（`settle_deadline` 为 None）；在 `Settling` 状态下，使用 `settle_deadline`。
 
 ### 10.3 HTLC 退款
 

@@ -408,8 +408,10 @@ htlc_mgr.mark_fulfilled(&hash_lock)?;
 | 6 | 64 | 高频微支付 |
 | 7 | 128 | 大量并发 HTLC |
 | 8 | 256 | 生产级高频交易 |
+| 10 | 1024 | 长时间会话 / 超高并发 |
+| 12 | 4096 | 极限吞吐（链上最大限制） |
 
-> 链上程序限制 `tree_depth <= 8`。
+> 链上程序限制 `tree_depth <= 12`。
 
 ### 5.2 challenge_duration 选择
 

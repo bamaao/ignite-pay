@@ -148,7 +148,7 @@ PDA 推导：
 
 ## 9. 注意事项
 
-- `tree_depth` 范围 3-8，对应 8-256 个叶子槽位，链上程序硬限制
+- `tree_depth` 范围 3-12，对应 8-4096 个叶子槽位，链上程序硬限制
 - 拆分树要求金额守恒：所有叶子金额之和必须等于 `total_deposited`
 - `construct_split_tree` 需要 Provider 的 keypair 进行配签
 - `keypair_path` 为空时会自动生成临时密钥（每次重启变化，仅测试用）

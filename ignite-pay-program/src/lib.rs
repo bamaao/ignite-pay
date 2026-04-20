@@ -83,7 +83,7 @@ pub mod ignite_pay_program {
         initial_root: [u8; 32],
         sig_a: [u8; 64],
     ) -> Result<()> {
-        require!(tree_depth <= 8, ChannelError::LeafIndexOutOfBounds);
+        require!(tree_depth <= 12, ChannelError::LeafIndexOutOfBounds);
         require!(deposit_a > 0, ChannelError::ZeroDeposit);
 
         let channel = &mut ctx.accounts.channel;
@@ -514,8 +514,15 @@ pub mod ignite_pay_program {
         let channel = &mut ctx.accounts.channel;
         let current_slot = ctx.accounts.clock.slot;
 
-        let deadline = channel.settle_deadline
-            .ok_or(ChannelError::InvalidStatus)?;
+        let deadline = if channel.status == ChannelStatus::Challenged {
+            let cs = channel.challenge_slot
+                .ok_or(ChannelError::InvalidStatus)?;
+            cs.checked_add(channel.challenge_duration)
+                .ok_or(ChannelError::ArithmeticOverflow)?
+        } else {
+            channel.settle_deadline
+                .ok_or(ChannelError::InvalidStatus)?
+        };
         require!(current_slot <= deadline, ChannelError::SettlementExpired);
         require!(ctx.accounts.claimer.key() == beneficiary, ChannelError::InvalidOwner);
         require!(
@@ -637,8 +644,15 @@ pub mod ignite_pay_program {
         let channel = &mut ctx.accounts.channel;
         let current_slot = ctx.accounts.clock.slot;
 
-        let deadline = channel.settle_deadline
-            .ok_or(ChannelError::InvalidStatus)?;
+        let deadline = if channel.status == ChannelStatus::Challenged {
+            let cs = channel.challenge_slot
+                .ok_or(ChannelError::InvalidStatus)?;
+            cs.checked_add(channel.challenge_duration)
+                .ok_or(ChannelError::ArithmeticOverflow)?
+        } else {
+            channel.settle_deadline
+                .ok_or(ChannelError::InvalidStatus)?
+        };
         require!(current_slot <= deadline, ChannelError::SettlementExpired);
         require!(ctx.accounts.claimer.key() == leaf_owner, ChannelError::InvalidOwner);
         require!(

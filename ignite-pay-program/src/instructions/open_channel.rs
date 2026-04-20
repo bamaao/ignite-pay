@@ -70,10 +70,10 @@ pub fn open_channel(
 ) -> Result<()> {
     // DEV-18 / PROG-14 fix: validate tree_depth BEFORE space() is used.
     // The space() is evaluated via the #[account] macro above, but tree_depth
-    // is capped at 8 inside ChannelAccount::space(). We still enforce the
+    // is capped at 12 inside ChannelAccount::space(). We still enforce the
     // constraint here so that invalid tree_depth values are rejected explicitly.
     require!(
-        tree_depth <= 8,
+        tree_depth <= 12,
         ChannelError::LeafIndexOutOfBounds
     );
 
