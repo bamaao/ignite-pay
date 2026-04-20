@@ -5,6 +5,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:ignite_pay_app/services/fcm_service.dart';
 import 'package:ignite_pay_app/services/mediator_api.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -73,6 +74,7 @@ class DidcommService extends ChangeNotifier {
   DidcommService._internal();
 
   // State
+  String _storagePath = '';
   String _did = '';
   String _didDocJson = '';
   String _mediatorWsUrl = '';
@@ -96,6 +98,7 @@ class DidcommService extends ChangeNotifier {
   // Getters
   String get did => _did;
   String get didDocJson => _didDocJson;
+  String get mediatorWsUrl => _mediatorWsUrl;
   bool get isConnected => _isConnected;
   bool get isInitialized => _isInitialized;
   List<DecryptedMsg> get messages => List.unmodifiable(_messages);
@@ -120,21 +123,25 @@ class DidcommService extends ChangeNotifier {
   }
 
   /// Initialize DID identity (generates or loads from storage).
-  Future<void> initialize({String storagePath = './phone_data'}) async {
+  Future<void> initialize() async {
     if (_isInitialized) return;
 
     try {
+      // Resolve app-internal storage directory
+      final dir = await getApplicationSupportDirectory();
+      _storagePath = dir.path;
+
       // Load saved mediator URLs
       final prefs = await SharedPreferences.getInstance();
       _mediatorWsUrl = prefs.getString('mediator_ws_url') ?? '';
       _mediatorHttpUrl = prefs.getString('mediator_http_url') ?? '';
 
-      final info = await rust.initializeIdentity(storagePath: storagePath);
+      final info = await rust.initializeIdentity(storagePath: _storagePath);
       _did = info.did;
       _didDocJson = info.didDocJson;
 
       _isInitialized = true;
-      debugPrint('DID initialized: $_did');
+      debugPrint('DID initialized: $_did (storage: $_storagePath)');
       notifyListeners();
     } catch (e) {
       debugPrint('Failed to initialize DID: $e');
@@ -154,7 +161,7 @@ class DidcommService extends ChangeNotifier {
     _api.setBaseUrl(_mediatorHttpUrl);
 
     try {
-      await rust.connectMediator(storagePath: './phone_data', wsUrl: wsUrl);
+      await rust.connectMediator(storagePath: _storagePath, wsUrl: wsUrl);
 
       _isConnected = true;
       debugPrint('Connected to mediator: $wsUrl');
@@ -195,7 +202,7 @@ class DidcommService extends ChangeNotifier {
   Future<void> sendAuthResponse(AuthResponseData response) async {
     try {
       await rust.sendAuthResponse(
-        storagePath: './phone_data',
+        storagePath: _storagePath,
         paymentId: response.paymentId,
         authorized: response.authorized,
         listAction: response.listAction,
@@ -230,12 +237,12 @@ class DidcommService extends ChangeNotifier {
   }) async {
     try {
       final sessionKey = await rust.createSessionKeyForPayment(
-        storagePath: './phone_data',
+        storagePath: _storagePath,
         spendingLimit: BigInt.from(spendingLimit),
         durationSecs: durationSecs,
       );
       await rust.sendAuthResponse(
-        storagePath: './phone_data',
+        storagePath: _storagePath,
         paymentId: paymentId,
         authorized: authorized,
         listAction: listAction,
@@ -301,7 +308,7 @@ class DidcommService extends ChangeNotifier {
   Future<void> _decryptAndProcess(String jweEnvelope) async {
     try {
       final decrypted = await rust.decryptMessage(
-        storagePath: './phone_data',
+        storagePath: _storagePath,
         jwe: jweEnvelope,
       );
 
