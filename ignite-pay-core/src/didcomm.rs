@@ -201,6 +201,10 @@ pub struct SessionKeyResponseData {
     pub spending_limit: u64,
     /// Permission scopes (e.g., ["sol:transfer", "spl:transfer"]).
     pub scopes: Vec<String>,
+    /// Max number of transactions per day (application-layer, for MCP self-enforcement).
+    pub daily_tx_count_limit: u32,
+    /// Per-transaction spending limit in lamports (application-layer, for MCP self-enforcement).
+    pub per_tx_limit: u64,
 }
 
 /// Build a V1.0 payment authorization response with optional session key data.
@@ -272,6 +276,8 @@ fn build_authorization_response_v1_inner(
         body["session_expires_at"] = json!(sk.session_expires_at);
         body["spending_limit"] = json!(sk.spending_limit);
         body["scopes"] = json!(sk.scopes);
+        body["daily_tx_count_limit"] = json!(sk.daily_tx_count_limit);
+        body["per_tx_limit"] = json!(sk.per_tx_limit);
     }
 
     // V1.1: list metadata
@@ -549,6 +555,8 @@ mod tests {
             session_expires_at: 1700000000,
             spending_limit: 100_000,
             scopes: vec!["sol:transfer".to_string(), "spl:transfer".to_string()],
+            daily_tx_count_limit: 50,
+            per_tx_limit: 10_000,
         };
         let msg = build_authorization_response_v1(
             PHONE_DID,
@@ -564,6 +572,8 @@ mod tests {
         assert_eq!(msg.body["session_expires_at"], 1700000000);
         assert_eq!(msg.body["spending_limit"], 100_000);
         assert_eq!(msg.body["scopes"], json!(["sol:transfer", "spl:transfer"]));
+        assert_eq!(msg.body["daily_tx_count_limit"], 50);
+        assert_eq!(msg.body["per_tx_limit"], 10_000);
     }
 
     // --- build_authorization_response_v1_1 ---

@@ -25,6 +25,9 @@ pub struct AuthResponse {
     // V1.1: list metadata
     pub list_label: Option<String>,
     pub list_max_amount: Option<u64>,
+    // V1.2: merchant policy fields for MCP
+    pub daily_tx_count_limit: Option<u32>,
+    pub per_tx_limit: Option<u64>,
 }
 
 /// List action choices for the phone user.

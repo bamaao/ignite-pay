@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `build_raw_transaction`, `build_register_ix_data`, `compact_u64_encode`, `derive_session_pda_simple`, `get_recent_blockhash`, `get_session_program_id_bytes`, `is_on_curve`, `send_transaction`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Create a session key for payment authorization.
 /// This generates an ephemeral Ed25519 keypair locally and stores it in sled.
@@ -116,6 +116,77 @@ Future<void> deleteSessionKeyLocal({
   storagePath: storagePath,
   sessionPubkey: sessionPubkey,
 );
+
+/// Save a merchant policy to sled.
+Future<void> saveMerchantPolicy({
+  required String storagePath,
+  required String merchantDid,
+  required BigInt dailySpendingLimit,
+  required int dailyTxCountLimit,
+  required BigInt perTxLimit,
+  required PlatformInt64 durationSecs,
+}) => RustLib.instance.api.crateApiSessionSaveMerchantPolicy(
+  storagePath: storagePath,
+  merchantDid: merchantDid,
+  dailySpendingLimit: dailySpendingLimit,
+  dailyTxCountLimit: dailyTxCountLimit,
+  perTxLimit: perTxLimit,
+  durationSecs: durationSecs,
+);
+
+/// Load a merchant policy from sled. Returns `None` if not found.
+Future<MerchantPolicy?> loadMerchantPolicy({
+  required String storagePath,
+  required String merchantDid,
+}) => RustLib.instance.api.crateApiSessionLoadMerchantPolicy(
+  storagePath: storagePath,
+  merchantDid: merchantDid,
+);
+
+/// Per-merchant authorization policy stored locally in sled.
+/// Key: `"policy:{merchant_did}"`, value: JSON-serialized.
+class MerchantPolicy {
+  final String merchantDid;
+
+  /// Daily spending limit in lamports.
+  final BigInt dailySpendingLimit;
+
+  /// Max number of transactions per day.
+  final int dailyTxCountLimit;
+
+  /// Per-transaction spending limit in lamports.
+  final BigInt perTxLimit;
+
+  /// Session duration in seconds.
+  final PlatformInt64 durationSecs;
+
+  const MerchantPolicy({
+    required this.merchantDid,
+    required this.dailySpendingLimit,
+    required this.dailyTxCountLimit,
+    required this.perTxLimit,
+    required this.durationSecs,
+  });
+
+  @override
+  int get hashCode =>
+      merchantDid.hashCode ^
+      dailySpendingLimit.hashCode ^
+      dailyTxCountLimit.hashCode ^
+      perTxLimit.hashCode ^
+      durationSecs.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is MerchantPolicy &&
+          runtimeType == other.runtimeType &&
+          merchantDid == other.merchantDid &&
+          dailySpendingLimit == other.dailySpendingLimit &&
+          dailyTxCountLimit == other.dailyTxCountLimit &&
+          perTxLimit == other.perTxLimit &&
+          durationSecs == other.durationSecs;
+}
 
 /// A session key entry returned for listing / query.
 class SessionKeyEntry {

@@ -66,7 +66,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -108809606;
+  int get rustContentHash => -2061271818;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -180,6 +180,16 @@ abstract class RustLibApi extends BaseApi {
     required String storagePath,
   });
 
+  Future<MerchantPolicy?> crateApiSessionLoadMerchantPolicy({
+    required String storagePath,
+    required String merchantDid,
+  });
+
+  Future<MerchantPolicy?> crateApiSimpleLoadMerchantPolicy({
+    required String storagePath,
+    required String merchantDid,
+  });
+
   Future<OobInvitationData> crateApiSimpleParseOobInvitation({
     required String invitationUrl,
   });
@@ -209,6 +219,24 @@ abstract class RustLibApi extends BaseApi {
     required String rpcUrl,
   });
 
+  Future<void> crateApiSessionSaveMerchantPolicy({
+    required String storagePath,
+    required String merchantDid,
+    required BigInt dailySpendingLimit,
+    required int dailyTxCountLimit,
+    required BigInt perTxLimit,
+    required PlatformInt64 durationSecs,
+  });
+
+  Future<void> crateApiSimpleSaveMerchantPolicy({
+    required String storagePath,
+    required String merchantDid,
+    required BigInt dailySpendingLimit,
+    required int dailyTxCountLimit,
+    required BigInt perTxLimit,
+    required PlatformInt64 durationSecs,
+  });
+
   Future<void> crateApiSimpleSendAuthResponse({
     required String storagePath,
     required String paymentId,
@@ -218,6 +246,8 @@ abstract class RustLibApi extends BaseApi {
     SessionKeyInfo? sessionKeyInfo,
     String? listLabel,
     BigInt? listMaxAmount,
+    int? dailyTxCountLimit,
+    BigInt? perTxLimit,
   });
 
   Future<void> crateApiSimpleSendConnectionRequest({
@@ -960,6 +990,76 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<MerchantPolicy?> crateApiSessionLoadMerchantPolicy({
+    required String storagePath,
+    required String merchantDid,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(merchantDid, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 20,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_box_autoadd_merchant_policy,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSessionLoadMerchantPolicyConstMeta,
+        argValues: [storagePath, merchantDid],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionLoadMerchantPolicyConstMeta =>
+      const TaskConstMeta(
+        debugName: "load_merchant_policy",
+        argNames: ["storagePath", "merchantDid"],
+      );
+
+  @override
+  Future<MerchantPolicy?> crateApiSimpleLoadMerchantPolicy({
+    required String storagePath,
+    required String merchantDid,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(merchantDid, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 21,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_box_autoadd_merchant_policy,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleLoadMerchantPolicyConstMeta,
+        argValues: [storagePath, merchantDid],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleLoadMerchantPolicyConstMeta =>
+      const TaskConstMeta(
+        debugName: "load_merchant_policy",
+        argNames: ["storagePath", "merchantDid"],
+      );
+
+  @override
   Future<OobInvitationData> crateApiSimpleParseOobInvitation({
     required String invitationUrl,
   }) {
@@ -971,7 +1071,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 20,
+            funcId: 22,
             port: port_,
           );
         },
@@ -1010,7 +1110,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 21,
+            funcId: 23,
             port: port_,
           );
         },
@@ -1046,7 +1146,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 22,
+            funcId: 24,
             port: port_,
           );
         },
@@ -1083,7 +1183,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 23,
+            funcId: 25,
             port: port_,
           );
         },
@@ -1120,7 +1220,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 24,
+            funcId: 26,
             port: port_,
           );
         },
@@ -1142,6 +1242,120 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiSessionSaveMerchantPolicy({
+    required String storagePath,
+    required String merchantDid,
+    required BigInt dailySpendingLimit,
+    required int dailyTxCountLimit,
+    required BigInt perTxLimit,
+    required PlatformInt64 durationSecs,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(merchantDid, serializer);
+          sse_encode_u_64(dailySpendingLimit, serializer);
+          sse_encode_u_32(dailyTxCountLimit, serializer);
+          sse_encode_u_64(perTxLimit, serializer);
+          sse_encode_i_64(durationSecs, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 27,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSessionSaveMerchantPolicyConstMeta,
+        argValues: [
+          storagePath,
+          merchantDid,
+          dailySpendingLimit,
+          dailyTxCountLimit,
+          perTxLimit,
+          durationSecs,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionSaveMerchantPolicyConstMeta =>
+      const TaskConstMeta(
+        debugName: "save_merchant_policy",
+        argNames: [
+          "storagePath",
+          "merchantDid",
+          "dailySpendingLimit",
+          "dailyTxCountLimit",
+          "perTxLimit",
+          "durationSecs",
+        ],
+      );
+
+  @override
+  Future<void> crateApiSimpleSaveMerchantPolicy({
+    required String storagePath,
+    required String merchantDid,
+    required BigInt dailySpendingLimit,
+    required int dailyTxCountLimit,
+    required BigInt perTxLimit,
+    required PlatformInt64 durationSecs,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(merchantDid, serializer);
+          sse_encode_u_64(dailySpendingLimit, serializer);
+          sse_encode_u_32(dailyTxCountLimit, serializer);
+          sse_encode_u_64(perTxLimit, serializer);
+          sse_encode_i_64(durationSecs, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 28,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleSaveMerchantPolicyConstMeta,
+        argValues: [
+          storagePath,
+          merchantDid,
+          dailySpendingLimit,
+          dailyTxCountLimit,
+          perTxLimit,
+          durationSecs,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleSaveMerchantPolicyConstMeta =>
+      const TaskConstMeta(
+        debugName: "save_merchant_policy",
+        argNames: [
+          "storagePath",
+          "merchantDid",
+          "dailySpendingLimit",
+          "dailyTxCountLimit",
+          "perTxLimit",
+          "durationSecs",
+        ],
+      );
+
+  @override
   Future<void> crateApiSimpleSendAuthResponse({
     required String storagePath,
     required String paymentId,
@@ -1151,6 +1365,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     SessionKeyInfo? sessionKeyInfo,
     String? listLabel,
     BigInt? listMaxAmount,
+    int? dailyTxCountLimit,
+    BigInt? perTxLimit,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -1167,10 +1383,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_opt_String(listLabel, serializer);
           sse_encode_opt_box_autoadd_u_64(listMaxAmount, serializer);
+          sse_encode_opt_box_autoadd_u_32(dailyTxCountLimit, serializer);
+          sse_encode_opt_box_autoadd_u_64(perTxLimit, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 25,
+            funcId: 29,
             port: port_,
           );
         },
@@ -1188,6 +1406,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sessionKeyInfo,
           listLabel,
           listMaxAmount,
+          dailyTxCountLimit,
+          perTxLimit,
         ],
         apiImpl: this,
       ),
@@ -1206,6 +1426,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "sessionKeyInfo",
           "listLabel",
           "listMaxAmount",
+          "dailyTxCountLimit",
+          "perTxLimit",
         ],
       );
 
@@ -1231,7 +1453,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 26,
+            funcId: 30,
             port: port_,
           );
         },
@@ -1280,7 +1502,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 27,
+            funcId: 31,
             port: port_,
           );
         },
@@ -1332,6 +1554,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MerchantPolicy dco_decode_box_autoadd_merchant_policy(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_merchant_policy(raw);
+  }
+
+  @protected
   SessionKeyEntry dco_decode_box_autoadd_session_key_entry(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_session_key_entry(raw);
@@ -1341,6 +1569,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SessionKeyInfo dco_decode_box_autoadd_session_key_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_session_key_info(raw);
+  }
+
+  @protected
+  int dco_decode_box_autoadd_u_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
   }
 
   @protected
@@ -1426,6 +1660,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MerchantPolicy dco_decode_merchant_policy(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return MerchantPolicy(
+      merchantDid: dco_decode_String(arr[0]),
+      dailySpendingLimit: dco_decode_u_64(arr[1]),
+      dailyTxCountLimit: dco_decode_u_32(arr[2]),
+      perTxLimit: dco_decode_u_64(arr[3]),
+      durationSecs: dco_decode_i_64(arr[4]),
+    );
+  }
+
+  @protected
   OobInvitationData dco_decode_oob_invitation_data(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -1446,6 +1695,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MerchantPolicy? dco_decode_opt_box_autoadd_merchant_policy(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_merchant_policy(raw);
+  }
+
+  @protected
   SessionKeyEntry? dco_decode_opt_box_autoadd_session_key_entry(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_session_key_entry(raw);
@@ -1455,6 +1710,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SessionKeyInfo? dco_decode_opt_box_autoadd_session_key_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_session_key_info(raw);
+  }
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_u_32(raw);
   }
 
   @protected
@@ -1567,6 +1828,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MerchantPolicy sse_decode_box_autoadd_merchant_policy(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_merchant_policy(deserializer));
+  }
+
+  @protected
   SessionKeyEntry sse_decode_box_autoadd_session_key_entry(
     SseDeserializer deserializer,
   ) {
@@ -1580,6 +1849,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_session_key_info(deserializer));
+  }
+
+  @protected
+  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_u_32(deserializer));
   }
 
   @protected
@@ -1692,6 +1967,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MerchantPolicy sse_decode_merchant_policy(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_merchantDid = sse_decode_String(deserializer);
+    var var_dailySpendingLimit = sse_decode_u_64(deserializer);
+    var var_dailyTxCountLimit = sse_decode_u_32(deserializer);
+    var var_perTxLimit = sse_decode_u_64(deserializer);
+    var var_durationSecs = sse_decode_i_64(deserializer);
+    return MerchantPolicy(
+      merchantDid: var_merchantDid,
+      dailySpendingLimit: var_dailySpendingLimit,
+      dailyTxCountLimit: var_dailyTxCountLimit,
+      perTxLimit: var_perTxLimit,
+      durationSecs: var_durationSecs,
+    );
+  }
+
+  @protected
   OobInvitationData sse_decode_oob_invitation_data(
     SseDeserializer deserializer,
   ) {
@@ -1720,6 +2012,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MerchantPolicy? sse_decode_opt_box_autoadd_merchant_policy(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_merchant_policy(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   SessionKeyEntry? sse_decode_opt_box_autoadd_session_key_entry(
     SseDeserializer deserializer,
   ) {
@@ -1740,6 +2045,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_session_key_info(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_u_32(deserializer));
     } else {
       return null;
     }
@@ -1870,6 +2186,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_merchant_policy(
+    MerchantPolicy self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_merchant_policy(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_session_key_entry(
     SessionKeyEntry self,
     SseSerializer serializer,
@@ -1885,6 +2210,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_session_key_info(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self, serializer);
   }
 
   @protected
@@ -1980,6 +2311,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_merchant_policy(
+    MerchantPolicy self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.merchantDid, serializer);
+    sse_encode_u_64(self.dailySpendingLimit, serializer);
+    sse_encode_u_32(self.dailyTxCountLimit, serializer);
+    sse_encode_u_64(self.perTxLimit, serializer);
+    sse_encode_i_64(self.durationSecs, serializer);
+  }
+
+  @protected
   void sse_encode_oob_invitation_data(
     OobInvitationData self,
     SseSerializer serializer,
@@ -1998,6 +2342,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_merchant_policy(
+    MerchantPolicy? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_merchant_policy(self, serializer);
     }
   }
 
@@ -2024,6 +2381,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_session_key_info(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_u_32(self, serializer);
     }
   }
 

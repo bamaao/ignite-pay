@@ -875,3 +875,59 @@ pub fn delete_session_key_local(
     db.remove(key.as_bytes())?;
     Ok(())
 }
+
+// ── Merchant Policy ──────────────────────────────────────────────────────
+
+/// Per-merchant authorization policy stored locally in sled.
+/// Key: `"policy:{merchant_did}"`, value: JSON-serialized.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MerchantPolicy {
+    pub merchant_did: String,
+    /// Daily spending limit in lamports.
+    pub daily_spending_limit: u64,
+    /// Max number of transactions per day.
+    pub daily_tx_count_limit: u32,
+    /// Per-transaction spending limit in lamports.
+    pub per_tx_limit: u64,
+    /// Session duration in seconds.
+    pub duration_secs: i64,
+}
+
+/// Save a merchant policy to sled.
+pub fn save_merchant_policy(
+    storage_path: String,
+    merchant_did: String,
+    daily_spending_limit: u64,
+    daily_tx_count_limit: u32,
+    per_tx_limit: u64,
+    duration_secs: i64,
+) -> Result<()> {
+    let db = sled::open(&storage_path)?;
+    let policy = MerchantPolicy {
+        merchant_did: merchant_did.clone(),
+        daily_spending_limit,
+        daily_tx_count_limit,
+        per_tx_limit,
+        duration_secs,
+    };
+    let key = format!("policy:{}", merchant_did);
+    let value = serde_json::to_vec(&policy)?;
+    db.insert(key.as_bytes(), value)?;
+    Ok(())
+}
+
+/// Load a merchant policy from sled. Returns `None` if not found.
+pub fn load_merchant_policy(
+    storage_path: String,
+    merchant_did: String,
+) -> Result<Option<MerchantPolicy>> {
+    let db = sled::open(&storage_path)?;
+    let key = format!("policy:{}", merchant_did);
+    match db.get(key.as_bytes())? {
+        Some(value) => {
+            let policy: MerchantPolicy = serde_json::from_slice(&value)?;
+            Ok(Some(policy))
+        }
+        None => Ok(None),
+    }
+}

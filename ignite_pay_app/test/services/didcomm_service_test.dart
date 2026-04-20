@@ -36,6 +36,8 @@ class _MockRustLibApi extends RustLibApi {
     SessionKeyInfo? sessionKeyInfo,
     String? listLabel,
     BigInt? listMaxAmount,
+    int? dailyTxCountLimit,
+    BigInt? perTxLimit,
   }) async {}
 
   @override
@@ -248,6 +250,40 @@ class _MockRustLibApi extends RustLibApi {
     required String storagePath,
     required String sessionPubkey,
   }) async {}
+
+  @override
+  Future<void> crateApiSimpleSaveMerchantPolicy({
+    required String storagePath,
+    required String merchantDid,
+    required BigInt dailySpendingLimit,
+    required int dailyTxCountLimit,
+    required BigInt perTxLimit,
+    required PlatformInt64 durationSecs,
+  }) async {}
+
+  @override
+  Future<MerchantPolicy?> crateApiSimpleLoadMerchantPolicy({
+    required String storagePath,
+    required String merchantDid,
+  }) async =>
+      null;
+
+  @override
+  Future<void> crateApiSessionSaveMerchantPolicy({
+    required String storagePath,
+    required String merchantDid,
+    required BigInt dailySpendingLimit,
+    required int dailyTxCountLimit,
+    required BigInt perTxLimit,
+    required PlatformInt64 durationSecs,
+  }) async {}
+
+  @override
+  Future<MerchantPolicy?> crateApiSessionLoadMerchantPolicy({
+    required String storagePath,
+    required String merchantDid,
+  }) async =>
+      null;
 
   @override
   Future<OobInvitationData> crateApiSimpleParseOobInvitation({

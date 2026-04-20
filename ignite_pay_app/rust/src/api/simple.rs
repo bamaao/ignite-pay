@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 
 use crate::api::identity::IdentityManager;
 use crate::api::notification::{DecryptedMessage, DidcommMessage};
-use crate::api::session::{SessionKeyEntry, SessionKeyInfo, UnsignedRegisterTx};
+use crate::api::session::{MerchantPolicy, SessionKeyEntry, SessionKeyInfo, UnsignedRegisterTx};
 use crate::api::ws_client::WsClient;
 
 // ── Global state ────────────────────────────────────────────────────────
@@ -101,6 +101,8 @@ pub async fn send_auth_response(
     session_key_info: Option<SessionKeyInfo>,
     list_label: Option<String>,
     list_max_amount: Option<u64>,
+    daily_tx_count_limit: Option<u32>,
+    per_tx_limit: Option<u64>,
 ) -> Result<()> {
     let global = GLOBAL_WS_CLIENT.lock().await;
     let client = global
@@ -119,6 +121,8 @@ pub async fn send_auth_response(
         scopes: None,
         list_label,
         list_max_amount,
+        daily_tx_count_limit,
+        per_tx_limit,
     };
 
     if let Some(info) = &session_key_info {
@@ -588,4 +592,33 @@ pub async fn send_connection_request(
     }
 
     Ok(())
+}
+
+// ── Merchant Policy Bridge Wrappers ────────────────────────────────────
+
+/// Save a merchant policy to sled.
+pub fn save_merchant_policy(
+    storage_path: String,
+    merchant_did: String,
+    daily_spending_limit: u64,
+    daily_tx_count_limit: u32,
+    per_tx_limit: u64,
+    duration_secs: i64,
+) -> Result<()> {
+    crate::api::session::save_merchant_policy(
+        storage_path,
+        merchant_did,
+        daily_spending_limit,
+        daily_tx_count_limit,
+        per_tx_limit,
+        duration_secs,
+    )
+}
+
+/// Load a merchant policy from sled.
+pub fn load_merchant_policy(
+    storage_path: String,
+    merchant_did: String,
+) -> Result<Option<MerchantPolicy>> {
+    crate::api::session::load_merchant_policy(storage_path, merchant_did)
 }

@@ -82,6 +82,8 @@ impl WsClient {
                 session_expires_at: response.session_expires_at.unwrap_or(0),
                 spending_limit: response.spending_limit.unwrap_or(0),
                 scopes: response.scopes.clone().unwrap_or_default(),
+                daily_tx_count_limit: response.daily_tx_count_limit.unwrap_or(0),
+                per_tx_limit: response.per_tx_limit.unwrap_or(0),
             })
         } else {
             None

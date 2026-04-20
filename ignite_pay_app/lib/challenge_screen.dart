@@ -4,12 +4,13 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
+import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
+import 'package:path_provider/path_provider.dart';
 
 // ---------------------------------------------------------------------------
 // Challenge Theme
 // ---------------------------------------------------------------------------
 const _kAmber = Color(0xFFFFB300);
-const _kAmberDim = Color(0xFF9E7700);
 const _kAmberGlow = Color(0x33FFB300);
 const _kBackground = Color(0xFF0F0F1A);
 const _kSurfaceDark = Color(0xFF1A1A2E);
@@ -71,6 +72,12 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   String _listMaxAmount = '';
   bool _checkingExistingKey = true;
 
+  // Authorization policy fields (editable by user)
+  String _dailySpendingLimit = ''; // SOL string, default = amount*10
+  String _dailyTxCountLimit = '50';
+  String _perTxLimit = ''; // SOL string, default = amount
+  String _durationHours = '24';
+
   String get _merchantDid => widget.request?.merchantDid ?? 'did:solana:shopx merchants';
   int get _amount => widget.request?.amount ?? 500000000;
   String get _paymentId => widget.request?.paymentId ?? '';
@@ -86,6 +93,10 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
       vsync: this,
       duration: const Duration(milliseconds: 2000),
     )..repeat(reverse: true);
+    // Set default policy values based on payment amount
+    final solAmount = _amount / 1000000000.0;
+    _dailySpendingLimit = (solAmount * 10).toStringAsFixed(2);
+    _perTxLimit = solAmount.toStringAsFixed(2);
     _checkExistingSessionKey();
   }
 
@@ -99,6 +110,28 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
     final svc = SessionKeyService();
     await svc.initialize();
     final existing = await svc.checkExistingKey();
+
+    // Load saved merchant policy if available
+    try {
+      final dir = await getApplicationSupportDirectory();
+      if (_merchantDid.isNotEmpty) {
+        final policy = await rust.loadMerchantPolicy(
+          storagePath: dir.path,
+          merchantDid: _merchantDid,
+        );
+        if (policy != null && mounted) {
+          setState(() {
+            _dailySpendingLimit = (policy.dailySpendingLimit.toInt() / 1000000000.0).toStringAsFixed(2);
+            _dailyTxCountLimit = policy.dailyTxCountLimit.toString();
+            _perTxLimit = (policy.perTxLimit.toInt() / 1000000000.0).toStringAsFixed(2);
+            _durationHours = (policy.durationSecs / 3600).round().toString();
+          });
+        }
+      }
+    } catch (_) {
+      // No saved policy — keep defaults
+    }
+
     if (mounted) {
       setState(() {
         _checkingExistingKey = false;
@@ -143,18 +176,22 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
       _authResult = 'Registering session key on-chain...';
     });
 
+    // Parse policy values for session key creation
+    final dailyLimitLamports = (_parseSol(_dailySpendingLimit) * 1000000000).round();
+    final durationSecs = (int.tryParse(_durationHours) ?? 24) * 3600;
+
     try {
       switch (method) {
         case SigningMethod.builtIn:
           await svc.createWithBuiltInKey(
-            spendingLimit: _amount * 10,
-            durationSecs: 3600,
+            spendingLimit: dailyLimitLamports,
+            durationSecs: durationSecs,
           );
           break;
         case SigningMethod.deepLink:
           final walletUrl = await svc.createWithDeepLink(
-            spendingLimit: _amount * 10,
-            durationSecs: 3600,
+            spendingLimit: dailyLimitLamports,
+            durationSecs: durationSecs,
           );
           if (walletUrl != null) {
             setState(() => _authResult = 'Open wallet to sign transaction...');
@@ -165,8 +202,8 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
         case SigningMethod.mwa:
           // MWA stub — falls through to built-in for now
           await svc.createWithBuiltInKey(
-            spendingLimit: _amount * 10,
-            durationSecs: 3600,
+            spendingLimit: dailyLimitLamports,
+            durationSecs: durationSecs,
           );
           break;
       }
@@ -184,17 +221,47 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   }
 
   Future<void> _sendAuthResponse() async {
+    // Parse policy values from inputs
+    final dailyLimitLamports = (_parseSol(_dailySpendingLimit) * 1000000000).round();
+    final perTxLimitLamports = (_parseSol(_perTxLimit) * 1000000000).round();
+    final dailyTxCount = int.tryParse(_dailyTxCountLimit) ?? 50;
+    final durationSecs = (int.tryParse(_durationHours) ?? 24) * 3600;
+
+    // Persist merchant policy to sled
+    try {
+      final dir = await getApplicationSupportDirectory();
+      if (_merchantDid.isNotEmpty) {
+        await rust.saveMerchantPolicy(
+          storagePath: dir.path,
+          merchantDid: _merchantDid,
+          dailySpendingLimit: BigInt.from(dailyLimitLamports),
+          dailyTxCountLimit: dailyTxCount,
+          perTxLimit: BigInt.from(perTxLimitLamports),
+          durationSecs: durationSecs,
+        );
+      }
+    } catch (e) {
+      debugPrint('Failed to save merchant policy: $e');
+    }
+
     await DidcommService().sendAuthResponseWithSessionKey(
       paymentId: _paymentId,
       authorized: true,
       listAction: _listAction,
-      spendingLimit: _amount * 10,
-      durationSecs: 3600,
+      spendingLimit: dailyLimitLamports,
+      durationSecs: durationSecs,
       listLabel: _showLabelInput && _listLabel.isNotEmpty ? _listLabel : null,
       listMaxAmount: _showMaxAmountInput && _listMaxAmount.isNotEmpty
           ? int.tryParse(_listMaxAmount)
           : null,
+      dailyTxCountLimit: dailyTxCount,
+      perTxLimit: perTxLimitLamports,
     );
+  }
+
+  /// Parse a SOL string to a double, returning 0 on failure.
+  double _parseSol(String value) {
+    return double.tryParse(value) ?? 0.0;
   }
 
   Future<SigningMethod?> _showSigningMethodSelector() {
@@ -304,54 +371,67 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Column(
-                children: [
-                  const SizedBox(height: 16),
-                  const _ChallengeHeader(),
-                  const Spacer(flex: 1),
-                  _MerchantCard(merchantDid: _merchantDid),
-                  const SizedBox(height: 28),
-                  _AmountDisplay(amount: _amount),
-                  const SizedBox(height: 20),
-                  _ReasonBlock(description: _description),
-                  const SizedBox(height: 16),
-                  _ListActionSelector(
-                    selected: _listAction,
-                    onChanged: (v) => setState(() => _listAction = v),
-                    label: _listLabel,
-                    onLabelChanged: (v) => setState(() => _listLabel = v),
-                    maxAmount: _listMaxAmount,
-                    onMaxAmountChanged: (v) => setState(() => _listMaxAmount = v),
-                    showLabelInput: _showLabelInput,
-                    showMaxAmountInput: _showMaxAmountInput,
-                  ),
-                  const Spacer(flex: 2),
-                  if (_authResult.isNotEmpty) ...[
-                    _ResultBanner(result: _authResult),
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
                     const SizedBox(height: 16),
-                  ],
-                  if (_checkingExistingKey)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 16),
-                      child: Center(
-                        child: SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: _kAmber,
+                    const _ChallengeHeader(),
+                    const SizedBox(height: 20),
+                    _MerchantCard(merchantDid: _merchantDid),
+                    const SizedBox(height: 20),
+                    _AmountDisplay(amount: _amount),
+                    const SizedBox(height: 8),
+                    _ReasonBlock(description: _description),
+                    const SizedBox(height: 16),
+                    _AuthorizationPolicyCard(
+                      dailySpendingLimit: _dailySpendingLimit,
+                      onDailySpendingLimitChanged: (v) => setState(() => _dailySpendingLimit = v),
+                      dailyTxCountLimit: _dailyTxCountLimit,
+                      onDailyTxCountLimitChanged: (v) => setState(() => _dailyTxCountLimit = v),
+                      perTxLimit: _perTxLimit,
+                      onPerTxLimitChanged: (v) => setState(() => _perTxLimit = v),
+                      durationHours: _durationHours,
+                      onDurationHoursChanged: (v) => setState(() => _durationHours = v),
+                    ),
+                    const SizedBox(height: 16),
+                    _ListActionSelector(
+                      selected: _listAction,
+                      onChanged: (v) => setState(() => _listAction = v),
+                      label: _listLabel,
+                      onLabelChanged: (v) => setState(() => _listLabel = v),
+                      maxAmount: _listMaxAmount,
+                      onMaxAmountChanged: (v) => setState(() => _listMaxAmount = v),
+                      showLabelInput: _showLabelInput,
+                      showMaxAmountInput: _showMaxAmountInput,
+                    ),
+                    if (_authResult.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      _ResultBanner(result: _authResult),
+                    ],
+                    if (_checkingExistingKey)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 12),
+                        child: Center(
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: _kAmber,
+                            ),
                           ),
                         ),
                       ),
+                    const SizedBox(height: 20),
+                    _ApproveButton(
+                      onTap: _isAuthorizing ? null : _onAuthorize,
+                      isAuthorizing: _isAuthorizing,
                     ),
-                  SlideToAuthorize(
-                    onAuthorized: _onAuthorize,
-                    enabled: !_isAuthorizing,
-                  ),
-                  const SizedBox(height: 12),
-                  _DeclineButton(onTap: _onDecline),
-                  const SizedBox(height: 32),
-                ],
+                    const SizedBox(height: 10),
+                    _DeclineButton(onTap: _onDecline),
+                    const SizedBox(height: 32),
+                  ],
+                ),
               ),
             ),
           ),
@@ -695,214 +775,231 @@ class _ResultBanner extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Slide-to-Authorize Slider (Apple-style)
+// Authorization Policy Card (editable parameters)
 // ---------------------------------------------------------------------------
-class SlideToAuthorize extends StatefulWidget {
-  final VoidCallback onAuthorized;
-  final bool enabled;
+class _AuthorizationPolicyCard extends StatelessWidget {
+  final String dailySpendingLimit;
+  final ValueChanged<String> onDailySpendingLimitChanged;
+  final String dailyTxCountLimit;
+  final ValueChanged<String> onDailyTxCountLimitChanged;
+  final String perTxLimit;
+  final ValueChanged<String> onPerTxLimitChanged;
+  final String durationHours;
+  final ValueChanged<String> onDurationHoursChanged;
 
-  const SlideToAuthorize({
-    super.key,
-    required this.onAuthorized,
-    this.enabled = true,
+  const _AuthorizationPolicyCard({
+    required this.dailySpendingLimit,
+    required this.onDailySpendingLimitChanged,
+    required this.dailyTxCountLimit,
+    required this.onDailyTxCountLimitChanged,
+    required this.perTxLimit,
+    required this.onPerTxLimitChanged,
+    required this.durationHours,
+    required this.onDurationHoursChanged,
   });
 
   @override
-  State<SlideToAuthorize> createState() => _SlideToAuthorizeState();
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _kSurfaceDark.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _kAmber.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(LucideIcons.shieldCheck, size: 14, color: _kAmber),
+              const SizedBox(width: 6),
+              Text(
+                'AUTHORIZATION POLICY',
+                style: GoogleFonts.inter(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: _kAmber,
+                  letterSpacing: 1.0,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _PolicyRow(
+            label: 'Daily Limit',
+            value: dailySpendingLimit,
+            onChanged: onDailySpendingLimitChanged,
+            suffix: 'SOL',
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          ),
+          const SizedBox(height: 10),
+          _PolicyRow(
+            label: 'Daily Tx Count',
+            value: dailyTxCountLimit,
+            onChanged: onDailyTxCountLimitChanged,
+            suffix: 'tx',
+            keyboardType: TextInputType.number,
+          ),
+          const SizedBox(height: 10),
+          _PolicyRow(
+            label: 'Per-Tx Limit',
+            value: perTxLimit,
+            onChanged: onPerTxLimitChanged,
+            suffix: 'SOL',
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          ),
+          const SizedBox(height: 10),
+          _PolicyRow(
+            label: 'Duration',
+            value: durationHours,
+            onChanged: onDurationHoursChanged,
+            suffix: 'hours',
+            keyboardType: TextInputType.number,
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-class _SlideToAuthorizeState extends State<SlideToAuthorize>
-    with SingleTickerProviderStateMixin {
-  double _dragPosition = 0;
-  bool _authorized = false;
-  late final AnimationController _resetCtrl;
-  late Animation<double> _resetAnim;
+class _PolicyRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final ValueChanged<String> onChanged;
+  final String suffix;
+  final TextInputType? keyboardType;
 
-  @override
-  void initState() {
-    super.initState();
-    _resetCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 400),
-    );
-    _resetAnim = Tween<double>(begin: 0, end: 0).animate(
-      CurvedAnimation(parent: _resetCtrl, curve: Curves.easeOutCubic),
-    );
-    _resetCtrl.addListener(() {
-      if (mounted) setState(() => _dragPosition = _resetAnim.value);
-    });
-  }
-
-  @override
-  void dispose() {
-    _resetCtrl.dispose();
-    super.dispose();
-  }
-
-  void _onDragEnd(DragEndDetails details) {
-    if (_authorized) return;
-
-    final box = context.findRenderObject() as RenderBox;
-    final maxDrag = box.size.width - 56 - 12; // thumb width + padding
-
-    if (_dragPosition > maxDrag * 0.85) {
-      setState(() => _authorized = true);
-      widget.onAuthorized();
-    } else {
-      // Animate back to start
-      _resetAnim = Tween<double>(
-        begin: _dragPosition,
-        end: 0,
-      ).animate(CurvedAnimation(parent: _resetCtrl, curve: Curves.easeOutCubic));
-
-      _resetCtrl.forward(from: 0).then((_) {
-        if (mounted) setState(() => _dragPosition = 0);
-      });
-    }
-  }
+  const _PolicyRow({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+    required this.suffix,
+    this.keyboardType,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final maxWidth = constraints.maxWidth;
-        final thumbSize = 50.0;
-        final horizontalPadding = 6.0;
-        final maxDrag = maxWidth - thumbSize - horizontalPadding * 2;
-        final progress = (_dragPosition / maxDrag).clamp(0.0, 1.0);
-
-        return Container(
-          height: 62,
-          decoration: BoxDecoration(
-            color: _authorized
-                ? _kSuccess.withValues(alpha: 0.2)
-                : _kAmber.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(31),
-            border: Border.all(
-              color: _authorized
-                  ? _kSuccess.withValues(alpha: 0.4)
-                  : _kAmber.withValues(alpha: 0.2),
+    return Row(
+      children: [
+        SizedBox(
+          width: 90,
+          child: Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: 12,
+              color: _kTextSecondary,
             ),
           ),
-          child: Stack(
-            children: [
-              // Track fill
-              if (!_authorized)
-                Positioned(
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  child: Container(
-                    width: horizontalPadding + _dragPosition + thumbSize / 2,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          _kAmber.withValues(alpha: 0.15),
-                          _kAmber.withValues(alpha: 0.05),
-                        ],
-                      ),
-                      borderRadius: BorderRadius.circular(31),
+        ),
+        Expanded(
+          child: Container(
+            height: 36,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: _kSurfaceMid.withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _kGlassBorder),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    onChanged: onChanged,
+                    controller: TextEditingController(text: value)
+                      ..selection = TextSelection.collapsed(offset: value.length),
+                    style: GoogleFonts.jetBrainsMono(
+                      fontSize: 13,
+                      color: _kTextPrimary,
                     ),
-                  ),
-                ),
-
-              // Label text
-              if (!_authorized)
-                Center(
-                  child: Opacity(
-                    opacity: 1 - progress * 0.8,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          LucideIcons.arrowRight,
-                          size: 16,
-                          color: _kAmber.withValues(alpha: 0.6),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Slide to Authorize',
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: _kAmber.withValues(alpha: 0.7),
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                      ],
+                    decoration: InputDecoration(
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.only(top: 8),
                     ),
+                    keyboardType: keyboardType,
                   ),
                 ),
-
-              // Authorized state
-              if (_authorized)
-                Center(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(LucideIcons.check, size: 18, color: _kSuccess),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Authorized',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: _kSuccess,
-                        ),
-                      ),
-                    ],
+                const SizedBox(width: 6),
+                Text(
+                  suffix,
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    color: _kTextSecondary,
                   ),
                 ),
-
-              // Draggable thumb
-              if (!_authorized)
-                Positioned(
-                  left: horizontalPadding + _dragPosition,
-                  top: 6,
-                  child: GestureDetector(
-                    onHorizontalDragUpdate: widget.enabled
-                        ? (details) {
-                            setState(() {
-                              _dragPosition = (
-                                _dragPosition + details.delta.dx
-                              ).clamp(0.0, maxDrag);
-                            });
-                          }
-                        : null,
-                    onHorizontalDragEnd: widget.enabled ? _onDragEnd : null,
-                    child: Container(
-                      width: thumbSize,
-                      height: thumbSize,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            _kAmber,
-                            _kAmberDim,
-                          ],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: _kAmber.withValues(alpha: 0.3 + 0.2 * progress),
-                            blurRadius: 12,
-                            spreadRadius: 1,
-                          ),
-                        ],
-                      ),
-                      child: Icon(
-                        LucideIcons.chevronRight,
-                        size: 22,
-                        color: _kBackground,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
+              ],
+            ),
           ),
-        );
-      },
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Approve Button (Green gradient)
+// ---------------------------------------------------------------------------
+class _ApproveButton extends StatelessWidget {
+  final VoidCallback? onTap;
+  final bool isAuthorizing;
+
+  const _ApproveButton({
+    required this.onTap,
+    this.isAuthorizing = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        height: 52,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(26),
+          gradient: const LinearGradient(
+            colors: [Color(0xFF00C853), Color(0xFF00E676)],
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: _kSuccess.withValues(alpha: 0.3),
+              blurRadius: 16,
+              spreadRadius: 0,
+            ),
+          ],
+        ),
+        child: Center(
+          child: isAuthorizing
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: _kBackground,
+                  ),
+                )
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(LucideIcons.shieldCheck, size: 18, color: _kBackground),
+                    const SizedBox(width: 8),
+                    Text(
+                      'APPROVE',
+                      style: GoogleFonts.inter(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: _kBackground,
+                        letterSpacing: 1.0,
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+      ),
     );
   }
 }

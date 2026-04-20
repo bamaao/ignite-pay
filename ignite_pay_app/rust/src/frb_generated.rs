@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -108809606;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -2061271818;
 
 // Section: executor
 
@@ -807,6 +807,84 @@ fn wire__crate__api__simple__list_session_keys_impl(
         },
     )
 }
+fn wire__crate__api__session__load_merchant_policy_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "load_merchant_policy",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_merchant_did = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::session::load_merchant_policy(
+                            api_storage_path,
+                            api_merchant_did,
+                        )?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__simple__load_merchant_policy_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "load_merchant_policy",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_merchant_did = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::simple::load_merchant_policy(
+                            api_storage_path,
+                            api_merchant_did,
+                        )?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__simple__parse_oob_invitation_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1017,6 +1095,100 @@ fn wire__crate__api__simple__revoke_session_key_onchain_impl(
         },
     )
 }
+fn wire__crate__api__session__save_merchant_policy_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "save_merchant_policy",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_merchant_did = <String>::sse_decode(&mut deserializer);
+            let api_daily_spending_limit = <u64>::sse_decode(&mut deserializer);
+            let api_daily_tx_count_limit = <u32>::sse_decode(&mut deserializer);
+            let api_per_tx_limit = <u64>::sse_decode(&mut deserializer);
+            let api_duration_secs = <i64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::session::save_merchant_policy(
+                            api_storage_path,
+                            api_merchant_did,
+                            api_daily_spending_limit,
+                            api_daily_tx_count_limit,
+                            api_per_tx_limit,
+                            api_duration_secs,
+                        )?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__simple__save_merchant_policy_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "save_merchant_policy",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_merchant_did = <String>::sse_decode(&mut deserializer);
+            let api_daily_spending_limit = <u64>::sse_decode(&mut deserializer);
+            let api_daily_tx_count_limit = <u32>::sse_decode(&mut deserializer);
+            let api_per_tx_limit = <u64>::sse_decode(&mut deserializer);
+            let api_duration_secs = <i64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::simple::save_merchant_policy(
+                            api_storage_path,
+                            api_merchant_did,
+                            api_daily_spending_limit,
+                            api_daily_tx_count_limit,
+                            api_per_tx_limit,
+                            api_duration_secs,
+                        )?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__simple__send_auth_response_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1048,6 +1220,8 @@ fn wire__crate__api__simple__send_auth_response_impl(
                 <Option<crate::api::session::SessionKeyInfo>>::sse_decode(&mut deserializer);
             let api_list_label = <Option<String>>::sse_decode(&mut deserializer);
             let api_list_max_amount = <Option<u64>>::sse_decode(&mut deserializer);
+            let api_daily_tx_count_limit = <Option<u32>>::sse_decode(&mut deserializer);
+            let api_per_tx_limit = <Option<u64>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
@@ -1061,6 +1235,8 @@ fn wire__crate__api__simple__send_auth_response_impl(
                             api_session_key_info,
                             api_list_label,
                             api_list_max_amount,
+                            api_daily_tx_count_limit,
+                            api_per_tx_limit,
                         )
                         .await?;
                         Ok(output_ok)
@@ -1313,6 +1489,24 @@ impl SseDecode for Vec<crate::api::session::SessionKeyEntry> {
     }
 }
 
+impl SseDecode for crate::api::session::MerchantPolicy {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_merchantDid = <String>::sse_decode(deserializer);
+        let mut var_dailySpendingLimit = <u64>::sse_decode(deserializer);
+        let mut var_dailyTxCountLimit = <u32>::sse_decode(deserializer);
+        let mut var_perTxLimit = <u64>::sse_decode(deserializer);
+        let mut var_durationSecs = <i64>::sse_decode(deserializer);
+        return crate::api::session::MerchantPolicy {
+            merchant_did: var_merchantDid,
+            daily_spending_limit: var_dailySpendingLimit,
+            daily_tx_count_limit: var_dailyTxCountLimit,
+            per_tx_limit: var_perTxLimit,
+            duration_secs: var_durationSecs,
+        };
+    }
+}
+
 impl SseDecode for crate::api::simple::OobInvitationData {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1340,6 +1534,19 @@ impl SseDecode for Option<String> {
     }
 }
 
+impl SseDecode for Option<crate::api::session::MerchantPolicy> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::session::MerchantPolicy>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::api::session::SessionKeyEntry> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1360,6 +1567,17 @@ impl SseDecode for Option<crate::api::session::SessionKeyInfo> {
             return Some(<crate::api::session::SessionKeyInfo>::sse_decode(
                 deserializer,
             ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<u32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<u32>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -1550,32 +1768,44 @@ fn pde_ffi_dispatcher_primary_impl(
         18 => wire__crate__api__session__list_session_keys_impl(port, ptr, rust_vec_len, data_len),
         19 => wire__crate__api__simple__list_session_keys_impl(port, ptr, rust_vec_len, data_len),
         20 => {
+            wire__crate__api__session__load_merchant_policy_impl(port, ptr, rust_vec_len, data_len)
+        }
+        21 => {
+            wire__crate__api__simple__load_merchant_policy_impl(port, ptr, rust_vec_len, data_len)
+        }
+        22 => {
             wire__crate__api__simple__parse_oob_invitation_impl(port, ptr, rust_vec_len, data_len)
         }
-        21 => wire__crate__api__simple__pull_messages_impl(port, ptr, rust_vec_len, data_len),
-        22 => {
+        23 => wire__crate__api__simple__pull_messages_impl(port, ptr, rust_vec_len, data_len),
+        24 => {
             wire__crate__api__simple__register_device_token_impl(port, ptr, rust_vec_len, data_len)
         }
-        23 => wire__crate__api__session__revoke_session_key_onchain_impl(
+        25 => wire__crate__api__session__revoke_session_key_onchain_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        24 => wire__crate__api__simple__revoke_session_key_onchain_impl(
+        26 => wire__crate__api__simple__revoke_session_key_onchain_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        25 => wire__crate__api__simple__send_auth_response_impl(port, ptr, rust_vec_len, data_len),
-        26 => wire__crate__api__simple__send_connection_request_impl(
+        27 => {
+            wire__crate__api__session__save_merchant_policy_impl(port, ptr, rust_vec_len, data_len)
+        }
+        28 => {
+            wire__crate__api__simple__save_merchant_policy_impl(port, ptr, rust_vec_len, data_len)
+        }
+        29 => wire__crate__api__simple__send_auth_response_impl(port, ptr, rust_vec_len, data_len),
+        30 => wire__crate__api__simple__send_connection_request_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        27 => wire__crate__api__simple__sign_payment_impl(port, ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__simple__sign_payment_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1680,6 +1910,30 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::notification::DidcommMessage>
     for crate::api::notification::DidcommMessage
 {
     fn into_into_dart(self) -> crate::api::notification::DidcommMessage {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::session::MerchantPolicy {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.merchant_did.into_into_dart().into_dart(),
+            self.daily_spending_limit.into_into_dart().into_dart(),
+            self.daily_tx_count_limit.into_into_dart().into_dart(),
+            self.per_tx_limit.into_into_dart().into_dart(),
+            self.duration_secs.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::session::MerchantPolicy
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::session::MerchantPolicy>
+    for crate::api::session::MerchantPolicy
+{
+    fn into_into_dart(self) -> crate::api::session::MerchantPolicy {
         self
     }
 }
@@ -1891,6 +2145,17 @@ impl SseEncode for Vec<crate::api::session::SessionKeyEntry> {
     }
 }
 
+impl SseEncode for crate::api::session::MerchantPolicy {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.merchant_did, serializer);
+        <u64>::sse_encode(self.daily_spending_limit, serializer);
+        <u32>::sse_encode(self.daily_tx_count_limit, serializer);
+        <u64>::sse_encode(self.per_tx_limit, serializer);
+        <i64>::sse_encode(self.duration_secs, serializer);
+    }
+}
+
 impl SseEncode for crate::api::simple::OobInvitationData {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1911,6 +2176,16 @@ impl SseEncode for Option<String> {
     }
 }
 
+impl SseEncode for Option<crate::api::session::MerchantPolicy> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::session::MerchantPolicy>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::api::session::SessionKeyEntry> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1927,6 +2202,16 @@ impl SseEncode for Option<crate::api::session::SessionKeyInfo> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::session::SessionKeyInfo>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<u32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <u32>::sse_encode(value, serializer);
         }
     }
 }

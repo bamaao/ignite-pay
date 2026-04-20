@@ -42,6 +42,8 @@ Future<void> sendAuthResponse({
   SessionKeyInfo? sessionKeyInfo,
   String? listLabel,
   BigInt? listMaxAmount,
+  int? dailyTxCountLimit,
+  BigInt? perTxLimit,
 }) => RustLib.instance.api.crateApiSimpleSendAuthResponse(
   storagePath: storagePath,
   paymentId: paymentId,
@@ -51,6 +53,8 @@ Future<void> sendAuthResponse({
   sessionKeyInfo: sessionKeyInfo,
   listLabel: listLabel,
   listMaxAmount: listMaxAmount,
+  dailyTxCountLimit: dailyTxCountLimit,
+  perTxLimit: perTxLimit,
 );
 
 /// Poll for messages via HTTPS (for FCM wake-up path).
@@ -199,6 +203,32 @@ Future<void> sendConnectionRequest({
   mediatorWsUrl: mediatorWsUrl,
   pushChannel: pushChannel,
   fcmToken: fcmToken,
+);
+
+/// Save a merchant policy to sled.
+Future<void> saveMerchantPolicy({
+  required String storagePath,
+  required String merchantDid,
+  required BigInt dailySpendingLimit,
+  required int dailyTxCountLimit,
+  required BigInt perTxLimit,
+  required PlatformInt64 durationSecs,
+}) => RustLib.instance.api.crateApiSimpleSaveMerchantPolicy(
+  storagePath: storagePath,
+  merchantDid: merchantDid,
+  dailySpendingLimit: dailySpendingLimit,
+  dailyTxCountLimit: dailyTxCountLimit,
+  perTxLimit: perTxLimit,
+  durationSecs: durationSecs,
+);
+
+/// Load a merchant policy from sled.
+Future<MerchantPolicy?> loadMerchantPolicy({
+  required String storagePath,
+  required String merchantDid,
+}) => RustLib.instance.api.crateApiSimpleLoadMerchantPolicy(
+  storagePath: storagePath,
+  merchantDid: merchantDid,
 );
 
 /// Auth grant returned from payment signing.

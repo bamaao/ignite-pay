@@ -234,6 +234,8 @@ class DidcommService extends ChangeNotifier {
     required int durationSecs,
     String? listLabel,
     int? listMaxAmount,
+    int? dailyTxCountLimit,
+    int? perTxLimit,
   }) async {
     try {
       final sessionKey = await rust.createSessionKeyForPayment(
@@ -250,6 +252,8 @@ class DidcommService extends ChangeNotifier {
         sessionKeyInfo: sessionKey,
         listLabel: listLabel,
         listMaxAmount: listMaxAmount != null ? BigInt.from(listMaxAmount) : null,
+        dailyTxCountLimit: dailyTxCountLimit,
+        perTxLimit: perTxLimit != null ? BigInt.from(perTxLimit) : null,
       );
 
       debugPrint(
