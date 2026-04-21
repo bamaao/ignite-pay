@@ -1,0 +1,39 @@
+name: ignite_pay_merchant
+description: "Ignite Pay Merchant App - payment collection and channel management"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  rust_lib_ignite_pay_merchant_app:
+    path: rust_builder
+  flutter_rust_bridge: 2.12.0
+  google_fonts: ^6.2.1
+  lucide_icons: ^0.257.0
+  provider: ^6.1.0
+  shared_preferences: ^2.2.0
+  path_provider: ^2.1.5
+  dio: ^5.4.0
+  web_socket_channel: ^3.0.0
+  firebase_core: ^3.0.0
+  firebase_messaging: ^15.0.0
+  flutter_local_notifications: ^18.0.0
+  flutter_tts: ^4.2.0
+  qr_flutter: ^4.1.0
+  url_launcher: ^6.3.0
+  app_links: ^6.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

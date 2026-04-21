@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "261974165617",
+    "project_id": "ignite-pay-merchant",
+    "storage_bucket": "ignite-pay-merchant.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:261974165617:android:aeefebe08c7e09016f73d0",
+        "android_client_info": {
+          "package_name": "com.ignitepay.ignite_pay_merchant"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCHe8hiaPRTudUPPqcTIfBlt7dsiJXRlRo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
