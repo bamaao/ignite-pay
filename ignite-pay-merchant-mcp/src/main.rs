@@ -282,7 +282,11 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Database opened at {}", config.storage.path);
 
     let mediator = Arc::new(MerchantMediator::new(&config.mediator.ws_url, &db)?);
-    mediator.connect().await?;
+
+    // Create channel for create-channel-request commands from DIDComm messages
+    let (create_channel_tx, mut create_channel_rx) =
+        tokio::sync::mpsc::unbounded_channel::<ignite_pay_merchant_mcp::mediator::CreateChannelCommand>();
+    mediator.connect(Some(create_channel_tx)).await?;
     tracing::info!("Merchant mediator connected");
 
     let orders = Arc::new(PaymentOrderStore::from_db(db.clone()));
@@ -312,6 +316,67 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let hub_endpoint = config.merchant.hub_endpoint.clone();
+
+    // Spawn task to handle create-channel commands from DIDComm messages
+    {
+        let mediator_clone = mediator.clone();
+        let channel_client_clone = channel_client.clone();
+        tokio::spawn(async move {
+            while let Some(cmd) = create_channel_rx.recv().await {
+                tracing::info!(
+                    "Processing create-channel command from {}: hub={}",
+                    cmd.requestor_did,
+                    cmd.hub_endpoint
+                );
+
+                let result = if let Some(ref client) = channel_client_clone {
+                    client
+                        .open_channel(
+                            &cmd.provider_pubkey,
+                            &cmd.token_mint,
+                            cmd.deposit,
+                            cmd.tree_depth,
+                        )
+                        .await
+                } else {
+                    Err(anyhow::anyhow!("Channel client not configured"))
+                };
+
+                match result {
+                    Ok(open_result) => {
+                        if let Err(e) = mediator_clone
+                            .send_create_channel_response(
+                                &cmd.requestor_did,
+                                &open_result.channel_id,
+                                open_result.sequence,
+                                &open_result.current_root,
+                                true,
+                                None,
+                            )
+                            .await
+                        {
+                            tracing::error!("Failed to send create-channel response: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        if let Err(e2) = mediator_clone
+                            .send_create_channel_response(
+                                &cmd.requestor_did,
+                                "",
+                                0,
+                                "",
+                                false,
+                                Some(&e.to_string()),
+                            )
+                            .await
+                        {
+                            tracing::error!("Failed to send create-channel error response: {}", e2);
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     let server = MerchantMcpServer {
         tool_router: MerchantMcpServer::tool_router(),

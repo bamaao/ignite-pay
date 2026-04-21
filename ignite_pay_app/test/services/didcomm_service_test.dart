@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:ignite_pay_app/src/rust/api/channel.dart';
+import 'package:ignite_pay_app/src/rust/api/channel_store.dart';
 import 'package:ignite_pay_app/src/rust/api/notification.dart';
 import 'package:ignite_pay_app/src/rust/api/session.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart';
@@ -305,6 +307,99 @@ class _MockRustLibApi extends RustLibApi {
     required String pushChannel,
     String? fcmToken,
   }) async {}
+
+  // --- Channel & Hub bridge mocks ---
+
+  @override
+  Future<List<HubInfo>> crateApiSimpleFetchHubList({
+    required String registryUrl,
+  }) async =>
+      [];
+
+  @override
+  Future<void> crateApiSimpleSendCreateChannelRequest({
+    required String storagePath,
+    required String mcpDid,
+    required String hubEndpoint,
+    required String providerPubkey,
+    required String tokenMint,
+    required BigInt deposit,
+    required int treeDepth,
+  }) async {}
+
+  @override
+  Future<PaymentResult> crateApiSimpleChannelPay({
+    required String storagePath,
+    required String channelId,
+    required String hubEndpoint,
+    required BigInt amount,
+    required String recipientPubkey,
+  }) async =>
+      PaymentResult(
+        channelId: channelId,
+        sequence: BigInt.zero,
+        leafIndex: 0,
+        newRoot: '',
+      );
+
+  @override
+  Future<String> crateApiSimpleCloseChannel({
+    required String storagePath,
+    required String channelId,
+  }) async =>
+      'Channel $channelId closed.';
+
+  @override
+  Future<ChannelStateInfo> crateApiSimpleGetChannelState({
+    required String storagePath,
+    required String channelId,
+  }) async =>
+      ChannelStateInfo(
+        channelId: channelId,
+        status: 'Open',
+        sequence: BigInt.zero,
+        leafCount: 0,
+        userBalance: BigInt.zero,
+        totalDeposited: BigInt.zero,
+      );
+
+  @override
+  Future<List<ChannelInfo>> crateApiSimpleListChannels({
+    required String storagePath,
+  }) async =>
+      [];
+
+  @override
+  Future<OpenChannelResult> crateApiSimpleOpenChannel({
+    required String storagePath,
+    required String hubEndpoint,
+    required BigInt deposit,
+    required int treeDepth,
+  }) async =>
+      OpenChannelResult(
+        channelId: 'mock_channel_id',
+        sequence: BigInt.zero,
+        currentRoot: '',
+      );
+
+  @override
+  Future<PaymentQrData> crateApiSimpleParsePaymentQr({required String qrData}) async =>
+      PaymentQrData(
+        merchantDid: 'did:ignite:mockMerchant',
+        amount: BigInt.from(1000000000),
+        description: 'Mock payment',
+        orderId: 'mock_order',
+        hubEndpoint: 'http://localhost:3003',
+        timestamp: 0,
+      );
+
+  @override
+  Future<String> crateApiSimpleSettleChannel({
+    required String storagePath,
+    required String channelId,
+    required String hubEndpoint,
+  }) async =>
+      'Channel $channelId settled.';
 }
 
 void main() {

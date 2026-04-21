@@ -6,6 +6,7 @@ pub struct Config {
     pub solana: SolanaConfig,
     pub channel: ChannelConfig,
     pub compliance: Option<ComplianceConfig>,
+    pub hub_registry: Option<HubRegistryConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -37,6 +38,17 @@ pub struct ComplianceConfig {
     pub per_channel_limit: u64,
     pub window_slots: u64,
     pub travel_rule_threshold: u64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct HubRegistryConfig {
+    pub url: String,
+    #[serde(default = "default_publish_interval")]
+    pub publish_interval_secs: u64,
+}
+
+fn default_publish_interval() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]

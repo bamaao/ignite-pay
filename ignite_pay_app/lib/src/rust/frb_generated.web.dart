@@ -6,6 +6,8 @@
 // Static analysis wrongly picks the IO variant, thus ignore this
 // ignore_for_file: argument_type_not_assignable
 
+import 'api/channel.dart';
+import 'api/channel_store.dart';
 import 'api/notification.dart';
 import 'api/session.dart';
 import 'api/simple.dart';
@@ -50,6 +52,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
+  ChannelInfo dco_decode_channel_info(dynamic raw);
+
+  @protected
+  ChannelStateInfo dco_decode_channel_state_info(dynamic raw);
+
+  @protected
   DecryptedMessage dco_decode_decrypted_message(dynamic raw);
 
   @protected
@@ -59,13 +67,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DidcommMessage dco_decode_didcomm_message(dynamic raw);
 
   @protected
+  HubInfo dco_decode_hub_info(dynamic raw);
+
+  @protected
   PlatformInt64 dco_decode_i_64(dynamic raw);
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
+  List<ChannelInfo> dco_decode_list_channel_info(dynamic raw);
+
+  @protected
   List<DidcommMessage> dco_decode_list_didcomm_message(dynamic raw);
+
+  @protected
+  List<HubInfo> dco_decode_list_hub_info(dynamic raw);
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
@@ -78,6 +95,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   OobInvitationData dco_decode_oob_invitation_data(dynamic raw);
+
+  @protected
+  OpenChannelResult dco_decode_open_channel_result(dynamic raw);
 
   @protected
   String? dco_decode_opt_String(dynamic raw);
@@ -98,10 +118,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
+  PaymentQrData dco_decode_payment_qr_data(dynamic raw);
+
+  @protected
+  PaymentResult dco_decode_payment_result(dynamic raw);
+
+  @protected
   SessionKeyEntry dco_decode_session_key_entry(dynamic raw);
 
   @protected
   SessionKeyInfo dco_decode_session_key_info(dynamic raw);
+
+  @protected
+  int dco_decode_u_16(dynamic raw);
 
   @protected
   int dco_decode_u_32(dynamic raw);
@@ -152,6 +181,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
+  ChannelInfo sse_decode_channel_info(SseDeserializer deserializer);
+
+  @protected
+  ChannelStateInfo sse_decode_channel_state_info(SseDeserializer deserializer);
+
+  @protected
   DecryptedMessage sse_decode_decrypted_message(SseDeserializer deserializer);
 
   @protected
@@ -161,15 +196,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DidcommMessage sse_decode_didcomm_message(SseDeserializer deserializer);
 
   @protected
+  HubInfo sse_decode_hub_info(SseDeserializer deserializer);
+
+  @protected
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
+  List<ChannelInfo> sse_decode_list_channel_info(SseDeserializer deserializer);
+
+  @protected
   List<DidcommMessage> sse_decode_list_didcomm_message(
     SseDeserializer deserializer,
   );
+
+  @protected
+  List<HubInfo> sse_decode_list_hub_info(SseDeserializer deserializer);
 
   @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
@@ -184,6 +228,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   OobInvitationData sse_decode_oob_invitation_data(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  OpenChannelResult sse_decode_open_channel_result(
     SseDeserializer deserializer,
   );
 
@@ -212,10 +261,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
+  PaymentQrData sse_decode_payment_qr_data(SseDeserializer deserializer);
+
+  @protected
+  PaymentResult sse_decode_payment_result(SseDeserializer deserializer);
+
+  @protected
   SessionKeyEntry sse_decode_session_key_entry(SseDeserializer deserializer);
 
   @protected
   SessionKeyInfo sse_decode_session_key_info(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_u_16(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
@@ -277,6 +335,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
 
   @protected
+  void sse_encode_channel_info(ChannelInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_channel_state_info(
+    ChannelStateInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_decrypted_message(
     DecryptedMessage self,
     SseSerializer serializer,
@@ -292,16 +359,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_hub_info(HubInfo self, SseSerializer serializer);
+
+  @protected
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_channel_info(
+    List<ChannelInfo> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_didcomm_message(
     List<DidcommMessage> self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_list_hub_info(List<HubInfo> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_strict(
@@ -324,6 +403,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_oob_invitation_data(
     OobInvitationData self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_open_channel_result(
+    OpenChannelResult self,
     SseSerializer serializer,
   );
 
@@ -355,6 +440,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_payment_qr_data(PaymentQrData self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_payment_result(PaymentResult self, SseSerializer serializer);
+
+  @protected
   void sse_encode_session_key_entry(
     SessionKeyEntry self,
     SseSerializer serializer,
@@ -365,6 +456,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     SessionKeyInfo self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_u_16(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_32(int self, SseSerializer serializer);

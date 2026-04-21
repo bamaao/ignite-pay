@@ -2,6 +2,7 @@ use anyhow::Result;
 use affinidi_messaging_didcomm::DIDCommAgent;
 use futures_util::{SinkExt, StreamExt};
 use ignite_pay_core::didcomm;
+use ignite_pay_core::didcomm::is_jwe;
 use ignite_pay_core::identity::{load_identity, save_identity};
 use ignite_pay_core::{build_did_document, generate_ignite_did, parse_did_document};
 use serde_json::Value;
@@ -11,6 +12,16 @@ use tokio_tungstenite::connect_async;
 
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Command sent when a create-channel-request is received from the merchant app.
+pub struct CreateChannelCommand {
+    pub requestor_did: String,
+    pub hub_endpoint: String,
+    pub provider_pubkey: String,
+    pub token_mint: String,
+    pub deposit: u64,
+    pub tree_depth: u32,
+}
 
 /// DIDComm mediator connection for the merchant MCP.
 /// Simplified version — focuses on sending payment confirmations.
@@ -71,27 +82,36 @@ impl MerchantMediator {
     }
 
     /// Connect to mediator and start background loop.
-    pub async fn connect(&self) -> Result<()> {
+    pub async fn connect(
+        &self,
+        create_channel_tx: Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+    ) -> Result<()> {
         let agent = self.agent.clone();
         let our_did = self.our_did.clone();
         let did_doc = self.did_doc.clone();
         let ws_url = self.ws_url.clone();
         let connected = self.connected.clone();
 
-        let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel();
+        let (outgoing_tx, _outgoing_rx) = mpsc::unbounded_channel();
         {
             let mut guard = self.outgoing.lock().await;
             *guard = outgoing_tx;
         }
 
+        let create_channel_tx = create_channel_tx.map(Arc::new);
+
         tokio::spawn(async move {
             loop {
-                // Create a new channel pair for each connection attempt
-                let (tx, rx) = mpsc::unbounded_channel();
-                // Note: we can't update the stored sender here since we moved out.
-                // Instead, the caller should use a shared channel.
+                // Create a fresh channel pair for each connection attempt
+                let (_tx, rx) = mpsc::unbounded_channel();
                 match connect_and_run(
-                    &ws_url, &agent, &our_did, &did_doc, connected.clone(), rx,
+                    &ws_url,
+                    &agent,
+                    &our_did,
+                    &did_doc,
+                    connected.clone(),
+                    rx,
+                    &create_channel_tx,
                 )
                 .await
                 {
@@ -137,6 +157,46 @@ impl MerchantMediator {
         Ok(jwe)
     }
 
+    /// Send a create-channel response back to the requesting app.
+    pub async fn send_create_channel_response(
+        &self,
+        app_did: &str,
+        channel_id: &str,
+        sequence: u64,
+        current_root: &str,
+        success: bool,
+        error_message: Option<&str>,
+    ) -> Result<String> {
+        let msg = didcomm::build_create_channel_response(
+            &self.our_did,
+            app_did,
+            channel_id,
+            sequence,
+            current_root,
+            success,
+            error_message,
+        );
+
+        let agent = self.agent.lock().await;
+        let jwe = didcomm::pack_encrypted(&agent, &msg, &self.our_did, app_did)
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
+        drop(agent);
+
+        let sender = self.outgoing.lock().await;
+        sender
+            .send(jwe.clone())
+            .map_err(|_| anyhow::anyhow!("WebSocket channel closed"))?;
+
+        tracing::info!(
+            "Create channel response sent to {}: success={}, channel_id={}",
+            app_did,
+            success,
+            channel_id
+        );
+
+        Ok(jwe)
+    }
+
     /// Register a peer for encrypted communication.
     pub async fn add_peer_from_doc(&self, did: &str, doc: &Value) {
         if let Some(resolved) = parse_did_document(did, doc) {
@@ -149,11 +209,12 @@ impl MerchantMediator {
 
 async fn connect_and_run(
     ws_url: &str,
-    _agent: &Arc<Mutex<DIDCommAgent>>,
+    agent: &Arc<Mutex<DIDCommAgent>>,
     our_did: &str,
     did_doc: &Value,
     _connected: Arc<Notify>,
     mut outgoing_rx: mpsc::UnboundedReceiver<String>,
+    create_channel_tx: &Option<Arc<mpsc::UnboundedSender<CreateChannelCommand>>>,
 ) -> Result<()> {
     let (mut ws, _) = connect_async(ws_url).await?;
     tracing::info!("Merchant connected to mediator: {}", ws_url);
@@ -181,7 +242,7 @@ async fn connect_and_run(
             msg = ws.next() => {
                 match msg {
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
-                        tracing::debug!("Received: {}", text.chars().take(100).collect::<String>());
+                        handle_incoming_message(&text, agent, create_channel_tx).await;
                     }
                     Some(Ok(_)) => {}
                     Some(Err(e)) => return Err(e.into()),
@@ -197,6 +258,78 @@ async fn connect_and_run(
                 }
             }
         }
+    }
+}
+
+async fn handle_incoming_message(
+    text: &str,
+    agent: &Arc<Mutex<DIDCommAgent>>,
+    create_channel_tx: &Option<Arc<mpsc::UnboundedSender<CreateChannelCommand>>>,
+) {
+    if !is_jwe(text) {
+        return;
+    }
+
+    let agent_guard = agent.lock().await;
+    let msg = match didcomm::unpack_message(&agent_guard, text, None) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::debug!("JWE unpack failed: {}", e);
+            return;
+        }
+    };
+    drop(agent_guard);
+
+    if msg.typ.contains("create-channel-request") {
+        let requestor_did = msg.from.clone().unwrap_or_default();
+        let hub_endpoint = msg
+            .body
+            .get("hub_endpoint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let provider_pubkey = msg
+            .body
+            .get("provider_pubkey")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let token_mint = msg
+            .body
+            .get("token_mint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let deposit = msg.body.get("deposit").and_then(|v| v.as_u64()).unwrap_or(0);
+        let tree_depth = msg
+            .body
+            .get("tree_depth")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(8) as u32;
+
+        tracing::info!(
+            "Received create-channel-request from {}: hub={}",
+            requestor_did,
+            hub_endpoint
+        );
+
+        if let Some(tx) = create_channel_tx {
+            let cmd = CreateChannelCommand {
+                requestor_did,
+                hub_endpoint,
+                provider_pubkey,
+                token_mint,
+                deposit,
+                tree_depth,
+            };
+            if let Err(e) = tx.send(cmd) {
+                tracing::error!("Failed to send CreateChannelCommand: {}", e);
+            }
+        } else {
+            tracing::warn!("No create_channel_tx available, ignoring create-channel-request");
+        }
+    } else {
+        tracing::debug!("Received message type={}, no handler", msg.typ);
     }
 }
 

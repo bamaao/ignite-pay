@@ -5,6 +5,7 @@ import 'package:ignite_pay_merchant/theme.dart';
 import 'package:ignite_pay_merchant/services/merchant_service.dart';
 import 'package:ignite_pay_merchant/widgets/order_card.dart';
 import 'package:ignite_pay_merchant/qr_generate_screen.dart';
+import 'package:ignite_pay_merchant/hub_selection_screen.dart';
 import 'package:ignite_pay_merchant/channel_screen.dart';
 import 'package:ignite_pay_merchant/payment_detail_screen.dart';
 import 'package:provider/provider.dart';
@@ -170,24 +171,61 @@ class _QuickActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    return Column(
       children: [
-        Expanded(
-          child: _ActionCard(
-            icon: LucideIcons.qrCode,
-            label: '生成收款码',
-            gradientColors: const [kNeonCyan, kNeonCyanDim],
-            onTap: onGenerateQr,
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: _ActionCard(
+                icon: LucideIcons.qrCode,
+                label: '生成收款码',
+                gradientColors: const [kNeonCyan, kNeonCyanDim],
+                onTap: onGenerateQr,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _ActionCard(
+                icon: LucideIcons.layers,
+                label: '通道管理',
+                gradientColors: const [kPurple, kPurpleDim],
+                onTap: () => openChannelScreen(context),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _ActionCard(
-            icon: LucideIcons.layers,
-            label: '通道管理',
-            gradientColors: const [kPurple, kPurpleDim],
-            onTap: () => openChannelScreen(context),
-          ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _ActionCard(
+                icon: LucideIcons.plusCircle,
+                label: '创建通道',
+                gradientColors: const [kSuccess, Color(0xFF00C853)],
+                onTap: () {
+                  // TODO: Read registry URL and MCP DID from config
+                  Navigator.of(context).push(
+                    PageRouteBuilder(
+                      transitionDuration: const Duration(milliseconds: 350),
+                      pageBuilder: (_, animation, _) => SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(1, 0),
+                          end: Offset.zero,
+                        ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
+                        child: const HubSelectionScreen(
+                          registryUrl: 'http://localhost:3004',
+                          storagePath: '',
+                          mcpDid: '',
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(child: Container()), // spacer
+          ],
         ),
       ],
     );

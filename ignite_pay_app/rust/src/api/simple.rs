@@ -688,3 +688,112 @@ pub async fn settle_channel(
 ) -> Result<String> {
     crate::api::channel::settle_channel(storage_path, channel_id, hub_endpoint).await
 }
+
+// ── Hub Registry & Channel Creation ─────────────────────────────────────
+
+/// Hub info from the registry.
+pub struct HubInfo {
+    pub hub_id: String,
+    pub hub_did: String,
+    pub endpoint_url: String,
+    pub name: String,
+    pub description: String,
+    pub status: String,
+    pub fee_rate_bps: u16,
+    pub available_liquidity: u64,
+    pub online_rate: u16,
+    pub success_rate: u16,
+    pub avg_latency_ms: u32,
+    pub active_channels: u32,
+    pub supported_tokens: Vec<String>,
+}
+
+/// Fetch the list of available hubs from the hub registry.
+pub async fn fetch_hub_list(registry_url: String) -> Result<Vec<HubInfo>> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/v1/hubs?status=active", registry_url))
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "Failed to fetch hub list: {}",
+            resp.status()
+        ));
+    }
+
+    let body: serde_json::Value = resp.json().await?;
+    let hubs = body
+        .get("hubs")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut result = Vec::new();
+    for hub in hubs {
+        result.push(HubInfo {
+            hub_id: hub["hub_id"].as_str().unwrap_or("").to_string(),
+            hub_did: hub["hub_did"].as_str().unwrap_or("").to_string(),
+            endpoint_url: hub["endpoint_url"].as_str().unwrap_or("").to_string(),
+            name: hub["name"].as_str().unwrap_or("").to_string(),
+            description: hub["description"].as_str().unwrap_or("").to_string(),
+            status: hub["status"].as_str().unwrap_or("").to_string(),
+            fee_rate_bps: hub["fee_rate_bps"].as_u64().unwrap_or(0) as u16,
+            available_liquidity: hub["available_liquidity"].as_u64().unwrap_or(0),
+            online_rate: hub["online_rate"].as_u64().unwrap_or(0) as u16,
+            success_rate: hub["success_rate"].as_u64().unwrap_or(0) as u16,
+            avg_latency_ms: hub["avg_latency_ms"].as_u64().unwrap_or(0) as u32,
+            active_channels: hub["active_channels"].as_u64().unwrap_or(0) as u32,
+            supported_tokens: hub
+                .get("supported_tokens")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        });
+    }
+
+    Ok(result)
+}
+
+/// Send a create-channel request to the MCP server via DIDComm.
+pub async fn send_create_channel_request(
+    storage_path: String,
+    mcp_did: String,
+    hub_endpoint: String,
+    provider_pubkey: String,
+    token_mint: String,
+    deposit: u64,
+    tree_depth: u32,
+) -> Result<()> {
+    let mgr = IdentityManager::new(&storage_path)?;
+    let from_did = mgr.did().to_string();
+
+    let msg = ignite_pay_core::didcomm::build_create_channel_request(
+        &from_did,
+        &mcp_did,
+        &hub_endpoint,
+        &provider_pubkey,
+        &token_mint,
+        deposit,
+        tree_depth,
+    );
+
+    let agent = mgr.agent();
+    let agent_guard = agent.lock().await;
+    let jwe = ignite_pay_core::didcomm::pack_encrypted(&agent_guard, &msg, &from_did, &mcp_did)
+        .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
+    drop(agent_guard);
+
+    let ws = GLOBAL_WS_CLIENT.lock().await;
+    let ws_client = ws
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("WebSocket not connected"))?;
+    ws_client.send_raw(&jwe).await?;
+
+    Ok(())
+}

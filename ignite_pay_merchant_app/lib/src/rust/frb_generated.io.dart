@@ -59,6 +59,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DidcommMessage dco_decode_didcomm_message(dynamic raw);
 
   @protected
+  HubInfo dco_decode_hub_info(dynamic raw);
+
+  @protected
   PlatformInt64 dco_decode_i_64(dynamic raw);
 
   @protected
@@ -69,6 +72,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<DidcommMessage> dco_decode_list_didcomm_message(dynamic raw);
+
+  @protected
+  List<HubInfo> dco_decode_list_hub_info(dynamic raw);
 
   @protected
   List<PaymentOrderBridge> dco_decode_list_payment_order_bridge(dynamic raw);
@@ -98,6 +104,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PaymentOrderBridge dco_decode_payment_order_bridge(dynamic raw);
+
+  @protected
+  int dco_decode_u_16(dynamic raw);
 
   @protected
   int dco_decode_u_32(dynamic raw);
@@ -155,6 +164,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DidcommMessage sse_decode_didcomm_message(SseDeserializer deserializer);
 
   @protected
+  HubInfo sse_decode_hub_info(SseDeserializer deserializer);
+
+  @protected
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
 
   @protected
@@ -169,6 +181,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<DidcommMessage> sse_decode_list_didcomm_message(
     SseDeserializer deserializer,
   );
+
+  @protected
+  List<HubInfo> sse_decode_list_hub_info(SseDeserializer deserializer);
 
   @protected
   List<PaymentOrderBridge> sse_decode_list_payment_order_bridge(
@@ -202,6 +217,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PaymentOrderBridge sse_decode_payment_order_bridge(
     SseDeserializer deserializer,
   );
+
+  @protected
+  int sse_decode_u_16(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
@@ -279,6 +297,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_hub_info(HubInfo self, SseSerializer serializer);
+
+  @protected
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
 
   @protected
@@ -295,6 +316,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     List<DidcommMessage> self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_list_hub_info(List<HubInfo> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_payment_order_bridge(
@@ -337,6 +361,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     PaymentOrderBridge self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_u_16(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_32(int self, SseSerializer serializer);

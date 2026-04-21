@@ -4,6 +4,8 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
+import 'channel.dart';
+import 'channel_store.dart';
 import 'notification.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'session.dart';
@@ -231,6 +233,95 @@ Future<MerchantPolicy?> loadMerchantPolicy({
   merchantDid: merchantDid,
 );
 
+/// Parse a payment QR code (ignite://pay?d=... format).
+/// Returns merchant DID, amount, description, order ID, and hub endpoint.
+Future<PaymentQrData> parsePaymentQr({required String qrData}) =>
+    RustLib.instance.api.crateApiSimpleParsePaymentQr(qrData: qrData);
+
+/// List all stored state channels.
+Future<List<ChannelInfo>> listChannels({required String storagePath}) =>
+    RustLib.instance.api.crateApiSimpleListChannels(storagePath: storagePath);
+
+/// Get channel state info.
+Future<ChannelStateInfo> getChannelState({
+  required String storagePath,
+  required String channelId,
+}) => RustLib.instance.api.crateApiSimpleGetChannelState(
+  storagePath: storagePath,
+  channelId: channelId,
+);
+
+/// Open a state channel with a Hub.
+Future<OpenChannelResult> openChannel({
+  required String storagePath,
+  required String hubEndpoint,
+  required BigInt deposit,
+  required int treeDepth,
+}) => RustLib.instance.api.crateApiSimpleOpenChannel(
+  storagePath: storagePath,
+  hubEndpoint: hubEndpoint,
+  deposit: deposit,
+  treeDepth: treeDepth,
+);
+
+/// Pay through a state channel.
+Future<PaymentResult> channelPay({
+  required String storagePath,
+  required String channelId,
+  required String hubEndpoint,
+  required BigInt amount,
+  required String recipientPubkey,
+}) => RustLib.instance.api.crateApiSimpleChannelPay(
+  storagePath: storagePath,
+  channelId: channelId,
+  hubEndpoint: hubEndpoint,
+  amount: amount,
+  recipientPubkey: recipientPubkey,
+);
+
+/// Close a state channel.
+Future<String> closeChannel({
+  required String storagePath,
+  required String channelId,
+}) => RustLib.instance.api.crateApiSimpleCloseChannel(
+  storagePath: storagePath,
+  channelId: channelId,
+);
+
+/// Settle a state channel.
+Future<String> settleChannel({
+  required String storagePath,
+  required String channelId,
+  required String hubEndpoint,
+}) => RustLib.instance.api.crateApiSimpleSettleChannel(
+  storagePath: storagePath,
+  channelId: channelId,
+  hubEndpoint: hubEndpoint,
+);
+
+/// Fetch the list of available hubs from the hub registry.
+Future<List<HubInfo>> fetchHubList({required String registryUrl}) =>
+    RustLib.instance.api.crateApiSimpleFetchHubList(registryUrl: registryUrl);
+
+/// Send a create-channel request to the MCP server via DIDComm.
+Future<void> sendCreateChannelRequest({
+  required String storagePath,
+  required String mcpDid,
+  required String hubEndpoint,
+  required String providerPubkey,
+  required String tokenMint,
+  required BigInt deposit,
+  required int treeDepth,
+}) => RustLib.instance.api.crateApiSimpleSendCreateChannelRequest(
+  storagePath: storagePath,
+  mcpDid: mcpDid,
+  hubEndpoint: hubEndpoint,
+  providerPubkey: providerPubkey,
+  tokenMint: tokenMint,
+  deposit: deposit,
+  treeDepth: treeDepth,
+);
+
 /// Auth grant returned from payment signing.
 class AuthGrant {
   final String merchantDid;
@@ -274,6 +365,74 @@ class DidInfo {
           runtimeType == other.runtimeType &&
           did == other.did &&
           didDocJson == other.didDocJson;
+}
+
+/// Hub info from the registry.
+class HubInfo {
+  final String hubId;
+  final String hubDid;
+  final String endpointUrl;
+  final String name;
+  final String description;
+  final String status;
+  final int feeRateBps;
+  final BigInt availableLiquidity;
+  final int onlineRate;
+  final int successRate;
+  final int avgLatencyMs;
+  final int activeChannels;
+  final List<String> supportedTokens;
+
+  const HubInfo({
+    required this.hubId,
+    required this.hubDid,
+    required this.endpointUrl,
+    required this.name,
+    required this.description,
+    required this.status,
+    required this.feeRateBps,
+    required this.availableLiquidity,
+    required this.onlineRate,
+    required this.successRate,
+    required this.avgLatencyMs,
+    required this.activeChannels,
+    required this.supportedTokens,
+  });
+
+  @override
+  int get hashCode =>
+      hubId.hashCode ^
+      hubDid.hashCode ^
+      endpointUrl.hashCode ^
+      name.hashCode ^
+      description.hashCode ^
+      status.hashCode ^
+      feeRateBps.hashCode ^
+      availableLiquidity.hashCode ^
+      onlineRate.hashCode ^
+      successRate.hashCode ^
+      avgLatencyMs.hashCode ^
+      activeChannels.hashCode ^
+      supportedTokens.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is HubInfo &&
+          runtimeType == other.runtimeType &&
+          hubId == other.hubId &&
+          hubDid == other.hubDid &&
+          endpointUrl == other.endpointUrl &&
+          name == other.name &&
+          description == other.description &&
+          status == other.status &&
+          feeRateBps == other.feeRateBps &&
+          availableLiquidity == other.availableLiquidity &&
+          onlineRate == other.onlineRate &&
+          successRate == other.successRate &&
+          avgLatencyMs == other.avgLatencyMs &&
+          activeChannels == other.activeChannels &&
+          supportedTokens == other.supportedTokens;
 }
 
 /// Parsed OOB invitation data.

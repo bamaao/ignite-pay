@@ -347,6 +347,59 @@ pub fn build_channel_payment_confirm(
     .to(vec![to_did.to_string()])
 }
 
+/// Build a create-channel request message.
+/// Sent from the App to the MCP server to request opening a state channel with a Hub.
+pub fn build_create_channel_request(
+    from_did: &str,
+    to_did: &str,
+    hub_endpoint: &str,
+    provider_pubkey: &str,
+    token_mint: &str,
+    deposit: u64,
+    tree_depth: u32,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/create-channel-request",
+        json!({
+            "hub_endpoint": hub_endpoint,
+            "provider_pubkey": provider_pubkey,
+            "token_mint": token_mint,
+            "deposit": deposit,
+            "tree_depth": tree_depth,
+        }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build a create-channel response message.
+/// Sent from the MCP server back to the App after attempting to open a channel.
+pub fn build_create_channel_response(
+    from_did: &str,
+    to_did: &str,
+    channel_id: &str,
+    sequence: u64,
+    current_root: &str,
+    success: bool,
+    error_message: Option<&str>,
+) -> Message {
+    let mut body = json!({
+        "channel_id": channel_id,
+        "sequence": sequence,
+        "current_root": current_root,
+        "success": success,
+    });
+    if let Some(msg) = error_message {
+        body["error_message"] = json!(msg);
+    }
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/create-channel-response",
+        body,
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
 /// Build a list-sync notification message.
 /// Sent from the MCP server to the phone after updating whitelist/blacklist.
 pub fn build_list_sync_notification(
@@ -776,6 +829,73 @@ mod tests {
         assert_eq!(msg.body["channel_id"], "hexchannelid");
         assert_eq!(msg.body["leaf_index"], 3);
         assert_eq!(msg.body["sequence"], 15);
+    }
+
+    // --- build_create_channel_request ---
+
+    #[test]
+    fn test_build_create_channel_request() {
+        let msg = build_create_channel_request(
+            PHONE_DID,
+            TEST_DID,
+            "http://hub:3003",
+            "Base58SolanaPubkey",
+            "Base58MintAddress",
+            1_000_000_000,
+            8,
+        );
+        assert_eq!(
+            msg.typ,
+            "https://didcomm.org/ignite-pay/1.0/create-channel-request"
+        );
+        assert_eq!(msg.from.as_ref().unwrap(), PHONE_DID);
+        assert_eq!(msg.to.as_ref().unwrap().first().unwrap(), TEST_DID);
+        assert_eq!(msg.body["hub_endpoint"], "http://hub:3003");
+        assert_eq!(msg.body["provider_pubkey"], "Base58SolanaPubkey");
+        assert_eq!(msg.body["token_mint"], "Base58MintAddress");
+        assert_eq!(msg.body["deposit"], 1_000_000_000);
+        assert_eq!(msg.body["tree_depth"], 8);
+    }
+
+    // --- build_create_channel_response ---
+
+    #[test]
+    fn test_build_create_channel_response_success() {
+        let msg = build_create_channel_response(
+            TEST_DID,
+            PHONE_DID,
+            "hexchannelid",
+            0,
+            "hexroot",
+            true,
+            None,
+        );
+        assert_eq!(
+            msg.typ,
+            "https://didcomm.org/ignite-pay/1.0/create-channel-response"
+        );
+        assert_eq!(msg.from.as_ref().unwrap(), TEST_DID);
+        assert_eq!(msg.to.as_ref().unwrap().first().unwrap(), PHONE_DID);
+        assert_eq!(msg.body["channel_id"], "hexchannelid");
+        assert_eq!(msg.body["sequence"], 0);
+        assert_eq!(msg.body["current_root"], "hexroot");
+        assert_eq!(msg.body["success"], true);
+        assert!(msg.body.get("error_message").is_none());
+    }
+
+    #[test]
+    fn test_build_create_channel_response_error() {
+        let msg = build_create_channel_response(
+            TEST_DID,
+            PHONE_DID,
+            "",
+            0,
+            "",
+            false,
+            Some("Failed to open channel"),
+        );
+        assert_eq!(msg.body["success"], false);
+        assert_eq!(msg.body["error_message"], "Failed to open channel");
     }
 
     // --- pack/unpack roundtrip ---

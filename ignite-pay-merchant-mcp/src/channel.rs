@@ -3,6 +3,7 @@ use ed25519_dalek_v1::Keypair as V1Keypair;
 use ignite_pay_state_channel::channel::ChannelManager;
 use ignite_pay_state_channel::signing::{generate_keypair, sign_state, to_pubkey};
 use ignite_pay_state_channel::types::{ChannelStatus, LeafUpdate};
+use ignite_pay_solana::solana_sdk::pubkey::Pubkey;
 use serde::{Deserialize, Serialize};
 
 /// Merchant-side state channel client.
@@ -28,6 +29,72 @@ impl MerchantChannelClient {
     /// Generate a new random keypair for channel operations.
     pub fn generate_keypair() -> [u8; 64] {
         generate_keypair().to_bytes()
+    }
+
+    /// Open a channel with a Hub as the Provider (merchant).
+    pub async fn open_channel(
+        &self,
+        provider_pubkey: &str,
+        token_mint: &str,
+        deposit: u64,
+        tree_depth: u32,
+    ) -> Result<OpenChannelResult> {
+        let user_pubkey = self.pubkey();
+        let resp = self
+            .http
+            .post(format!("{}/v1/channels/open", self.hub_endpoint))
+            .json(&serde_json::json!({
+                "user_pubkey": user_pubkey,
+                "provider_pubkey": provider_pubkey,
+                "token_mint": token_mint,
+                "deposit_amount": deposit,
+                "tree_depth": tree_depth,
+            }))
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Open channel failed: {} - {}", status, body));
+        }
+
+        let result: serde_json::Value = resp.json().await?;
+        let channel_id_hex = result["channel_id"].as_str().unwrap_or("").to_string();
+        let sequence = result["sequence"].as_u64().unwrap_or(0);
+        let current_root = result["current_root"].as_str().unwrap_or("").to_string();
+
+        // Create locally mirrored state
+        let _channel_id_bytes = Self::parse_channel_id(&channel_id_hex)?;
+        let kp = self.v1_keypair();
+        let merchant_pk = to_pubkey(&kp);
+        let hub_pk: Pubkey = provider_pubkey
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid provider pubkey: {}", e))?;
+        let mint_pk: Pubkey = token_mint
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid token mint: {}", e))?;
+
+        let state = self.channel_manager.open_channel(
+            &merchant_pk,
+            &hub_pk,
+            &mint_pk,
+            deposit,
+            tree_depth,
+            0,
+            &merchant_pk,
+            &hub_pk,
+            150,
+            50,
+            None,
+        )?;
+        self.channel_manager.persist_state(&state)?;
+
+        Ok(OpenChannelResult {
+            channel_id: channel_id_hex,
+            sequence,
+            current_root,
+        })
     }
 
     /// Get the merchant's pubkey as base58.
@@ -260,4 +327,11 @@ pub struct ChannelStatusResult {
     pub leaf_count: u32,
     pub provider_balance: u64,
     pub total_deposited: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OpenChannelResult {
+    pub channel_id: String,
+    pub sequence: u64,
+    pub current_root: String,
 }

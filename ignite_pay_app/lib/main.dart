@@ -10,6 +10,7 @@ import 'package:ignite_pay_app/vault_screen.dart';
 import 'package:ignite_pay_app/qr_scanner_screen.dart';
 import 'package:ignite_pay_app/messages_screen.dart';
 import 'package:ignite_pay_app/settings_screen.dart';
+import 'package:ignite_pay_app/hub_list_screen.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
 import 'package:provider/provider.dart';
@@ -281,6 +282,9 @@ class SentinelDashboard extends StatelessWidget {
                       _QuickNavRow(),
                       SizedBox(height: 12),
                       _PairButton(),
+                      SizedBox(height: 12),
+                      _CreateChannelButton(),
+                      SizedBox(height: 20),
                       SizedBox(height: 20),
                       TrustScoreGauge(
                         spent: 0.42,
@@ -490,6 +494,52 @@ class _QuickNavRow extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _CreateChannelButton extends StatelessWidget {
+  const _CreateChannelButton();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: () {
+          // TODO: Read registry URL and MCP DID from config/settings
+          const registryUrl = 'http://localhost:3004';
+          const mcpDid = '';
+          const storagePath = '';
+          Navigator.of(context).push(
+            PageRouteBuilder(
+              transitionDuration: const Duration(milliseconds: 350),
+              pageBuilder: (_, animation, _) => SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(1, 0),
+                  end: Offset.zero,
+                ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
+                child: HubListScreen(
+                  registryUrl: registryUrl,
+                  storagePath: storagePath,
+                  mcpDid: mcpDid,
+                ),
+              ),
+            ),
+          );
+        },
+        icon: const Icon(LucideIcons.layers, size: 18),
+        label: const Text(
+          'Create Channel',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: _kNeonCyan,
+          side: const BorderSide(color: _kNeonCyan, width: 1),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      ),
     );
   }
 }

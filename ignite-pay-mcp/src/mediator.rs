@@ -20,6 +20,16 @@ use tokio_tungstenite::connect_async;
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
+/// Command sent when a create-channel-request is received from the phone app.
+pub struct CreateChannelCommand {
+    pub requestor_did: String,
+    pub hub_endpoint: String,
+    pub provider_pubkey: String,
+    pub token_mint: String,
+    pub deposit: u64,
+    pub tree_depth: u32,
+}
+
 /// Encapsulates the WebSocket connection to the DIDComm mediator.
 pub struct MediatorConnection {
     agent: Arc<Mutex<DIDCommAgent>>,
@@ -127,7 +137,11 @@ impl MediatorConnection {
 
     /// Connect to mediator, perform plaintext handshake, then start bidirectional loop.
     /// Spawns a background task that handles both sending and receiving.
-    pub async fn connect(&self, pending: Arc<PendingAuthStore>) -> Result<()> {
+    pub async fn connect(
+        &self,
+        pending: Arc<PendingAuthStore>,
+        create_channel_tx: Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+    ) -> Result<()> {
         let agent = self.agent.clone();
         let our_did = self.our_did.clone();
         let did_doc = self.did_doc.clone();
@@ -154,6 +168,7 @@ impl MediatorConnection {
                 outgoing_rx,
                 pending,
                 paired_phone,
+                create_channel_tx,
             )
             .await;
         });
@@ -261,9 +276,47 @@ impl MediatorConnection {
 
         Ok(jwe)
     }
-}
 
-/// Reconnecting WebSocket client loop with bidirectional message handling.
+    /// Send a create-channel response back to the requesting app.
+    pub async fn send_create_channel_response(
+        &self,
+        app_did: &str,
+        channel_id: &str,
+        sequence: u64,
+        current_root: &str,
+        success: bool,
+        error_message: Option<&str>,
+    ) -> Result<String> {
+        let msg = didcomm::build_create_channel_response(
+            &self.our_did,
+            app_did,
+            channel_id,
+            sequence,
+            current_root,
+            success,
+            error_message,
+        );
+
+        let agent = self.agent.lock().await;
+        let jwe = didcomm::pack_encrypted(&agent, &msg, &self.our_did, app_did)
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
+        drop(agent);
+
+        let sender = self.outgoing.lock().await;
+        sender
+            .send(jwe.clone())
+            .map_err(|_| anyhow::anyhow!("WebSocket channel closed"))?;
+
+        tracing::info!(
+            "Create channel response sent to {}: success={}, channel_id={}",
+            app_did,
+            success,
+            channel_id
+        );
+
+        Ok(jwe)
+    }
+}
 async fn real_ws_client(
     ws_url: &str,
     agent: &Arc<Mutex<DIDCommAgent>>,
@@ -273,6 +326,7 @@ async fn real_ws_client(
     mut outgoing_rx: mpsc::UnboundedReceiver<String>,
     pending: Arc<PendingAuthStore>,
     paired_phone: Arc<tokio::sync::Mutex<Option<String>>>,
+    create_channel_tx: Option<mpsc::UnboundedSender<CreateChannelCommand>>,
 ) {
     loop {
         match connect_and_run(
@@ -283,6 +337,7 @@ async fn real_ws_client(
             &mut outgoing_rx,
             &pending,
             &paired_phone,
+            &create_channel_tx,
         )
         .await
         {
@@ -306,6 +361,7 @@ async fn connect_and_run(
     outgoing_rx: &mut mpsc::UnboundedReceiver<String>,
     pending: &PendingAuthStore,
     paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
+    create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
 ) -> Result<()> {
     let (mut ws, _) = connect_async(ws_url).await?;
     tracing::info!("Connected to mediator: {}", ws_url);
@@ -477,7 +533,7 @@ async fn connect_and_run(
                                     for entry in messages {
                                         if let Some(jwe) = entry.get("message").and_then(|m| m.as_str()) {
                                             handle_incoming_message(
-                                                jwe, agent, pending, paired_phone,
+                                                jwe, agent, pending, paired_phone, create_channel_tx,
                                             )
                                             .await;
                                         }
@@ -516,7 +572,7 @@ async fn connect_and_run(
             msg = ws.next() => {
                 match msg {
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
-                        handle_incoming_message(&text, agent, pending, paired_phone).await;
+                        handle_incoming_message(&text, agent, pending, paired_phone, create_channel_tx).await;
                     }
                     Some(Ok(_)) => {}
                     Some(Err(e)) => return Err(e.into()),
@@ -545,6 +601,7 @@ async fn handle_incoming_message(
     agent: &Arc<Mutex<DIDCommAgent>>,
     pending: &PendingAuthStore,
     paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
+    create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
 ) {
     // Try encrypted unpack first
     if is_jwe(text) {
@@ -552,7 +609,7 @@ async fn handle_incoming_message(
         match didcomm::unpack_message(&agent_guard, text, None) {
             Ok(msg) => {
                 drop(agent_guard);
-                process_inner_message(&msg, pending, paired_phone, agent).await;
+                process_inner_message(&msg, pending, paired_phone, agent, create_channel_tx).await;
                 return;
             }
             Err(e) => {
@@ -686,6 +743,7 @@ async fn process_inner_message(
     pending: &PendingAuthStore,
     paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
     agent: &Arc<Mutex<DIDCommAgent>>,
+    create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
 ) {
     // Check for connection-request type (pairing from phone)
     if msg.typ.contains("connection-request") {
@@ -806,8 +864,56 @@ async fn process_inner_message(
                 );
             }
         }
+    } else if msg.typ.contains("create-channel-request") {
+        let requestor_did = msg.from.clone().unwrap_or_default();
+        let hub_endpoint = msg
+            .body
+            .get("hub_endpoint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let provider_pubkey = msg
+            .body
+            .get("provider_pubkey")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let token_mint = msg
+            .body
+            .get("token_mint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let deposit = msg.body.get("deposit").and_then(|v| v.as_u64()).unwrap_or(0);
+        let tree_depth = msg
+            .body
+            .get("tree_depth")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(8) as u32;
+
+        tracing::info!(
+            "Received create-channel-request from {}: hub={}",
+            requestor_did,
+            hub_endpoint
+        );
+
+        if let Some(tx) = create_channel_tx {
+            let cmd = CreateChannelCommand {
+                requestor_did,
+                hub_endpoint,
+                provider_pubkey,
+                token_mint,
+                deposit,
+                tree_depth,
+            };
+            if let Err(e) = tx.send(cmd) {
+                tracing::error!("Failed to send CreateChannelCommand: {}", e);
+            }
+        } else {
+            tracing::warn!("No create_channel_tx available, ignoring create-channel-request");
+        }
     } else {
-        tracing::info!("Received message type={}, no auth data", msg.typ);
+        tracing::info!("Received message type={}, no handler", msg.typ);
     }
 }
 

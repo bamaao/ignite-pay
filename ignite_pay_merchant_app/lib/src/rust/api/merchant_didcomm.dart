@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'merchant.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`
 
 /// Initialize the DIDComm communication identity.
 /// Uses ignite_pay_core's identity module (same DID format as user app).
@@ -72,6 +72,31 @@ Future<void> registerDeviceToken({
   mediatorUrl: mediatorUrl,
   authToken: authToken,
   fcmToken: fcmToken,
+);
+
+/// Fetch the list of available hubs from the hub registry.
+Future<List<HubInfo>> fetchHubList({required String registryUrl}) => RustLib
+    .instance
+    .api
+    .crateApiMerchantDidcommFetchHubList(registryUrl: registryUrl);
+
+/// Send a create-channel request to the merchant MCP server via DIDComm.
+Future<void> sendCreateChannelRequest({
+  required String storagePath,
+  required String mcpDid,
+  required String hubEndpoint,
+  required String providerPubkey,
+  required String tokenMint,
+  required BigInt deposit,
+  required int treeDepth,
+}) => RustLib.instance.api.crateApiMerchantDidcommSendCreateChannelRequest(
+  storagePath: storagePath,
+  mcpDid: mcpDid,
+  hubEndpoint: hubEndpoint,
+  providerPubkey: providerPubkey,
+  tokenMint: tokenMint,
+  deposit: deposit,
+  treeDepth: treeDepth,
 );
 
 class DecryptedMessage {
@@ -152,4 +177,72 @@ class DidcommMessage {
           msgId == other.msgId &&
           jweEnvelope == other.jweEnvelope &&
           createdAt == other.createdAt;
+}
+
+/// Hub info from the registry.
+class HubInfo {
+  final String hubId;
+  final String hubDid;
+  final String endpointUrl;
+  final String name;
+  final String description;
+  final String status;
+  final int feeRateBps;
+  final BigInt availableLiquidity;
+  final int onlineRate;
+  final int successRate;
+  final int avgLatencyMs;
+  final int activeChannels;
+  final List<String> supportedTokens;
+
+  const HubInfo({
+    required this.hubId,
+    required this.hubDid,
+    required this.endpointUrl,
+    required this.name,
+    required this.description,
+    required this.status,
+    required this.feeRateBps,
+    required this.availableLiquidity,
+    required this.onlineRate,
+    required this.successRate,
+    required this.avgLatencyMs,
+    required this.activeChannels,
+    required this.supportedTokens,
+  });
+
+  @override
+  int get hashCode =>
+      hubId.hashCode ^
+      hubDid.hashCode ^
+      endpointUrl.hashCode ^
+      name.hashCode ^
+      description.hashCode ^
+      status.hashCode ^
+      feeRateBps.hashCode ^
+      availableLiquidity.hashCode ^
+      onlineRate.hashCode ^
+      successRate.hashCode ^
+      avgLatencyMs.hashCode ^
+      activeChannels.hashCode ^
+      supportedTokens.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is HubInfo &&
+          runtimeType == other.runtimeType &&
+          hubId == other.hubId &&
+          hubDid == other.hubDid &&
+          endpointUrl == other.endpointUrl &&
+          name == other.name &&
+          description == other.description &&
+          status == other.status &&
+          feeRateBps == other.feeRateBps &&
+          availableLiquidity == other.availableLiquidity &&
+          onlineRate == other.onlineRate &&
+          successRate == other.successRate &&
+          avgLatencyMs == other.avgLatencyMs &&
+          activeChannels == other.activeChannels &&
+          supportedTokens == other.supportedTokens;
 }

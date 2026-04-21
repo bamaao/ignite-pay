@@ -329,6 +329,7 @@ fn make_test_config(db_path: &str) -> Config {
             db_path: db_path.to_string(),
         },
         compliance: None,
+        hub_registry: None,
     }
 }
 
