@@ -1,0 +1,29 @@
+[Unit]
+Description=Ignite Pay — DIDComm Router (User-side)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ignite-pay
+Group=ignite-pay
+ExecStart=/opt/ignite-pay/didcomm-router /etc/ignite-pay/router-user.toml
+WorkingDirectory=/opt/ignite-pay
+Environment=RUST_LOG=info
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ignite-pay /var/log/ignite-pay
+BindPaths=/etc/ignite-pay
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ignite-pay-router-user
+
+[Install]
+WantedBy=multi-user.target

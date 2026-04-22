@@ -64,6 +64,21 @@ Thumbs.db
 
 # Config with credentials
 ignite-pay-hub-registry/hub-registry.toml
+deploy/configs/hub-registry.toml
+
+# Deployment keys (never commit keypairs)
+deploy/keys/*.key
+deploy/keys/*.json
+!deploy/keys/.gitkeep
+
+# TLS certificates
+deploy/certs/*.crt
+deploy/certs/*.key
+deploy/certs/*.pem
+!deploy/certs/.gitkeep
+
+# Env file
+.env
 
 # Claude Code
 .claude/

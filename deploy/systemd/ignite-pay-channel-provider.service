@@ -1,0 +1,29 @@
+[Unit]
+Description=Ignite Pay — Channel Service (Provider)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ignite-pay
+Group=ignite-pay
+ExecStart=/opt/ignite-pay/channel-provider /etc/ignite-pay/channel-provider.toml
+WorkingDirectory=/opt/ignite-pay
+Environment=RUST_LOG=info
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ignite-pay /var/log/ignite-pay
+BindPaths=/etc/ignite-pay
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ignite-pay-channel-provider
+
+[Install]
+WantedBy=multi-user.target

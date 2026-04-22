@@ -1,0 +1,11 @@
+[server]
+host = "0.0.0.0"
+port = 4000
+
+[router]
+did = "did:ignite:z6MkMerchantRouterDIDPlaceholder"
+max_queued_messages = 1000
+max_message_age_seconds = 86400
+
+[storage]
+path = "./data"

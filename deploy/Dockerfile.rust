@@ -1,0 +1,83 @@
+# Multi-stage Dockerfile for all Ignite Pay Rust services
+# Build target is selected via --target or DOCKER_BUILDKIT
+#
+# Usage:
+#   docker build -f deploy/Dockerfile.rust --build-arg SERVICE=did-registry --target service -t ignite-pay/did-registry .
+#   docker build -f deploy/Dockerfile.rust --build-arg SERVICE=ignite-pay-channel-service --build-arg BINARY=channel-user --target service -t ignite-pay/channel-user .
+#   docker build -f deploy/Dockerfile.rust --build-arg SERVICE=ignite-pay-hub-registry --target service -t ignite-pay/hub-registry .
+
+FROM rust:1.82-bookworm AS base
+
+WORKDIR /app
+
+# Copy all workspace crate manifests for dependency caching
+COPY ignite-pay-core/Cargo.toml ignite-pay-core/Cargo.lock ignite-pay-core/
+COPY ignite-pay-state-channel/Cargo.toml ignite-pay-state-channel/Cargo.lock ignite-pay-state-channel/
+COPY ignite-pay-solana/Cargo.toml ignite-pay-solana/Cargo.lock ignite-pay-solana/
+COPY didcomm-router/Cargo.toml didcomm-router/Cargo.lock didcomm-router/
+COPY did-registry/Cargo.toml did-registry/Cargo.lock did-registry/
+COPY ignite-pay-channel-service/Cargo.toml ignite-pay-channel-service/Cargo.lock ignite-pay-channel-service/
+COPY ignite-pay-hub-registry/Cargo.toml ignite-pay-hub-registry/Cargo.lock ignite-pay-hub-registry/
+COPY ignite-pay-mcp/Cargo.toml ignite-pay-mcp/Cargo.lock ignite-pay-mcp/
+COPY ignite-pay-merchant-mcp/Cargo.toml ignite-pay-merchant-mcp/Cargo.lock ignite-pay-merchant-mcp/
+
+ARG SERVICE
+
+# Create dummy sources so cargo can resolve the dependency graph
+RUN mkdir -p ignite-pay-core/src && touch ignite-pay-core/src/lib.rs \
+ && mkdir -p ignite-pay-state-channel/src && touch ignite-pay-state-channel/src/lib.rs \
+ && mkdir -p ignite-pay-solana/src && touch ignite-pay-solana/src/lib.rs \
+ && mkdir -p didcomm-router/src && echo "fn main(){}" > didcomm-router/src/main.rs \
+ && mkdir -p did-registry/src && echo "fn main(){}" > did-registry/src/main.rs \
+ && mkdir -p ignite-pay-channel-service/src && echo "fn main(){}" > ignite-pay-channel-service/src/main.rs \
+ && mkdir -p ignite-pay-hub-registry/src && echo "fn main(){}" > ignite-pay-hub-registry/src/main.rs \
+ && mkdir -p ignite-pay-mcp/src && echo "fn main(){}" > ignite-pay-mcp/src/main.rs \
+ && mkdir -p ignite-pay-merchant-mcp/src && echo "fn main(){}" > ignite-pay-merchant-mcp/src/main.rs
+
+# Build dependencies only (cached layer)
+RUN cd ${SERVICE} && cargo build --release 2>/dev/null || true
+
+# Copy real source code
+COPY ignite-pay-core/src ignite-pay-core/src
+COPY ignite-pay-state-channel/src ignite-pay-state-channel/src
+COPY ignite-pay-solana/src ignite-pay-solana/src
+COPY didcomm-router/src didcomm-router/src
+COPY did-registry/src did-registry/src
+COPY ignite-pay-channel-service/src ignite-pay-channel-service/src
+COPY ignite-pay-hub-registry/src ignite-pay-hub-registry/src
+COPY ignite-pay-mcp/src ignite-pay-mcp/src
+COPY ignite-pay-merchant-mcp/src ignite-pay-merchant-mcp/src
+
+# Touch all source to invalidate the dummy build cache
+RUN find . -path '*/src/*' -type f -exec touch {} +
+
+ARG BINARY
+
+# Build the real binary
+RUN if [ -n "$BINARY" ]; then \
+      cd ${SERVICE} && cargo build --release --bin ${BINARY}; \
+    else \
+      cd ${SERVICE} && cargo build --release; \
+    fi
+
+# ---------- Runtime stage ----------
+FROM debian:bookworm-slim AS service
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+ARG SERVICE
+ARG BINARY
+# Default binary name = directory name if not overridden
+ARG BIN_NAME=${BINARY:-${SERVICE}}
+
+COPY --from=base /app/${SERVICE}/target/release/${BIN_NAME} /app/service
+
+RUN mkdir -p /app/data /app/keys
+
+ENV RUST_LOG=info
+
+ENTRYPOINT ["/app/service"]

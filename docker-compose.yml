@@ -1,20 +1,182 @@
+# ============================================================
+# Ignite Pay — Full Docker Compose
+#
+# Prerequisites:
+#   1. Copy .env.example to .env and fill in real values
+#   2. Place Solana keypair files in deploy/keys/
+#   3. Place TLS certs in deploy/certs/ (tls.crt, tls.key)
+#   4. (Optional) Place firebase-service-account.json in deploy/
+#
+# Quick start:
+#   docker compose up -d postgres
+#   docker compose up -d
+# ============================================================
+
 services:
-  router:
-    build:
-      context: .
-      dockerfile: didcomm-router/Dockerfile
+  # ----------------------------------------------------------
+  # PostgreSQL — Hub Registry database
+  # ----------------------------------------------------------
+  postgres:
+    image: postgres:16-bookworm
     restart: unless-stopped
     environment:
-      - RUST_LOG=didcomm_router=info
-      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      POSTGRES_DB: ${POSTGRES_DB:-hub_registry}
+      POSTGRES_USER: ${POSTGRES_USER:-ignite}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ignite}
     volumes:
-      - router_data:/app/data
-      - ./didcomm-router/config.toml:/app/config.toml:ro
-      # Mount FCM service account if using push notifications
-      # - ./firebase-service-account.json:/app/firebase-service-account.json:ro
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ignite}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     expose:
-      - "8080"
+      - "${POSTGRES_PORT:-5432}"
 
+  # ----------------------------------------------------------
+  # DIDComm Router — User side (:8080)
+  # ----------------------------------------------------------
+  router-user:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.rust
+      args:
+        SERVICE: didcomm-router
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-didcomm_router=info}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    volumes:
+      - router_user_data:/app/data
+      - ./didcomm-router/config.toml:/app/config.toml:ro
+    expose:
+      - "${ROUTER_USER_PORT:-8080}"
+
+  # ----------------------------------------------------------
+  # DIDComm Router — Merchant side (:4000)
+  # ----------------------------------------------------------
+  router-merchant:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.rust
+      args:
+        SERVICE: didcomm-router
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-didcomm_router=info}
+      JWT_SECRET: ${JWT_SECRET_MERCHANT:-change-me-in-production}
+    volumes:
+      - router_merchant_data:/app/data
+      - ./didcomm-router/config-merchant.toml:/app/config.toml:ro
+    expose:
+      - "${ROUTER_MERCHANT_PORT:-4000}"
+
+  # ----------------------------------------------------------
+  # DID Registry (:8081)
+  # ----------------------------------------------------------
+  did-registry:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.rust
+      args:
+        SERVICE: did-registry
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - did_registry_data:/app/data
+      - ./did-registry/config.toml:/app/config.toml:ro
+      - ./deploy/keys:/app/keys:ro
+    expose:
+      - "${DID_REGISTRY_PORT:-8081}"
+    depends_on: []
+
+  # ----------------------------------------------------------
+  # Channel Service — User (:3001)
+  # ----------------------------------------------------------
+  channel-user:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.rust
+      args:
+        SERVICE: ignite-pay-channel-service
+        BINARY: channel-user
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - channel_user_data:/app/data
+      - ./ignite-pay-channel-service/config.toml:/app/config.toml:ro
+      - ./deploy/keys:/app/keys:ro
+    expose:
+      - "${CHANNEL_USER_PORT:-3001}"
+
+  # ----------------------------------------------------------
+  # Channel Service — Provider (:3002)
+  # ----------------------------------------------------------
+  channel-provider:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.rust
+      args:
+        SERVICE: ignite-pay-channel-service
+        BINARY: channel-provider
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - channel_provider_data:/app/data
+      - ./ignite-pay-channel-service/config-provider.toml:/app/config.toml:ro
+      - ./deploy/keys:/app/keys:ro
+    expose:
+      - "${CHANNEL_PROVIDER_PORT:-3002}"
+
+  # ----------------------------------------------------------
+  # Channel Service — Hub (:3003)
+  # ----------------------------------------------------------
+  channel-hub:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.rust
+      args:
+        SERVICE: ignite-pay-channel-service
+        BINARY: channel-hub
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - channel_hub_data:/app/data
+      - ./ignite-pay-channel-service/config-hub.toml:/app/config.toml:ro
+      - ./deploy/keys:/app/keys:ro
+    expose:
+      - "${CHANNEL_HUB_PORT:-3003}"
+    depends_on:
+      - hub-registry
+
+  # ----------------------------------------------------------
+  # Hub Registry (:3004)
+  # ----------------------------------------------------------
+  hub-registry:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.rust
+      args:
+        SERVICE: ignite-pay-hub-registry
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      DATABASE_URL: postgres://${POSTGRES_USER:-ignite}:${POSTGRES_PASSWORD:-ignite}@postgres:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-hub_registry}
+    volumes:
+      - ./deploy/configs/hub-registry.toml:/app/config.toml:ro
+    expose:
+      - "${HUB_REGISTRY_PORT:-3004}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ----------------------------------------------------------
+  # Nginx — Reverse proxy / TLS termination
+  # ----------------------------------------------------------
   nginx:
     image: nginx:1.27-bookworm
     restart: unless-stopped
@@ -25,7 +187,19 @@ services:
       - ./deploy/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./deploy/certs:/etc/nginx/certs:ro
     depends_on:
-      - router
+      - router-user
+      - router-merchant
+      - did-registry
+      - channel-user
+      - channel-provider
+      - channel-hub
+      - hub-registry
 
 volumes:
-  router_data:
+  pg_data:
+  router_user_data:
+  router_merchant_data:
+  did_registry_data:
+  channel_user_data:
+  channel_provider_data:
+  channel_hub_data:

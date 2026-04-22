@@ -1,0 +1,29 @@
+[Unit]
+Description=Ignite Pay — Hub Registry
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ignite-pay
+Group=ignite-pay
+ExecStart=/opt/ignite-pay/ignite-pay-hub-registry /etc/ignite-pay/hub-registry.toml
+WorkingDirectory=/opt/ignite-pay
+Environment=RUST_LOG=info
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ignite-pay /var/log/ignite-pay
+BindPaths=/etc/ignite-pay
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ignite-pay-hub-registry
+
+[Install]
+WantedBy=multi-user.target
