@@ -4,7 +4,7 @@ import 'package:ignite_pay_app/main.dart';
 
 void main() {
   testWidgets('App launches smoke test', (WidgetTester tester) async {
-    await tester.pumpWidget(const MaterialApp(home: SentinelDashboard()));
-    expect(find.textContaining('Sentinel'), findsWidgets);
+    await tester.pumpWidget(const MaterialApp(home: IgnitePayDashboard()));
+    expect(find.textContaining('Ignite Pay'), findsWidgets);
   });
 }

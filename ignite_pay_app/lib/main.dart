@@ -51,7 +51,7 @@ Future<void> main() async {
   runApp(
     ChangeNotifierProvider.value(
       value: didService,
-      child: const SentinelApp(),
+      child: const IgnitePayApp(),
     ),
   );
 }
@@ -59,14 +59,14 @@ Future<void> main() async {
 // ---------------------------------------------------------------------------
 // App Root
 // ---------------------------------------------------------------------------
-class SentinelApp extends StatelessWidget {
-  const SentinelApp({super.key});
+class IgnitePayApp extends StatelessWidget {
+  const IgnitePayApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Sentinel Dashboard',
+      title: 'Ignite Pay',
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: _kBackground,
@@ -98,7 +98,7 @@ class _MainNavigatorState extends State<_MainNavigator> {
   Stream<Uri>? _deepLinkStream;
 
   final _pages = const [
-    SentinelDashboard(),
+    IgnitePayDashboard(),
     _MessagesTabPage(),
     _SettingsTabPage(),
   ];
@@ -265,8 +265,8 @@ class _EmbeddedSettingsScreen extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // Dashboard Screen
 // ---------------------------------------------------------------------------
-class SentinelDashboard extends StatelessWidget {
-  const SentinelDashboard({super.key});
+class IgnitePayDashboard extends StatelessWidget {
+  const IgnitePayDashboard({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -345,7 +345,7 @@ class _DashboardHeader extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             Text(
-              'Sentinel',
+              'Ignite Pay',
               style: GoogleFonts.inter(
                 fontSize: 22,
                 fontWeight: FontWeight.w700,

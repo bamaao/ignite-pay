@@ -8,7 +8,7 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async => await RustLib.init());
   testWidgets('App launches', (WidgetTester tester) async {
-    await tester.pumpWidget(const MaterialApp(home: SentinelDashboard()));
-    expect(find.textContaining('Sentinel'), findsWidgets);
+    await tester.pumpWidget(const MaterialApp(home: IgnitePayDashboard()));
+    expect(find.textContaining('Ignite Pay'), findsWidgets);
   });
 }

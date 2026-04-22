@@ -13,14 +13,14 @@ void main() {
       tester.view.resetDevicePixelRatio();
     });
 
-    await tester.pumpWidget(const MaterialApp(home: SentinelDashboard()));
+    await tester.pumpWidget(const MaterialApp(home: IgnitePayDashboard()));
     await tester.pump(const Duration(milliseconds: 100));
   }
 
-  group('SentinelDashboard', () {
-    testWidgets('renders header with Sentinel title', (tester) async {
+  group('IgnitePayDashboard', () {
+    testWidgets('renders header with Ignite Pay title', (tester) async {
       await _pumpDashboard(tester);
-      expect(find.text('Sentinel'), findsOneWidget);
+      expect(find.text('Ignite Pay'), findsOneWidget);
     });
 
     testWidgets('renders Mainnet badge', (tester) async {

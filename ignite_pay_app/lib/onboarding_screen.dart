@@ -249,7 +249,7 @@ class _WelcomeStep extends StatelessWidget {
         ),
         const SizedBox(height: 28),
         Text(
-          'Sentinel',
+          'Ignite Pay',
           style: GoogleFonts.inter(
             fontSize: 32,
             fontWeight: FontWeight.w800,
@@ -612,7 +612,7 @@ class _OnboardingComplete extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 40),
                 child: _OnboardingButton(
-                  label: 'Enter Sentinel',
+                  label: 'Enter Ignite Pay',
                   onTap: () {
                     Navigator.of(context)
                         .popUntil((route) => route.isFirst);

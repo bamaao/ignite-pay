@@ -361,7 +361,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               SettingsTile(
                 icon: LucideIcons.info,
                 iconColor: kTextSecondary,
-                title: 'Ignite Pay Sentinel',
+                title: 'Ignite Pay',
                 subtitle: 'Version 1.0.0 (build 1)',
                 trailing: Icon(LucideIcons.externalLink,
                     size: 16, color: kTextTertiary),
