@@ -8,13 +8,18 @@ import 'package:ignite_pay_app/challenge_screen.dart';
 import 'package:ignite_pay_app/policy_screen.dart';
 import 'package:ignite_pay_app/vault_screen.dart';
 import 'package:ignite_pay_app/qr_scanner_screen.dart';
+import 'package:ignite_pay_app/qr_payment_screen.dart';
 import 'package:ignite_pay_app/messages_screen.dart';
 import 'package:ignite_pay_app/settings_screen.dart';
 import 'package:ignite_pay_app/hub_list_screen.dart';
+import 'package:ignite_pay_app/notification_screen.dart';
+import 'package:ignite_pay_app/channel_topology_screen.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:ignite_pay_app/services/channel_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
 import 'package:provider/provider.dart';
 import 'package:app_links/app_links.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // ---------------------------------------------------------------------------
 // Theme Constants
@@ -265,37 +270,41 @@ class SentinelDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
+    return Scaffold(
       body: SafeArea(
         child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           child: Column(
             children: [
-              _DashboardHeader(),
-              SizedBox(height: 20),
+              const _DashboardHeader(),
+              const SizedBox(height: 20),
               Expanded(
                 child: SingleChildScrollView(
                   child: Column(
                     children: [
-                      DIDCard(),
-                      SizedBox(height: 20),
-                      _QuickNavRow(),
-                      SizedBox(height: 12),
-                      _PairButton(),
-                      SizedBox(height: 12),
-                      _CreateChannelButton(),
-                      SizedBox(height: 20),
-                      SizedBox(height: 20),
-                      TrustScoreGauge(
+                      const DIDCard(),
+                      const SizedBox(height: 20),
+                      const _QuickNavRow(),
+                      const SizedBox(height: 12),
+                      const _PairButton(),
+                      const SizedBox(height: 12),
+                      const _CreateChannelButton(),
+                      const SizedBox(height: 20),
+                      const SizedBox(height: 20),
+                      const TrustScoreGauge(
                         spent: 0.42,
                         limit: 1.0,
                         spentLabel: '0.42 SOL',
                         limitLabel: '1.00 SOL',
                       ),
-                      SizedBox(height: 24),
-                      ActivityFeed(),
-                      SizedBox(height: 24),
-                      _AuthAction(),
+                      const SizedBox(height: 24),
+                      Consumer<DidcommService>(
+                        builder: (context, svc, _) {
+                          return ActivityFeed(messages: svc.messages);
+                        },
+                      ),
+                      const SizedBox(height: 24),
+                      const _AuthAction(),
                     ],
                   ),
                 ),
@@ -349,6 +358,47 @@ class _DashboardHeader extends StatelessWidget {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Consumer<DidcommService>(
+              builder: (context, svc, _) {
+                final unreadCount = svc.messages
+                    .where((m) => !m.msgType.contains('payment-auth-request'))
+                    .length;
+                return GestureDetector(
+                  onTap: () => openNotificationCenter(context),
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: _kSurfaceMid.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: _kGlassBorder),
+                    ),
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        const Center(
+                          child: Icon(LucideIcons.bell, size: 18, color: _kTextSecondary),
+                        ),
+                        if (unreadCount > 0)
+                          Positioned(
+                            right: 4,
+                            top: 4,
+                            child: Container(
+                              width: 8,
+                              height: 8,
+                              decoration: const BoxDecoration(
+                                color: _kNeonCyan,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(width: 10),
             GestureDetector(
               onTap: () => openPolicyArchitect(context),
               child: Container(
@@ -412,20 +462,45 @@ class _PairButton extends StatelessWidget {
     return GestureDetector(
       onTap: () async {
         final result = await showQrScanner(context);
-        if (result != null && context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              backgroundColor: _kSuccess,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              content: Text(
-                'Paired with MCP',
-                style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+        if (result == null || !context.mounted) return;
+
+        if (result is PaymentQrData) {
+          // Payment QR — navigate to payment confirmation screen
+          Navigator.of(context).push(
+            PageRouteBuilder(
+              transitionDuration: const Duration(milliseconds: 350),
+              pageBuilder: (_, animation, _) => SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(1, 0),
+                  end: Offset.zero,
+                ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
+                child: QrPaymentScreen(
+                  paymentData: result,
+                  storagePath: DidcommService().storagePath,
+                  onConfirmPayment: ChannelService().channelPay,
+                ),
               ),
-              duration: const Duration(seconds: 2),
             ),
           );
+        } else if (result is String) {
+          // didcomm:// pairing — save mcp_did
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('mcp_did', result);
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                backgroundColor: _kSuccess,
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                content: Text(
+                  'Paired with MCP',
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                ),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
         }
       },
       child: Container(
@@ -493,24 +568,55 @@ class _QuickNavRow extends StatelessWidget {
             onTap: () => openPolicyArchitect(context),
           ),
         ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _QuickNavCard(
+            icon: LucideIcons.layers,
+            label: 'Channels',
+            subtitle: 'State channels',
+            gradientColors: [const Color(0xFF06B6D4), const Color(0xFF0891B2)],
+            onTap: () => openChannelTopology(context),
+          ),
+        ),
       ],
     );
   }
 }
 
-class _CreateChannelButton extends StatelessWidget {
+class _CreateChannelButton extends StatefulWidget {
   const _CreateChannelButton();
 
   @override
+  State<_CreateChannelButton> createState() => _CreateChannelButtonState();
+}
+
+class _CreateChannelButtonState extends State<_CreateChannelButton> {
+  String _registryUrl = '';
+  String _mcpDid = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadConfig();
+  }
+
+  Future<void> _loadConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _registryUrl = prefs.getString('hub_registry_url') ?? '';
+        _mcpDid = prefs.getString('mcp_did') ?? '';
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final storagePath = DidcommService().storagePath;
     return SizedBox(
       width: double.infinity,
       child: OutlinedButton.icon(
         onPressed: () {
-          // TODO: Read registry URL and MCP DID from config/settings
-          const registryUrl = 'http://localhost:3004';
-          const mcpDid = '';
-          const storagePath = '';
           Navigator.of(context).push(
             PageRouteBuilder(
               transitionDuration: const Duration(milliseconds: 350),
@@ -520,9 +626,9 @@ class _CreateChannelButton extends StatelessWidget {
                   end: Offset.zero,
                 ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
                 child: HubListScreen(
-                  registryUrl: registryUrl,
+                  registryUrl: _registryUrl,
                   storagePath: storagePath,
-                  mcpDid: mcpDid,
+                  mcpDid: _mcpDid,
                 ),
               ),
             ),
@@ -995,41 +1101,19 @@ class _RadialGaugePainter extends CustomPainter {
 // Activity Feed
 // ---------------------------------------------------------------------------
 class ActivityFeed extends StatelessWidget {
-  const ActivityFeed({super.key});
-
-  final List<_ActivityItem> _activities = const [
-    _ActivityItem(
-      merchant: 'ShopX Marketplace',
-      amount: '0.12 SOL',
-      time: '2m ago',
-      status: _ActivityStatus.success,
-      icon: LucideIcons.shoppingCart,
-    ),
-    _ActivityItem(
-      merchant: 'DeFi Staking',
-      amount: '0.30 SOL',
-      time: '15m ago',
-      status: _ActivityStatus.pending,
-      icon: LucideIcons.layers,
-    ),
-    _ActivityItem(
-      merchant: 'Unknown Merchant',
-      amount: '2.50 SOL',
-      time: '1h ago',
-      status: _ActivityStatus.intercepted,
-      icon: LucideIcons.shieldAlert,
-    ),
-    _ActivityItem(
-      merchant: 'NFT Mint',
-      amount: '0.05 SOL',
-      time: '3h ago',
-      status: _ActivityStatus.success,
-      icon: LucideIcons.image,
-    ),
-  ];
+  final List<DecryptedMsg> messages;
+  const ActivityFeed({super.key, required this.messages});
 
   @override
   Widget build(BuildContext context) {
+    // Filter to payment-related messages
+    final paymentMsgs = messages
+        .where((m) => m.msgType.contains('payment'))
+        .toList()
+        .reversed
+        .take(5)
+        .toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1049,7 +1133,51 @@ class ActivityFeed extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 12),
-        ..._activities.map((item) => _ActivityTile(item: item)),
+        if (paymentMsgs.isEmpty)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Column(
+                children: [
+                  Icon(LucideIcons.inbox, size: 32, color: _kTextSecondary.withValues(alpha: 0.4)),
+                  const SizedBox(height: 8),
+                  Text(
+                    'No recent activity',
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      color: _kTextSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          ...paymentMsgs.map((msg) {
+            final status = msg.msgType.contains('auth-request')
+                ? _ActivityStatus.pending
+                : _ActivityStatus.success;
+            final icon = status == _ActivityStatus.pending
+                ? LucideIcons.creditCard
+                : LucideIcons.checkCircle2;
+            final amount = msg.amount != null
+                ? '${(msg.amount! / 1e9).toStringAsFixed(4)} SOL'
+                : '--';
+            final merchant = msg.merchantDid != null && msg.merchantDid!.isNotEmpty
+                ? (msg.merchantDid!.length > 24
+                    ? '${msg.merchantDid!.substring(0, 16)}...${msg.merchantDid!.substring(msg.merchantDid!.length - 6)}'
+                    : msg.merchantDid!)
+                : 'Unknown';
+            return _ActivityTile(
+              item: _ActivityItem(
+                merchant: merchant,
+                amount: amount,
+                time: msg.msgType.contains('auth-request') ? 'Pending' : 'Processed',
+                status: status,
+                icon: icon,
+              ),
+            );
+          }),
       ],
     );
   }

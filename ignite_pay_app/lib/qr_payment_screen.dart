@@ -304,9 +304,23 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
     });
 
     try {
+      // Find an open channel for this payment
+      final channelSvc = ChannelService();
+      await channelSvc.refreshChannels(widget.storagePath);
+      final openCh = channelSvc.firstOpenChannel;
+      if (openCh == null) {
+        if (mounted) {
+          setState(() {
+            _isProcessing = false;
+            _errorMessage = 'No open payment channel. Please create one first.';
+          });
+        }
+        return;
+      }
+
       final result = await widget.onConfirmPayment(
         storagePath: widget.storagePath,
-        channelId: '', // Will be determined by available open channel
+        channelId: openCh.channelId,
         hubEndpoint: widget.paymentData.hubEndpoint,
         amount: widget.paymentData.amount,
         recipientPubkey: widget.paymentData.merchantDid,

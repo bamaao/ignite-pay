@@ -3,12 +3,14 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_merchant/theme.dart';
 import 'package:ignite_pay_merchant/services/merchant_service.dart';
+import 'package:ignite_pay_merchant/notification_center_screen.dart';
 import 'package:ignite_pay_merchant/widgets/order_card.dart';
 import 'package:ignite_pay_merchant/qr_generate_screen.dart';
 import 'package:ignite_pay_merchant/hub_selection_screen.dart';
 import 'package:ignite_pay_merchant/channel_screen.dart';
 import 'package:ignite_pay_merchant/payment_detail_screen.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -49,6 +51,9 @@ class _DashboardHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final svc = context.watch<MerchantService>();
+    final hasOrders = svc.orders.isNotEmpty;
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -77,30 +82,69 @@ class _DashboardHeader extends StatelessWidget {
                 )),
           ],
         ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: kSuccess.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: kSuccess.withValues(alpha: 0.3)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 7,
-                height: 7,
-                decoration: const BoxDecoration(color: kSuccess, shape: BoxShape.circle),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            GestureDetector(
+              onTap: () => openNotificationCenter(context),
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: kSurfaceDark.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: kGlassBorder),
+                ),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    const Center(
+                      child: Icon(LucideIcons.bell, size: 18, color: kTextSecondary),
+                    ),
+                    if (hasOrders)
+                      Positioned(
+                        right: 4,
+                        top: 4,
+                        child: Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: kNeonCyan,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
-              const SizedBox(width: 6),
-              Text('在线',
-                  style: GoogleFonts.inter(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: kSuccess,
-                  )),
-            ],
-          ),
+            ),
+            const SizedBox(width: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: kSuccess.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: kSuccess.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: const BoxDecoration(color: kSuccess, shape: BoxShape.circle),
+                  ),
+                  const SizedBox(width: 6),
+                  Text('在线',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: kSuccess,
+                      )),
+                ],
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -171,6 +215,7 @@ class _QuickActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final svc = context.read<MerchantService>();
     return Column(
       children: [
         Row(
@@ -202,24 +247,27 @@ class _QuickActions extends StatelessWidget {
                 icon: LucideIcons.plusCircle,
                 label: '创建通道',
                 gradientColors: const [kSuccess, Color(0xFF00C853)],
-                onTap: () {
-                  // TODO: Read registry URL and MCP DID from config
-                  Navigator.of(context).push(
-                    PageRouteBuilder(
-                      transitionDuration: const Duration(milliseconds: 350),
-                      pageBuilder: (_, animation, _) => SlideTransition(
-                        position: Tween<Offset>(
-                          begin: const Offset(1, 0),
-                          end: Offset.zero,
-                        ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
-                        child: const HubSelectionScreen(
-                          registryUrl: 'http://localhost:3004',
-                          storagePath: '',
-                          mcpDid: '',
+                onTap: () async {
+                  final prefs = await SharedPreferences.getInstance();
+                  final registryUrl = prefs.getString('hub_registry_url') ?? 'http://localhost:3004';
+                  if (context.mounted) {
+                    Navigator.of(context).push(
+                      PageRouteBuilder(
+                        transitionDuration: const Duration(milliseconds: 350),
+                        pageBuilder: (_, animation, _) => SlideTransition(
+                          position: Tween<Offset>(
+                            begin: const Offset(1, 0),
+                            end: Offset.zero,
+                          ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
+                          child: HubSelectionScreen(
+                            registryUrl: registryUrl,
+                            storagePath: svc.storagePath,
+                            mcpDid: svc.did,
+                          ),
                         ),
                       ),
-                    ),
-                  );
+                    );
+                  }
                 },
               ),
             ),

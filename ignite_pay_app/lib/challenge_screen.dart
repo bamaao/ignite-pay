@@ -1,11 +1,14 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
+import 'package:ignite_pay_app/services/wallet_deep_link_service.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // ---------------------------------------------------------------------------
 // Challenge Theme
@@ -194,8 +197,11 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
             durationSecs: durationSecs,
           );
           if (walletUrl != null) {
+            // Open the wallet app for signing
+            await WalletDeepLinkService().openWalletUrl(walletUrl);
             setState(() => _authResult = 'Open wallet to sign transaction...');
-            // The deep link flow will be completed via callback in main.dart
+            // Poll for session key completion (set by deep link callback)
+            _pollForSessionKeyCompletion();
             return; // Don't proceed to auth response yet
           }
           break;
@@ -239,6 +245,14 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
           perTxLimit: BigInt.from(perTxLimitLamports),
           durationSecs: durationSecs,
         );
+
+        // Track this merchant DID for policy screen
+        final prefs = await SharedPreferences.getInstance();
+        final known = prefs.getStringList('known_merchant_dids') ?? [];
+        if (!known.contains(_merchantDid)) {
+          known.add(_merchantDid);
+          await prefs.setStringList('known_merchant_dids', known);
+        }
       }
     } catch (e) {
       debugPrint('Failed to save merchant policy: $e');
@@ -262,6 +276,46 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   /// Parse a SOL string to a double, returning 0 on failure.
   double _parseSol(String value) {
     return double.tryParse(value) ?? 0.0;
+  }
+
+  /// Poll for session key registration completion after deep link callback.
+  /// The deep link callback (in main.dart) calls completeRegistration which
+  /// sets activeSessionKey on SessionKeyService. This polls until that happens.
+  void _pollForSessionKeyCompletion() {
+    Timer.periodic(const Duration(seconds: 2), (timer) async {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      final svc = SessionKeyService();
+      if (svc.activeSessionKey != null) {
+        timer.cancel();
+        try {
+          setState(() {
+            _authResult = 'Session key registered, sending authorization...';
+          });
+          await _sendAuthResponse();
+          setState(() => _authResult = 'Authorized with session key');
+          await Future.delayed(const Duration(milliseconds: 1200));
+          if (mounted) Navigator.of(context).pop('authorized');
+        } catch (e) {
+          setState(() {
+            _authResult = 'Error: $e';
+            _isAuthorizing = false;
+          });
+        }
+      }
+      // Timeout after 5 minutes
+      if (timer.tick > 150) {
+        timer.cancel();
+        if (mounted) {
+          setState(() {
+            _authResult = 'Error: Timed out waiting for wallet signature';
+            _isAuthorizing = false;
+          });
+        }
+      }
+    });
   }
 
   Future<SigningMethod?> _showSigningMethodSelector() {

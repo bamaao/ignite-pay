@@ -7,7 +7,6 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:ignite_pay_merchant/theme.dart';
 import 'package:ignite_pay_merchant/widgets/amount_input.dart';
 import 'package:ignite_pay_merchant/services/merchant_service.dart';
-import 'package:ignite_pay_merchant/services/voice_service.dart';
 import 'package:ignite_pay_merchant/services/merchant_push_service.dart';
 import 'package:provider/provider.dart';
 
@@ -94,14 +93,6 @@ class _QrGenerateScreenState extends State<QrGenerateScreen> {
       if (confirmation.orderId == _orderId) {
         _fallbackPollTimer?.cancel();
         HapticFeedback.mediumImpact();
-        final voice = context.read<VoiceService>();
-        final svc = context.read<MerchantService>();
-        final order = svc.orders.where((o) => o.orderId == _orderId).firstOrNull;
-        if (order != null) {
-          voice.announcePayment(order.amount);
-        } else {
-          voice.announcePayment(confirmation.amount ?? BigInt.zero);
-        }
         setState(() => _status = 'confirmed');
       }
     });
@@ -116,8 +107,6 @@ class _QrGenerateScreenState extends State<QrGenerateScreen> {
       if (order != null && order.status == 'confirmed') {
         _fallbackPollTimer?.cancel();
         HapticFeedback.mediumImpact();
-        final voice = context.read<VoiceService>();
-        voice.announcePayment(order.amount);
         setState(() => _status = 'confirmed');
       }
     });

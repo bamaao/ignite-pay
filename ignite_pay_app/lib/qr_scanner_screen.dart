@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:ignite_pay_app/services/channel_service.dart';
 
 const _kBackground = Color(0xFF0F0F1A);
 const _kNeonCyan = Color(0xFF00F5FF);
@@ -12,8 +13,10 @@ const _kSuccess = Color(0xFF00E676);
 const _kIntercepted = Color(0xFFFF5252);
 
 /// Opens the QR scanner as a full-screen modal.
-Future<String?> showQrScanner(BuildContext context) {
-  return Navigator.of(context).push<String>(
+/// Returns a String (mcpDid) for didcomm:// pairing, a PaymentQrData for
+/// payment QR codes, or null if cancelled.
+Future<dynamic> showQrScanner(BuildContext context) {
+  return Navigator.of(context).push<dynamic>(
     MaterialPageRoute(
       builder: (_) => const _QrScannerScreen(),
       fullscreenDialog: true,
@@ -45,40 +48,62 @@ class _QrScannerScreenState extends State<_QrScannerScreen> {
     final barcode = capture.barcodes.first;
     if (barcode.rawValue == null) return;
 
-    final url = barcode.rawValue!;
-    if (!url.startsWith('didcomm://')) return;
+    final rawValue = barcode.rawValue!;
 
+    // Route 1: didcomm:// pairing QR
+    if (rawValue.startsWith('didcomm://')) {
+      setState(() {
+        _isProcessing = true;
+        _error = null;
+      });
+
+      try {
+        final didService = DidcommService();
+        final mcpDid = await didService.parseInvitationAndConnect(rawValue);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: _kSuccess,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              content: Text(
+                'Paired with $mcpDid',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+              ),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+          Navigator.of(context).pop(mcpDid);
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _isProcessing = false;
+            _error = e.toString();
+          });
+        }
+      }
+      return;
+    }
+
+    // Route 2: Payment QR (non-didcomm:// barcode)
     setState(() {
       _isProcessing = true;
       _error = null;
     });
 
     try {
-      final didService = DidcommService();
-      final mcpDid = await didService.parseInvitationAndConnect(url);
-
+      final paymentData = await ChannelService().parsePaymentQr(rawValue);
       if (mounted) {
-        // Show success feedback
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: _kSuccess,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            content: Text(
-              'Paired with $mcpDid',
-              style: GoogleFonts.inter(fontWeight: FontWeight.w600),
-            ),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-        Navigator.of(context).pop(mcpDid);
+        Navigator.of(context).pop(paymentData);
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _isProcessing = false;
-          _error = e.toString();
+          _error = 'Not a recognized QR code: ${e.toString()}';
         });
       }
     }
@@ -153,7 +178,7 @@ class _QrScannerScreenState extends State<_QrScannerScreen> {
             child: Column(
               children: [
                 Text(
-                  'Point the camera at the MCP pairing QR code',
+                  'Point the camera at a pairing or payment QR code',
                   style: GoogleFonts.inter(
                     fontSize: 14,
                     color: _kTextSecondary,

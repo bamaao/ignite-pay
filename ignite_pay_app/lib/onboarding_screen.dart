@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/theme.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // ---------------------------------------------------------------------------
 // Entry Point — shown only on first launch (no existing DID)
@@ -44,9 +45,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     text: 'wss://relay.ignite.did',
   );
 
+  // Step 2b: Hub registry URL
+  final _hubRegistryController = TextEditingController(
+    text: 'http://localhost:3004',
+  );
+
   @override
   void dispose() {
     _mediatorController.dispose();
+    _hubRegistryController.dispose();
     super.dispose();
   }
 
@@ -80,9 +87,30 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     if (wsUrl.isNotEmpty) {
       try {
         await DidcommService().connectToMediator(wsUrl);
-      } catch (_) {
-        // Non-fatal: user can connect later in Settings
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: const Color(0xFFFFB300),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              content: Text(
+                'Could not connect to mediator. You can configure it later.',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: Color(0xFF0A0A14)),
+              ),
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
       }
+    }
+
+    // Save hub registry URL
+    final hubUrl = _hubRegistryController.text.trim();
+    if (hubUrl.isNotEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('hub_registry_url', hubUrl);
     }
 
     if (mounted) {
@@ -130,6 +158,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     2 => _MediatorConfigStep(
                         key: const ValueKey('mediator'),
                         controller: _mediatorController,
+                        hubRegistryController: _hubRegistryController,
                         onSkip: _connectAndFinish,
                         onConnect: _connectAndFinish,
                       ),
@@ -408,12 +437,14 @@ class _CreateIdentityStep extends StatelessWidget {
 // ---------------------------------------------------------------------------
 class _MediatorConfigStep extends StatelessWidget {
   final TextEditingController controller;
+  final TextEditingController hubRegistryController;
   final VoidCallback onSkip;
   final VoidCallback onConnect;
 
   const _MediatorConfigStep({
     super.key,
     required this.controller,
+    required this.hubRegistryController,
     required this.onSkip,
     required this.onConnect,
   });
@@ -467,6 +498,42 @@ class _MediatorConfigStep extends StatelessWidget {
             decoration: InputDecoration(
               border: InputBorder.none,
               hintText: 'wss://relay.ignite.did',
+              hintStyle: GoogleFonts.jetBrainsMono(
+                fontSize: 14,
+                color: kTextTertiary,
+              ),
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Hub Registry URL input
+        Text(
+          'Hub Registry URL',
+          style: GoogleFonts.inter(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: kTextSecondary,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: kSurfaceMid,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: kBorder),
+          ),
+          child: TextField(
+            controller: hubRegistryController,
+            style: GoogleFonts.jetBrainsMono(
+              fontSize: 14,
+              color: kTextPrimary,
+            ),
+            decoration: InputDecoration(
+              border: InputBorder.none,
+              hintText: 'http://localhost:3004',
               hintStyle: GoogleFonts.jetBrainsMono(
                 fontSize: 14,
                 color: kTextTertiary,

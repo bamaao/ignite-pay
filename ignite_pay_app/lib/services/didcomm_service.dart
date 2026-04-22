@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:ignite_pay_app/services/fcm_service.dart';
 import 'package:ignite_pay_app/services/mediator_api.dart';
+import 'package:ignite_pay_app/services/session_key_service.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -98,6 +99,7 @@ class DidcommService extends ChangeNotifier {
   // Getters
   String get did => _did;
   String get didDocJson => _didDocJson;
+  String get storagePath => _storagePath;
   String get mediatorWsUrl => _mediatorWsUrl;
   bool get isConnected => _isConnected;
   bool get isInitialized => _isInitialized;
@@ -225,7 +227,7 @@ class DidcommService extends ChangeNotifier {
   }
 
   /// V2.0: Send an authorization response with a session key.
-  /// Creates a local session key first, then sends the auth response with session key data.
+  /// Reuses existing active session key if available, otherwise creates a new one.
   Future<void> sendAuthResponseWithSessionKey({
     required String paymentId,
     required bool authorized,
@@ -238,11 +240,15 @@ class DidcommService extends ChangeNotifier {
     int? perTxLimit,
   }) async {
     try {
-      final sessionKey = await rust.createSessionKeyForPayment(
-        storagePath: _storagePath,
-        spendingLimit: BigInt.from(spendingLimit),
-        durationSecs: durationSecs,
-      );
+      // Reuse existing session key if one is already active (avoids double creation)
+      final existingKey = SessionKeyService().activeSessionKey;
+      final sessionKey = existingKey != null
+          ? null
+          : await rust.createSessionKeyForPayment(
+              storagePath: _storagePath,
+              spendingLimit: BigInt.from(spendingLimit),
+              durationSecs: durationSecs,
+            );
       await rust.sendAuthResponse(
         storagePath: _storagePath,
         paymentId: paymentId,
@@ -546,6 +552,13 @@ class DidcommService extends ChangeNotifier {
   /// Clear the pending auth request.
   void clearPendingAuth() {
     _pendingAuth = null;
+    notifyListeners();
+  }
+
+  /// Clear all cached messages and reset pull cursor.
+  void clearMessages() {
+    _messages.clear();
+    _lastPulledId = null;
     notifyListeners();
   }
 

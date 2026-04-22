@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:ignite_pay_app/src/rust/api/simple.dart' as bridge;
 
 /// Payment QR data parsed from a merchant QR code.
 class PaymentQrData {
@@ -20,7 +21,7 @@ class PaymentQrData {
 }
 
 /// Channel info from local storage.
-class ChannelInfo {
+class LocalChannelInfo {
   final String channelId;
   final String hubEndpoint;
   final String userPubkey;
@@ -31,7 +32,7 @@ class ChannelInfo {
   final int totalDeposited;
   final int treeDepth;
 
-  ChannelInfo({
+  LocalChannelInfo({
     required this.channelId,
     required this.hubEndpoint,
     required this.userPubkey,
@@ -62,21 +63,29 @@ class ChannelPaymentResult {
 /// Service for state channel operations.
 /// Uses the Rust bridge functions for all operations.
 class ChannelService extends ChangeNotifier {
-  List<ChannelInfo> _channels = [];
+  List<LocalChannelInfo> _channels = [];
   PaymentQrData? _pendingPayment;
+  bool _isLoading = false;
+  String? _error;
 
-  List<ChannelInfo> get channels => _channels;
+  List<LocalChannelInfo> get channels => _channels;
   PaymentQrData? get pendingPayment => _pendingPayment;
+  bool get isLoading => _isLoading;
+  String? get error => _error;
 
-  /// Parse a QR code string into payment data.
-  /// This calls the Rust bridge function.
+  /// Parse a QR code string into payment data using the Rust bridge.
   Future<PaymentQrData> parsePaymentQr(String qrData) async {
-    // The Rust bridge function parse_payment_qr will be available
-    // after running flutter_rust_bridge_codegen generate
-    // For now, we use a placeholder that will be replaced by the bridge
-    throw UnimplementedError(
-      'Run flutter_rust_bridge_codegen generate first, then use the generated bridge.',
+    final result = await bridge.parsePaymentQr(qrData: qrData);
+    final data = PaymentQrData(
+      merchantDid: result.merchantDid,
+      amount: result.amount.toInt(),
+      description: result.description,
+      orderId: result.orderId,
+      hubEndpoint: result.hubEndpoint,
+      timestamp: result.timestamp,
     );
+    setPendingPayment(data);
+    return data;
   }
 
   /// Set a pending payment from a QR scan (for the confirmation screen).
@@ -91,14 +100,75 @@ class ChannelService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Refresh the channel list from local storage.
+  /// Refresh the channel list from local storage via Rust bridge.
   Future<void> refreshChannels(String storagePath) async {
-    // Will use the Rust bridge after code generation
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      final bridgeChannels = await bridge.listChannels(storagePath: storagePath);
+      _channels = bridgeChannels.map((c) => LocalChannelInfo(
+        channelId: c.channelId,
+        hubEndpoint: c.hubEndpoint,
+        userPubkey: c.userPubkey,
+        providerPubkey: c.providerPubkey,
+        status: c.status,
+        sequence: c.sequence.toInt(),
+        balance: c.balance.toInt(),
+        totalDeposited: c.totalDeposited.toInt(),
+        treeDepth: c.treeDepth,
+      )).toList();
+    } catch (e) {
+      _error = e.toString();
+      debugPrint('ChannelService.refreshChannels error: $e');
+    }
+
+    _isLoading = false;
     notifyListeners();
   }
 
+  /// Execute a channel payment via the Rust bridge.
+  Future<ChannelPaymentResult> channelPay({
+    required String storagePath,
+    required String channelId,
+    required String hubEndpoint,
+    required int amount,
+    required String recipientPubkey,
+  }) async {
+    final result = await bridge.channelPay(
+      storagePath: storagePath,
+      channelId: channelId,
+      hubEndpoint: hubEndpoint,
+      amount: BigInt.from(amount),
+      recipientPubkey: recipientPubkey,
+    );
+    return ChannelPaymentResult(
+      channelId: result.channelId,
+      sequence: result.sequence.toInt(),
+      leafIndex: result.leafIndex,
+      newRoot: result.newRoot,
+    );
+  }
+
+  /// Open a new state channel via the Rust bridge.
+  Future<String> openChannel({
+    required String storagePath,
+    required String hubEndpoint,
+    required int deposit,
+    required int treeDepth,
+  }) async {
+    final result = await bridge.openChannel(
+      storagePath: storagePath,
+      hubEndpoint: hubEndpoint,
+      deposit: BigInt.from(deposit),
+      treeDepth: treeDepth,
+    );
+    return result.channelId;
+  }
+
   /// Find the first open channel, if any.
-  ChannelInfo? get openChannel {
+  LocalChannelInfo? get firstOpenChannel {
     try {
       return _channels.firstWhere(
         (c) => c.status == 'Open' || c.status == 'open',
