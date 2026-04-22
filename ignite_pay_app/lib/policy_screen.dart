@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // ---------------------------------------------------------------------------
 // Swiss Design Theme Constants
@@ -77,61 +80,167 @@ class PolicyArchitectScreen extends StatefulWidget {
 }
 
 class _PolicyArchitectScreenState extends State<PolicyArchitectScreen> {
-  late final List<_MerchantPolicy> _policies;
+  List<_MerchantPolicy> _policies = [];
+  bool _isLoading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _policies = [
-      _MerchantPolicy(
-        name: 'ShopX Marketplace',
-        did: 'did:solana:7kPx...mN3q',
-        domain: 'shopx.io',
-        icon: LucideIcons.store,
-        isVerified: true,
-        autoPay: true,
-        singleLimit: 0.5,
-        weeklyCap: 2.0,
-        weeklySpent: 0.72,
-        expiry: DateTime(2025, 8, 15),
+    _loadPolicies();
+  }
+
+  Future<void> _loadPolicies() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final knownDids = prefs.getStringList('known_merchant_dids') ?? [];
+      final dir = await getApplicationSupportDirectory();
+      final storagePath = dir.path;
+
+      final List<_MerchantPolicy> loaded = [];
+      for (final did in knownDids) {
+        try {
+          final policy = await rust.loadMerchantPolicy(
+            storagePath: storagePath,
+            merchantDid: did,
+          );
+          if (policy != null) {
+            loaded.add(_MerchantPolicy(
+              name: did.length > 24
+                  ? '${did.substring(0, 16)}...${did.substring(did.length - 6)}'
+                  : did,
+              did: did,
+              domain: '',
+              icon: LucideIcons.store,
+              isVerified: false,
+              autoPay: false,
+              singleLimit: policy.dailySpendingLimit.toInt() / 1000000000.0,
+              weeklyCap: policy.perTxLimit.toInt() / 1000000000.0,
+              weeklySpent: 0.0,
+              expiry: DateTime.now().add(Duration(seconds: policy.durationSecs.toInt())),
+            ));
+          }
+        } catch (_) {
+          // Skip DIDs with missing/corrupt policies
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _policies = loaded;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Widget _buildLoadingState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircularProgressIndicator(
+            color: _kNeonCyan.withValues(alpha: 0.7),
+            strokeWidth: 2,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Loading policies...',
+            style: GoogleFonts.inter(fontSize: 13, color: _kTextSecondary),
+          ),
+        ],
       ),
-      _MerchantPolicy(
-        name: 'DeFi Staking',
-        did: 'did:solana:3vRt...kL9w',
-        domain: 'defistake.xyz',
-        icon: LucideIcons.layers,
-        isVerified: false,
-        autoPay: false,
-        singleLimit: 1.0,
-        weeklyCap: 5.0,
-        weeklySpent: 3.2,
-        expiry: DateTime(2025, 6, 30),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(LucideIcons.alertCircle, size: 40, color: _kIntercepted.withValues(alpha: 0.7)),
+            const SizedBox(height: 12),
+            Text(
+              _error ?? 'Failed to load policies',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(fontSize: 13, color: _kTextSecondary),
+            ),
+            const SizedBox(height: 16),
+            GestureDetector(
+              onTap: _loadPolicies,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                decoration: BoxDecoration(
+                  color: _kNeonCyan.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: _kNeonCyan.withValues(alpha: 0.25)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(LucideIcons.refreshCw, size: 14, color: _kNeonCyan),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Retry',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: _kNeonCyan,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
-      _MerchantPolicy(
-        name: 'NFT Mint',
-        did: 'did:solana:9wYe...pQ2a',
-        domain: 'nftmint.pro',
-        icon: LucideIcons.image,
-        isVerified: true,
-        autoPay: false,
-        singleLimit: 0.25,
-        weeklyCap: 1.0,
-        weeklySpent: 0.0,
-        expiry: DateTime(2025, 12, 1),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(LucideIcons.shield, size: 40, color: _kTextTertiary),
+            const SizedBox(height: 12),
+            Text(
+              'No merchant policies yet',
+              style: GoogleFonts.inter(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: _kTextSecondary,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Policies will appear here after you\nauthorize payments from merchants.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                color: _kTextTertiary,
+                height: 1.5,
+              ),
+            ),
+          ],
+        ),
       ),
-      _MerchantPolicy(
-        name: 'RPC Provider',
-        did: 'did:solana:5tUu...xZ7b',
-        domain: 'solrpc.dev',
-        icon: LucideIcons.server,
-        isVerified: true,
-        autoPay: true,
-        singleLimit: 0.05,
-        weeklyCap: 0.3,
-        weeklySpent: 0.12,
-        expiry: DateTime(2026, 1, 1),
-      ),
-    ];
+    );
   }
 
   @override
@@ -143,42 +252,56 @@ class _PolicyArchitectScreenState extends State<PolicyArchitectScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const _PolicyHeader(),
-            // Grid stats
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: _StatsGrid(policies: _policies),
-            ),
-            const SizedBox(height: 20),
-            // Merchant list
-            Expanded(
-              child: ListView.separated(
+            if (_isLoading)
+              const Expanded(child: SizedBox())
+            else if (_error != null)
+              const Expanded(child: SizedBox())
+            else if (_policies.isEmpty)
+              const Expanded(child: SizedBox())
+            else ...[
+              // Grid stats
+              Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
-                itemCount: _policies.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 8),
-                itemBuilder: (context, index) {
-                  return _MerchantPolicyCard(
-                    policy: _policies[index],
-                    onToggleAutoPay: (val) {
-                      setState(() => _policies[index].autoPay = val);
-                    },
-                    onToggleExpand: () {
-                      setState(() {
-                        _policies[index].isExpanded =
-                            !_policies[index].isExpanded;
-                      });
-                    },
-                    onLimitChanged: (val) {
-                      setState(() => _policies[index].singleLimit = val);
-                    },
-                    onWeeklyCapChanged: (val) {
-                      setState(() => _policies[index].weeklyCap = val);
-                    },
-                    onExpiryChanged: (val) {
-                      setState(() => _policies[index].expiry = val);
-                    },
-                  );
-                },
+                child: _StatsGrid(policies: _policies),
               ),
+              const SizedBox(height: 20),
+            ],
+            // Main content area
+            Expanded(
+              child: _isLoading
+                  ? _buildLoadingState()
+                  : _error != null
+                      ? _buildErrorState()
+                      : _policies.isEmpty
+                          ? _buildEmptyState()
+                          : ListView.separated(
+                              padding: const EdgeInsets.symmetric(horizontal: 20),
+                              itemCount: _policies.length,
+                              separatorBuilder: (_, _) => const SizedBox(height: 8),
+                              itemBuilder: (context, index) {
+                                return _MerchantPolicyCard(
+                                  policy: _policies[index],
+                                  onToggleAutoPay: (val) {
+                                    setState(() => _policies[index].autoPay = val);
+                                  },
+                                  onToggleExpand: () {
+                                    setState(() {
+                                      _policies[index].isExpanded =
+                                          !_policies[index].isExpanded;
+                                    });
+                                  },
+                                  onLimitChanged: (val) {
+                                    setState(() => _policies[index].singleLimit = val);
+                                  },
+                                  onWeeklyCapChanged: (val) {
+                                    setState(() => _policies[index].weeklyCap = val);
+                                  },
+                                  onExpiryChanged: (val) {
+                                    setState(() => _policies[index].expiry = val);
+                                  },
+                                );
+                              },
+                            ),
             ),
             const SizedBox(height: 16),
           ],

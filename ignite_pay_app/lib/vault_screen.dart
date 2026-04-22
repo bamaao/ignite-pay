@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // ---------------------------------------------------------------------------
 // Vault Theme
@@ -52,15 +53,38 @@ class VaultIdentityScreen extends StatefulWidget {
 
 class _VaultIdentityScreenState extends State<VaultIdentityScreen> {
   bool _phraseRevealed = false;
-  final _mediatorController = TextEditingController(
-    text: 'wss://relay.ignite.did',
-  );
+  bool _isLoading = true;
+  String? _error;
+  final _mediatorController = TextEditingController();
 
+  // TODO: Replace with real mnemonic from Rust bridge when available
   static const _secretPhrase = [
     'orbit', 'glacier', 'velvet', 'phoenix',
     'tundra', 'mirror', 'beacon', 'labyrinth',
     'cascade', 'ember', 'zenith', 'prism',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVaultData();
+  }
+
+  Future<void> _loadVaultData() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _mediatorController.text = prefs.getString('mediator_ws_url') ?? 'wss://relay.ignite.did';
+    } catch (e) {
+      _error = e.toString();
+    }
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -72,41 +96,111 @@ class _VaultIdentityScreenState extends State<VaultIdentityScreen> {
     HapticFeedback.mediumImpact();
   }
 
+  Widget _buildLoadingState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircularProgressIndicator(
+            color: _kCyan.withValues(alpha: 0.7),
+            strokeWidth: 2,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Loading vault...',
+            style: GoogleFonts.inter(fontSize: 13, color: _kTextSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(LucideIcons.alertCircle, size: 40, color: _kDanger.withValues(alpha: 0.7)),
+            const SizedBox(height: 12),
+            Text(
+              _error ?? 'Failed to load vault data',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(fontSize: 13, color: _kTextSecondary),
+            ),
+            const SizedBox(height: 16),
+            GestureDetector(
+              onTap: _loadVaultData,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                decoration: BoxDecoration(
+                  color: _kCyan.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: _kCyan.withValues(alpha: 0.25)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(LucideIcons.refreshCw, size: 14, color: _kCyan),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Retry',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: _kCyan,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _kBackground,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 12),
-              const _VaultHeader(),
-              const SizedBox(height: 24),
-              _IdentityHeroCard(onCopy: _triggerHaptic),
-              const SizedBox(height: 28),
-              _SectionLabel(text: 'VAULT'),
-              const SizedBox(height: 8),
-              _SecretPhraseTile(
-                revealed: _phraseRevealed,
-                onTap: () {
-                  _triggerHaptic();
-                  setState(() => _phraseRevealed = !_phraseRevealed);
-                },
-                phrase: _phraseRevealed ? _secretPhrase : null,
-              ),
-              const SizedBox(height: 8),
-              _MediatorEndpointTile(controller: _mediatorController),
-              const SizedBox(height: 8),
-              _AuditLogSettingsTile(onTap: _triggerHaptic),
-              const SizedBox(height: 8),
-              _DangerZoneTile(onTap: _triggerHaptic),
-              const SizedBox(height: 40),
-            ],
-          ),
-        ),
+        child: _isLoading
+            ? _buildLoadingState()
+            : _error != null
+                ? _buildErrorState()
+                : SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 12),
+                        const _VaultHeader(),
+                        const SizedBox(height: 24),
+                        _IdentityHeroCard(onCopy: _triggerHaptic),
+                        const SizedBox(height: 28),
+                        const _SectionLabel(text: 'VAULT'),
+                        const SizedBox(height: 8),
+                        _SecretPhraseTile(
+                          revealed: _phraseRevealed,
+                          onTap: () {
+                            _triggerHaptic();
+                            setState(() => _phraseRevealed = !_phraseRevealed);
+                          },
+                          phrase: _phraseRevealed ? _secretPhrase : null,
+                        ),
+                        const SizedBox(height: 8),
+                        _MediatorEndpointTile(controller: _mediatorController),
+                        const SizedBox(height: 8),
+                        _AuditLogSettingsTile(onTap: _triggerHaptic),
+                        const SizedBox(height: 8),
+                        _DangerZoneTile(onTap: _triggerHaptic),
+                        const SizedBox(height: 40),
+                      ],
+                    ),
+                  ),
       ),
     );
   }
@@ -635,6 +729,13 @@ class _MediatorEndpointTile extends StatefulWidget {
 class _MediatorEndpointTileState extends State<_MediatorEndpointTile> {
   bool _editing = false;
 
+  Future<void> _saveMediatorUrl() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('mediator_ws_url', widget.controller.text.trim());
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     return _SettingsTile(
@@ -644,6 +745,9 @@ class _MediatorEndpointTileState extends State<_MediatorEndpointTile> {
       subtitle: 'WebSocket relay for DIDComm',
       onTap: () {
         HapticFeedback.lightImpact();
+        if (_editing) {
+          _saveMediatorUrl();
+        }
         setState(() => _editing = !_editing);
       },
       accentBorder: _editing ? _kCyan.withValues(alpha: 0.25) : null,
@@ -748,6 +852,7 @@ void openAuditLogs(BuildContext context) {
 class _AuditLogsPage extends StatelessWidget {
   const _AuditLogsPage();
 
+  // TODO: Replace with real audit logs from Rust bridge log_store
   static const _logs = [
     _AuditEntry(
       action: 'sign_payment',

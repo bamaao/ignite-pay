@@ -3,13 +3,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/theme.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
-import 'package:ignite_pay_app/challenge_screen.dart';
 import 'package:provider/provider.dart';
 
 // ---------------------------------------------------------------------------
 // Entry Point
 // ---------------------------------------------------------------------------
-void openMessages(BuildContext context) {
+void openTransactionHistory(BuildContext context) {
   Navigator.of(context).push(
     PageRouteBuilder(
       transitionDuration: const Duration(milliseconds: 350),
@@ -18,24 +17,24 @@ void openMessages(BuildContext context) {
           begin: const Offset(1, 0),
           end: Offset.zero,
         ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
-        child: const MessagesScreen(),
+        child: const TransactionHistoryScreen(),
       ),
     ),
   );
 }
 
 // ---------------------------------------------------------------------------
-// Messages Screen
+// Transaction History Screen
 // ---------------------------------------------------------------------------
-class MessagesScreen extends StatefulWidget {
-  const MessagesScreen({super.key});
+class TransactionHistoryScreen extends StatefulWidget {
+  const TransactionHistoryScreen({super.key});
 
   @override
-  State<MessagesScreen> createState() => _MessagesScreenState();
+  State<TransactionHistoryScreen> createState() => _TransactionHistoryScreenState();
 }
 
-class _MessagesScreenState extends State<MessagesScreen> {
-  _MsgFilter _filter = _MsgFilter.all;
+class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
+  _TxFilter _filter = _TxFilter.all;
 
   @override
   Widget build(BuildContext context) {
@@ -48,8 +47,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
               child: const PageHeader(
-                title: 'Messages',
-                subtitle: 'DIDComm encrypted messages',
+                title: 'Transaction History',
+                subtitle: 'Payment activity log',
               ),
             ),
             const SizedBox(height: 16),
@@ -59,7 +58,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(
-                  children: _MsgFilter.values.map((f) {
+                  children: _TxFilter.values.map((f) {
                     final selected = f == _filter;
                     return Padding(
                       padding: const EdgeInsets.only(right: 8),
@@ -95,29 +94,26 @@ class _MessagesScreenState extends State<MessagesScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            // Message list
+            // Transaction list
             Expanded(
               child: Consumer<DidcommService>(
                 builder: (context, svc, _) {
                   final all = svc.messages;
-                  final filtered = _filter == _MsgFilter.all
+                  final filtered = _filter == _TxFilter.all
                       ? all
                       : all.where((m) {
                           switch (_filter) {
-                            case _MsgFilter.payment:
-                              return m.msgType
-                                  .contains('payment-auth-request');
-                            case _MsgFilter.listSync:
+                            case _TxFilter.payment:
+                              return m.msgType.contains('payment');
+                            case _TxFilter.listSync:
                               return m.msgType.contains('list-sync');
-                            case _MsgFilter.connection:
-                              return m.msgType.contains('connection');
-                            case _MsgFilter.all:
+                            case _TxFilter.all:
                               return true;
                           }
                         }).toList();
 
                   if (filtered.isEmpty) {
-                    return _EmptyState(onRefresh: () => _refresh(svc));
+                    return _buildEmptyState(() => _refresh(svc));
                   }
 
                   return RefreshIndicator(
@@ -127,10 +123,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
                     child: ListView.separated(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       itemCount: filtered.length,
-                      separatorBuilder: (_, a) => const SizedBox(height: 6),
+                      separatorBuilder: (_, __) => const SizedBox(height: 6),
                       itemBuilder: (context, index) {
                         final msg = filtered[filtered.length - 1 - index];
-                        return _MessageTile(msg: msg);
+                        return _TxTile(msg: msg);
                       },
                     ),
                   );
@@ -140,6 +136,53 @@ class _MessagesScreenState extends State<MessagesScreen> {
             const SizedBox(height: 20),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(VoidCallback onRefresh) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(LucideIcons.inbox, size: 40, color: kTextTertiary),
+          const SizedBox(height: 14),
+          Text(
+            'No transaction history yet',
+            style: GoogleFonts.inter(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: kTextSecondary,
+            ),
+          ),
+          const SizedBox(height: 20),
+          GestureDetector(
+            onTap: onRefresh,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              decoration: BoxDecoration(
+                color: kNeonCyan.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: kNeonCyan.withValues(alpha: 0.25)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.refreshCw, size: 14, color: kNeonCyan),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Check for transactions',
+                    style: GoogleFonts.inter(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: kNeonCyan,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -154,7 +197,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            content: Text('Messages refreshed',
+            content: Text('Transactions refreshed',
                 style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
             duration: const Duration(seconds: 2),
           ),
@@ -181,121 +224,52 @@ class _MessagesScreenState extends State<MessagesScreen> {
 // ---------------------------------------------------------------------------
 // Filter Enum
 // ---------------------------------------------------------------------------
-enum _MsgFilter {
+enum _TxFilter {
   all('All'),
   payment('Payment'),
-  listSync('List Sync'),
-  connection('Connection');
+  listSync('List Sync');
 
   final String label;
-  const _MsgFilter(this.label);
+  const _TxFilter(this.label);
 }
 
 // ---------------------------------------------------------------------------
-// Empty State
+// Transaction Tile
 // ---------------------------------------------------------------------------
-class _EmptyState extends StatelessWidget {
-  final VoidCallback onRefresh;
-  const _EmptyState({required this.onRefresh});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(LucideIcons.inbox, size: 40, color: kTextTertiary),
-          const SizedBox(height: 14),
-          Text(
-            'No messages yet',
-            style: GoogleFonts.inter(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: kTextSecondary,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Messages will appear here when your\nMCP agent sends payment requests',
-            textAlign: TextAlign.center,
-            style: GoogleFonts.inter(
-              fontSize: 12,
-              color: kTextTertiary,
-              height: 1.5,
-            ),
-          ),
-          const SizedBox(height: 20),
-          GestureDetector(
-            onTap: onRefresh,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              decoration: BoxDecoration(
-                color: kNeonCyan.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: kNeonCyan.withValues(alpha: 0.25)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(LucideIcons.refreshCw, size: 14, color: kNeonCyan),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Check for messages',
-                    style: GoogleFonts.inter(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: kNeonCyan,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Message Tile
-// ---------------------------------------------------------------------------
-class _MessageTile extends StatelessWidget {
+class _TxTile extends StatelessWidget {
   final DecryptedMsg msg;
-  const _MessageTile({required this.msg});
+  const _TxTile({required this.msg});
 
-  IconData get _icon => switch (_msgType) {
-        _MsgType.payment => LucideIcons.creditCard,
-        _MsgType.listSync => LucideIcons.listChecks,
-        _MsgType.connection => LucideIcons.link,
-        _MsgType.other => LucideIcons.mail,
+  IconData get _icon => switch (_txType) {
+        _TxType.payment => LucideIcons.creditCard,
+        _TxType.listSync => LucideIcons.listChecks,
+        _TxType.other => LucideIcons.mail,
       };
 
-  Color get _iconColor => switch (_msgType) {
-        _MsgType.payment => kAmber,
-        _MsgType.listSync => kPurple,
-        _MsgType.connection => kCyan,
-        _MsgType.other => kTextSecondary,
+  Color get _iconColor => switch (_txType) {
+        _TxType.payment => kAmber,
+        _TxType.listSync => kPurple,
+        _TxType.other => kTextSecondary,
       };
 
-  String get _typeLabel => switch (_msgType) {
-        _MsgType.payment => 'Payment Request',
-        _MsgType.listSync => 'List Sync',
-        _MsgType.connection => 'Connection',
-        _MsgType.other => 'Message',
-      };
+  String get _statusLabel => msg.msgType.contains('auth-request') ? 'Pending' : 'Processed';
 
-  _MsgType get _msgType {
-    if (msg.msgType.contains('payment-auth-request')) return _MsgType.payment;
-    if (msg.msgType.contains('list-sync')) return _MsgType.listSync;
-    if (msg.msgType.contains('connection')) return _MsgType.connection;
-    return _MsgType.other;
+  Color get _statusColor =>
+      msg.msgType.contains('auth-request') ? kPending : kSuccess;
+
+  _TxType get _txType {
+    if (msg.msgType.contains('payment')) return _TxType.payment;
+    if (msg.msgType.contains('list-sync')) return _TxType.listSync;
+    return _TxType.other;
   }
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => _handleTap(context),
+      onTap: () => showDialog(
+        context: context,
+        builder: (ctx) => _TxDetailDialog(msg: msg),
+      ),
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: glassDecoration(),
@@ -316,7 +290,7 @@ class _MessageTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _typeLabel,
+                    _shortenDid(msg.merchantDid ?? 'Unknown'),
                     style: GoogleFonts.inter(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -324,41 +298,35 @@ class _MessageTile extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 3),
-                  if (msg.merchantDid != null)
+                  if (msg.amount != null)
                     Text(
-                      _shortenDid(msg.merchantDid!),
+                      '${(msg.amount! / 1e9).toStringAsFixed(4)} SOL',
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 11,
                         color: kTextSecondary,
                       ),
                     ),
-                  if (msg.description != null && msg.description!.isNotEmpty)
-                    Text(
-                      msg.description!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.inter(
-                        fontSize: 11,
-                        color: kTextTertiary,
-                      ),
-                    ),
                 ],
               ),
             ),
-            if (_msgType == _MsgType.payment && msg.amount != null) ...[
-              const SizedBox(width: 8),
-              Text(
-                '${(msg.amount! / 1e9).toStringAsFixed(4)} SOL',
-                style: GoogleFonts.jetBrainsMono(
-                  fontSize: 13,
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: _statusColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _statusColor.withValues(alpha: 0.3)),
+              ),
+              child: Text(
+                _statusLabel,
+                style: GoogleFonts.inter(
+                  fontSize: 10,
                   fontWeight: FontWeight.w600,
-                  color: kAmber,
+                  color: _statusColor,
                 ),
               ),
-            ],
+            ),
             const SizedBox(width: 6),
-            Icon(LucideIcons.chevronRight,
-                size: 16, color: kTextTertiary),
+            Icon(LucideIcons.chevronRight, size: 16, color: kTextTertiary),
           ],
         ),
       ),
@@ -369,32 +337,14 @@ class _MessageTile extends StatelessWidget {
     if (did.length > 30) return '${did.substring(0, 20)}...${did.substring(did.length - 6)}';
     return did;
   }
-
-  void _handleTap(BuildContext context) {
-    if (_msgType == _MsgType.payment) {
-      final request = AuthRequest(
-        paymentId: msg.paymentId ?? '',
-        merchantDid: msg.merchantDid ?? '',
-        amount: msg.amount ?? 0,
-        description: msg.description ?? '',
-      );
-      showX402Challenge(context, request: request);
-    } else {
-      // Show raw body in a dialog
-      showDialog(
-        context: context,
-        builder: (ctx) => _MessageDetailDialog(msg: msg),
-      );
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
-// Message Detail Dialog
+// Transaction Detail Dialog
 // ---------------------------------------------------------------------------
-class _MessageDetailDialog extends StatelessWidget {
+class _TxDetailDialog extends StatelessWidget {
   final DecryptedMsg msg;
-  const _MessageDetailDialog({required this.msg});
+  const _TxDetailDialog({required this.msg});
 
   @override
   Widget build(BuildContext context) {
@@ -410,7 +360,7 @@ class _MessageDetailDialog extends StatelessWidget {
             Row(
               children: [
                 Text(
-                  'Message Detail',
+                  'Transaction Detail',
                   style: GoogleFonts.inter(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
@@ -431,26 +381,26 @@ class _MessageDetailDialog extends StatelessWidget {
             if (msg.amount != null)
               _field('Amount', '${(msg.amount! / 1e9).toStringAsFixed(6)} SOL'),
             if (msg.description != null) _field('Description', msg.description!),
-            if (msg.listCid != null) _field('List CID', msg.listCid!),
-            if (msg.listType != null) _field('List Type', msg.listType!),
-            if (msg.label != null) _field('Label', msg.label!),
             const SizedBox(height: 12),
             Text('RAW BODY', style: sectionLabel()),
             const SizedBox(height: 6),
             Container(
               width: double.infinity,
+              constraints: const BoxConstraints(maxHeight: 200),
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
                 color: kSurfaceMid,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: kBorder),
               ),
-              child: SelectableText(
-                msg.rawBody,
-                style: GoogleFonts.jetBrainsMono(
-                  fontSize: 10,
-                  color: kTextSecondary,
-                  height: 1.4,
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  msg.rawBody,
+                  style: GoogleFonts.jetBrainsMono(
+                    fontSize: 10,
+                    color: kTextSecondary,
+                    height: 1.4,
+                  ),
                 ),
               ),
             ),
@@ -475,4 +425,4 @@ class _MessageDetailDialog extends StatelessWidget {
   }
 }
 
-enum _MsgType { payment, listSync, connection, other }
+enum _TxType { payment, listSync, other }

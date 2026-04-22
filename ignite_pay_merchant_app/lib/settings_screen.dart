@@ -6,6 +6,8 @@ import 'package:ignite_pay_merchant/theme.dart';
 import 'package:ignite_pay_merchant/services/merchant_service.dart';
 import 'package:ignite_pay_merchant/services/voice_service.dart';
 import 'package:ignite_pay_merchant/services/merchant_push_service.dart';
+import 'package:ignite_pay_merchant/notification_center_screen.dart';
+import 'package:ignite_pay_merchant/profile_screen.dart';
 import 'package:ignite_pay_merchant/src/rust/api/merchant.dart' as rust;
 import 'package:provider/provider.dart';
 
@@ -247,6 +249,28 @@ class SettingsScreen extends StatelessWidget {
                       ),
                     ],
                   ),
+                ),
+                const SizedBox(height: 16),
+
+                // Quick Access
+                const SectionLabel(text: '快捷入口'),
+                const SizedBox(height: 8),
+                SettingsTile(
+                  icon: LucideIcons.user,
+                  iconColor: kPurple,
+                  title: '商户资料',
+                  subtitle: '身份与账户设置',
+                  trailing: const Icon(LucideIcons.chevronRight, size: 16, color: kTextSecondary),
+                  onTap: () => openProfile(context),
+                ),
+                const SizedBox(height: 8),
+                SettingsTile(
+                  icon: LucideIcons.bell,
+                  iconColor: kNeonCyan,
+                  title: '通知中心',
+                  subtitle: '收款与系统通知',
+                  trailing: const Icon(LucideIcons.chevronRight, size: 16, color: kTextSecondary),
+                  onTap: () => openNotificationCenter(context),
                 ),
                 const SizedBox(height: 16),
 

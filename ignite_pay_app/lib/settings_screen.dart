@@ -6,6 +6,11 @@ import 'package:ignite_pay_app/connection_screen.dart';
 import 'package:ignite_pay_app/vault_screen.dart';
 import 'package:ignite_pay_app/policy_screen.dart';
 import 'package:ignite_pay_app/session_keys_screen.dart';
+import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:ignite_pay_app/transaction_history_screen.dart';
+import 'package:ignite_pay_app/notification_screen.dart';
+import 'package:ignite_pay_app/profile_screen.dart';
+import 'package:ignite_pay_app/channel_topology_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // ---------------------------------------------------------------------------
@@ -51,20 +56,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _rpcController.text = prefs.getString('solana_rpc_url') ?? 'https://api.devnet.solana.com';
-      _treeAddrController.text = prefs.getString('tree_address') ?? '';
-      _treeAuthController.text = prefs.getString('tree_authority') ?? '';
-      _dasController.text = prefs.getString('das_endpoint') ?? '';
-      _payMode = prefs.getString('pay_mode') ?? 'self_funded';
-      _network = prefs.getString('network') ?? 'devnet';
-    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _rpcController.text = prefs.getString('solana_rpc_url') ?? 'https://api.devnet.solana.com';
+        _treeAddrController.text = prefs.getString('tree_address') ?? '';
+        _treeAuthController.text = prefs.getString('tree_authority') ?? '';
+        _dasController.text = prefs.getString('das_endpoint') ?? '';
+        _payMode = prefs.getString('pay_mode') ?? 'self_funded';
+        _network = prefs.getString('network') ?? 'devnet';
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: kDanger,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            content: Text('Failed to load settings: $e',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _saveSetting(String key, String value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(key, value);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(key, value);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: kDanger,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            content: Text('Failed to save setting: $e',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+          ),
+        );
+      }
+    }
   }
 
   void _showClearConfirm() {
@@ -87,19 +122,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: GoogleFonts.inter(color: kTextSecondary)),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.of(ctx).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  backgroundColor: kSuccess,
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                  margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  content: Text('Cache cleared',
-                      style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
-                ),
-              );
+              // Clear DIDComm messages
+              DidcommService().clearMessages();
+              // Remove temp SharedPreferences keys
+              try {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.remove('temp_qr_data');
+                await prefs.remove('temp_auth_response');
+              } catch (_) {}
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    backgroundColor: kSuccess,
+                    behavior: SnackBarBehavior.floating,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                    margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    content: Text('Cache cleared',
+                        style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+                  ),
+                );
+              }
             },
             child: Text('Clear',
                 style: GoogleFonts.inter(color: kDanger)),
@@ -173,6 +218,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 trailing: const Icon(LucideIcons.chevronRight,
                     size: 18, color: kTextTertiary),
                 onTap: () => openSessionKeys(context),
+              ),
+              const SizedBox(height: 6),
+              SettingsTile(
+                icon: LucideIcons.user,
+                iconColor: kPurple,
+                title: 'Profile',
+                subtitle: 'Identity & account settings',
+                trailing: const Icon(LucideIcons.chevronRight,
+                    size: 18, color: kTextTertiary),
+                onTap: () => openProfile(context),
+              ),
+              const SizedBox(height: 6),
+              SettingsTile(
+                icon: LucideIcons.clock,
+                iconColor: kAmber,
+                title: 'Transaction History',
+                subtitle: 'Payment activity log',
+                trailing: const Icon(LucideIcons.chevronRight,
+                    size: 18, color: kTextTertiary),
+                onTap: () => openTransactionHistory(context),
+              ),
+              const SizedBox(height: 6),
+              SettingsTile(
+                icon: LucideIcons.bell,
+                iconColor: kNeonCyan,
+                title: 'Notifications',
+                subtitle: 'System & connection alerts',
+                trailing: const Icon(LucideIcons.chevronRight,
+                    size: 18, color: kTextTertiary),
+                onTap: () => openNotificationCenter(context),
+              ),
+              const SizedBox(height: 6),
+              SettingsTile(
+                icon: LucideIcons.layers,
+                iconColor: kCyan,
+                title: 'Channel Topology',
+                subtitle: 'State channel network',
+                trailing: const Icon(LucideIcons.chevronRight,
+                    size: 18, color: kTextTertiary),
+                onTap: () => openChannelTopology(context),
               ),
               const SizedBox(height: 24),
 
