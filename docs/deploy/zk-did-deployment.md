@@ -696,7 +696,7 @@ let sig = rpc_client.send_and_confirm_transaction(&tx)?;
 
 ## 7. 存储架构
 
-### 6.1 链上（压缩存储）
+### 7.1 链上（压缩存储）
 
 数据存储在 Light Protocol 的 Merkle Tree 中，不占用传统链上账户空间。每个 `MerchantCompressedDid` 约 150 字节，以哈希形式存在树叶子节点中。
 
@@ -753,7 +753,7 @@ did-registry 使用嵌入式 sled 数据库，默认路径 `./did_registry_data`
 | POST | `/v1/merchants/rotate-key` | 轮换控制密钥（支持 `mode` 字段） |
 | GET | `/v1/fees` | 查询费用记录 |
 
-### 7.1 GET /v1/auth/nonce
+### 8.1 GET /v1/auth/nonce
 
 获取一次性 nonce，5 分钟有效，用于后续请求的防重放保护。
 
@@ -765,7 +765,7 @@ did-registry 使用嵌入式 sled 数据库，默认路径 `./did_registry_data`
 }
 ```
 
-### 7.2 POST /v1/vc/issue
+### 8.2 POST /v1/vc/issue
 
 平台签发 W3C Verifiable Credential。需要 DID 签名验证身份所有权。若商户已注册，还会校验签名者是 controller 或 original key。
 

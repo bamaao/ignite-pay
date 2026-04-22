@@ -152,3 +152,14 @@ PDA 推导：
 - 拆分树要求金额守恒：所有叶子金额之和必须等于 `total_deposited`
 - `construct_split_tree` 需要 Provider 的 keypair 进行配签
 - `keypair_path` 为空时会自动生成临时密钥（每次重启变化，仅测试用）
+
+---
+
+## 相关场景
+
+| 场景 | 关系 |
+|:-----|:-----|
+| [02 离链支付](02-offchain-payment.md) | 通道开通后进行离链转账 |
+| [03 批量 Pipeline](03-batch-pipeline.md) | 通道开通后批量操作 |
+| [04 HTLC 支付](04-htlc-payment.md) | 通道开通后创建条件支付 |
+| [05 协作关闭](05-cooperative-close.md) | 通道生命周期终点 |

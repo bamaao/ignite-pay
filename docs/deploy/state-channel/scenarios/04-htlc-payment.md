@@ -162,3 +162,15 @@ htlc_mgr.mark_fulfilled(&hash_lock)?;
 - HTLC 叶子会占用一个叶子槽位，解决后释放
 - timelock 约束：`timelock_slot > current_slot + challenge_duration + HTLC_SAFETY_MARGIN`（1000 slots）
 - 通道关闭前必须解决所有活跃 HTLC（`close_channel` 会检查）
+
+---
+
+## 相关场景
+
+| 场景 | 关系 |
+|:-----|:-----|
+| [01 开通通道](01-channel-open.md) | 前置：需要已开通的通道 |
+| [03 批量 Pipeline](03-batch-pipeline.md) | Pipeline 内可创建 HTLC |
+| [05 协作关闭](05-cooperative-close.md) | 关闭前必须解决 HTLC |
+| [07 HTLC 结算](07-htlc-settlement.md) | 链上 HTLC 认领/退款 |
+| [09 多跳支付](09-multihop-payment.md) | 多跳使用递减 timelock 的 HTLC |

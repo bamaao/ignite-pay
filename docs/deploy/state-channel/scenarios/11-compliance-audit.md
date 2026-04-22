@@ -154,3 +154,13 @@ let trail = compliance.get_audit_trail(channel_id)?;
 - `travel_rule_threshold` 用于标识需要 Travel Rule 报告的大额支付
 - 审计记录为 append-only，不可删除或修改
 - `record_audit` 应在每次 `apply_leaf_update` 后调用
+
+---
+
+## 相关场景
+
+| 场景 | 关系 |
+|:-----|:-----|
+| [01 开通通道](01-channel-open.md) | 前置：需开通通道并配置合规参数 |
+| [02 离链支付](02-offchain-payment.md) | 支付可能触发 `ComplianceHold` 错误 |
+| [04 HTLC 支付](04-htlc-payment.md) | HTLC 金额也受合规限额约束 |

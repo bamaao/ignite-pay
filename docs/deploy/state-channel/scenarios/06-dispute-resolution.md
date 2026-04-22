@@ -126,3 +126,15 @@ mgr.settle_after_timeout(&mut state, current_slot, settle_window)?;
 - 超时结算后，流程与协作关闭相同：claim 叶子 → finalize
 - 在 `Challenged` 状态期间（`challenge_duration` 倒计时内），也可执行 HTLC 认领或退款操作（截止时间为 `challenge_slot + challenge_duration`）
 - Challenger 的签名使用 `ed_kp.sign(msg)` 生成，消息中包含 slot 防止重放
+
+---
+
+## 相关场景
+
+| 场景 | 关系 |
+|:-----|:-----|
+| [01 开通通道](01-channel-open.md) | 前置：需要已开通的通道 |
+| [04 HTLC 支付](04-htlc-payment.md) | Challenged 状态下的 HTLC 操作 |
+| [05 协作关闭](05-cooperative-close.md) | 争议超时后流程同协作关闭（claim + finalize） |
+| [07 HTLC 结算](07-htlc-settlement.md) | 争议窗口内 HTLC 链上结算 |
+| [10 自动关闭](10-auto-close.md) | 使用相同的 `settle_after_timeout` 链上指令 |

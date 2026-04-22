@@ -139,3 +139,16 @@ mgr.finalize_settlement(&mut state, current_slot, &caller_pk, &caller_sig)?;
 - `settle_window` 决定了认领叶子的时间窗口（slots）
 - 未认领的资金在 `finalize_settlement` 时按 `deposit_a/deposit_b` 比例分配
 - 链上 `cooperative_settle` 验证两个签名对应通道的 user_pubkey 和 provider_pubkey
+
+---
+
+## 相关场景
+
+| 场景 | 关系 |
+|:-----|:-----|
+| [01 开通通道](01-channel-open.md) | 前置：需要已开通的通道 |
+| [02 离链支付](02-offchain-payment.md) | 前置：通道内应有支付活动 |
+| [04 HTLC 支付](04-htlc-payment.md) | 前置：需解决所有活跃 HTLC |
+| [06 争议解决](06-dispute-resolution.md) | 协作失败时的替代路径 |
+| [07 HTLC 结算](07-htlc-settlement.md) | 结算窗口内 HTLC 叶子认领 |
+| [10 自动关闭](10-auto-close.md) | 另一种通道关闭方式 |

@@ -117,3 +117,14 @@ let cosignature = mgr.provider_cosign_state(&mut state, &provider_keypair)?;
 - 每次支付 sequence 递增 1，不可跳过或回退
 - Provider 配签表示同意当前状态，后续可用于协作关闭
 - 部分转账会消耗一个空叶子槽位，注意 `tree_depth` 限制
+
+---
+
+## 相关场景
+
+| 场景 | 关系 |
+|:-----|:-----|
+| [01 开通通道](01-channel-open.md) | 前置：需要已开通的通道 |
+| [03 批量 Pipeline](03-batch-pipeline.md) | 批量执行多笔转账 |
+| [04 HTLC 支付](04-htlc-payment.md) | 条件支付（需先理解基础转账） |
+| [11 合规审计](11-compliance-audit.md) | 转账可能触发 `ComplianceHold` |

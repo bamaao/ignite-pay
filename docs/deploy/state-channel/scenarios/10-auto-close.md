@@ -86,7 +86,7 @@ mgr.auto_settle(&mut state, current_slot, settle_window)?;
 |:-----|:-----|:-----|
 | `AutoCloseNotReached` | auto_close_slot 未到期 | 等待到期后再触发 |
 | `ChannelNotOpen` | 通道已不在 Open 状态 | 检查当前状态 |
-| `ActiveHtlcsExist` | 存在活跃 HTLC | HTLC 不会阻止 auto_settle |
+| `ActiveHtlcsExist` | 存在活跃 HTLC（信息提示） | 非阻塞错误，auto_settle 继续执行；HTLC 资金需在结算窗口内通过 `verify_htlc` / `htlc_refund` 单独处理（→ 场景 07） |
 
 ## 9. 注意事项
 
@@ -95,3 +95,13 @@ mgr.auto_settle(&mut state, current_slot, settle_window)?;
 - auto_settle 跳过 challenge_duration 等待，直接进入 Settling
 - Watchtower 可以是任何持续运行的第三方服务，不需要持有密钥
 - 建议 User 定期上线检查通道状态，及时认领叶子
+
+---
+
+## 相关场景
+
+| 场景 | 关系 |
+|:-----|:-----|
+| [01 开通通道](01-channel-open.md) | 前置：通道需配置 `auto_close_offset` |
+| [05 协作关闭](05-cooperative-close.md) | 自动结算后的 claim + finalize 流程同协作关闭 |
+| [06 争议解决](06-dispute-resolution.md) | 使用相同的 `settle_after_timeout` 链上指令 |

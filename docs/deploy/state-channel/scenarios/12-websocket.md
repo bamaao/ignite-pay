@@ -181,3 +181,16 @@ ws_sender.send(Message::Text(text.into())).await?;
 - 服务端通过 `mpsc::channel` 向连接的 peer 推送消息
 - 连接断开时自动从 `ws_peers` 移除
 - 所有消息使用 `#[serde(tag = "type")]` tagged JSON 格式
+
+---
+
+## 相关场景
+
+| 场景 | 关系 |
+|:-----|:-----|
+| [02 离链支付](02-offchain-payment.md) | `leaf_update` 实时推送 |
+| [03 批量 Pipeline](03-batch-pipeline.md) | `batch_update` 批量推送 |
+| [04 HTLC 支付](04-htlc-payment.md) | `htlc_preimage` 原像揭示 |
+| [05 协作关闭](05-cooperative-close.md) | `co_sign_request` 配签请求 |
+| [06 争议解决](06-dispute-resolution.md) | `channel_state_change` 状态变更通知 |
+| [09 多跳支付](09-multihop-payment.md) | `multihop_relay` 跨跳中继 |

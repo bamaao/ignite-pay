@@ -132,3 +132,14 @@ Pipeline 操作完全离链，无需链上交互。
 - `build()` 消费 Pipeline，之后不可再调用任何方法
 - 如果 Pipeline 被 drop 但未调用 `build()` 或 `abort()`，Drop trait 自动回滚
 - 批量失败时，已应用的更新不会自动回滚（需协作处理或争议解决）
+
+---
+
+## 相关场景
+
+| 场景 | 关系 |
+|:-----|:-----|
+| [01 开通通道](01-channel-open.md) | 前置：需要已开通的通道 |
+| [02 离链支付](02-offchain-payment.md) | Pipeline 内执行转账操作 |
+| [04 HTLC 支付](04-htlc-payment.md) | Pipeline 内可创建 HTLC 叶子 |
+| [06 争议解决](06-dispute-resolution.md) | 批量部分失败时的争议处理 |

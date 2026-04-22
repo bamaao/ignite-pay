@@ -123,3 +123,14 @@ mgr.claim_htlc_refund(
 - Merkle proof 必须基于当前 `current_root` 生成
 - claimer 签名消息格式（链上）：`channel_id || current_slot || current_root`
 - 退款时链上会验证 `timelock_slot < current_slot`
+
+---
+
+## 相关场景
+
+| 场景 | 关系 |
+|:-----|:-----|
+| [04 HTLC 支付](04-htlc-payment.md) | 前置：链下 HTLC 创建和原像管理 |
+| [05 协作关闭](05-cooperative-close.md) | 结算窗口内认领 HTLC 叶子 |
+| [06 争议解决](06-dispute-resolution.md) | Challenged/Settling 状态下 HTLC 认领截止时间 |
+| [09 多跳支付](09-multihop-payment.md) | 多跳每跳的 HTLC 链上解决 |

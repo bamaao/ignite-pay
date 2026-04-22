@@ -161,3 +161,14 @@ for i in (0..payment.hops.len()).rev() {
 - `HOP_MARGIN = 1000 slots` 是安全余量，不可调小
 - 支付失败时，各跳需独立处理 HTLC 退款
 - 每跳的 `channel_id` 不同（跨通道路由）
+
+---
+
+## 相关场景
+
+| 场景 | 关系 |
+|:-----|:-----|
+| [01 开通通道](01-channel-open.md) | 前置：每跳需要已开通的通道 |
+| [04 HTLC 支付](04-htlc-payment.md) | 前置：每跳使用 HTLC 机制 |
+| [07 HTLC 结算](07-htlc-settlement.md) | 每跳 HTLC 的链上结算 |
+| [08 Hub 路由](08-hub-routing.md) | 前置：路由发现（场景 8） |
