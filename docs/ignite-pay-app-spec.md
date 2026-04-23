@@ -42,7 +42,7 @@ AI Agent ──X402──> MCP Server ──DIDComm JWE──> Mediator ──pu
 ┌─────────────────────────────────────────────────────────┐
 │                    Sentinel Dashboard                     │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐   │
-│  │  身份卡片  │ │ 消息中心  │ │ 扫码配对  │ │ 消费仪表  │   │
+│  │  身份卡片  │ │ 🔔通知中心 │ │ 扫码配对  │ │ 消费仪表  │   │
 │  └──────────┘ └──────────┘ └──────────┘ └──────────┘   │
 ├──────────┬──────────┬──────────┬──────────┬─────────────┤
 │  Vault   │ Policy   │ 消息列表  │  连接管理  │   设置     │
@@ -59,6 +59,18 @@ AI Agent ──X402──> MCP Server ──DIDComm JWE──> Mediator ──pu
 ├─────────────────────────────────────────────────────────┤
 │                  QR Scanner (全屏模态)                    │
 │              ·扫码配对 ·手动输入邀请URL                     │
+├─────────────────────────────────────────────────────────┤
+│              Channel Topology (通道拓扑)                  │
+│       ·余额总览 ·节点信息 ·通道列表 ·关闭/结算              │
+├─────────────────────────────────────────────────────────┤
+│              Transaction History (交易历史)               │
+│          ·筛选(All/Payment/ListSync) ·交易详情            │
+├─────────────────────────────────────────────────────────┤
+│              Profile (个人资料)                           │
+│     ·DID展示 ·显示名 ·网络信息 ·设备状态 ·统计数据          │
+├─────────────────────────────────────────────────────────┤
+│              Hub List (Hub 列表)                          │
+│        ·Hub 发现 ·Hub 选择 ·通道创建参数配置                │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -75,30 +87,33 @@ AI Agent ──X402──> MCP Server ──DIDComm JWE──> Mediator ──pu
 
 | 区域 | 组件 | 数据源 | 状态 |
 |:-----|:-----|:-------|:-----|
-| 顶部栏 | Sentinel Logo + 网络状态 + 设置入口 | `DidcommService.isConnected` | 已实现，网络状态需对接 |
+| 顶部栏 | Sentinel Logo + 网络状态 + 通知铃铛(未读数) | `DidcommService.isConnected` | 已实现 |
 | DID 身份卡片 | DID 文本 + 复制 + 连接状态动画点 + 待处理消息数 | `DidcommService.did`, `_isConnected` | 已实现 |
-| 快捷导航 | Vault / Policy / Messages / Settings 四宫格 | 静态 | 部分实现（缺 Messages/Settings） |
-| 扫码配对按钮 | "Scan MCP QR Code" 大按钮 | 触发 QR Scanner | 已实现 |
+| 快捷导航 | Vault / Policy / Channels / Settings | 静态 | 已实现（Channels → ChannelTopologyScreen） |
+| 扫码配对按钮 | "Scan MCP QR Code" 大按钮 | 触发 QR Scanner | 已实现（支持 PaymentQrData 和 didcomm://） |
+| 创建通道按钮 | "Create Channel" 按钮 | SharedPreferences hub_registry_url + mcp_did | 已实现 |
 | 消费仪表盘 | 径向进度条（已消费/限额 SOL） | `LocalLogStore` 聚合 | UI 存在，数据需对接 |
-| 最近活动 | 交易列表（商户、金额、时间、状态） | `LocalLogStore.recent_transactions()` | 硬编码，需对接 |
+| 最近活动 | 交易列表（商户、金额、时间、状态） | `DidcommService.messages` (实时) | 已实现，使用实时数据 |
 | 授权入口 | 待处理授权通知横幅 + "Authorize Payment" 按钮 | `DidcommService._pendingAuth` stream | 已实现 |
 
 #### 3.1.2 交互流程
 
 ```
 [首次启动] → 自动生成 DID → Dashboard 展示
-[点击扫码] → QR Scanner 模态 → 扫描 didcomm:// URL → 连接 MCP → 返回 Dashboard
+[点击扫码] → QR Scanner 模态 → 扫描 PaymentQrData 或 didcomm:// URL → 支付或连接 MCP → 返回 Dashboard
 [收到推送] → 拉取消息 → 解密 → 如果是 payment-auth-request → 显示授权横幅
 [点击授权] → X402 Challenge 模态 → 滑块确认 → 创建 Session Key → 加密响应 → 关闭
-[点击设置] → Settings 页面
+[点击通知铃铛] → NotificationCenterScreen
+[点击 Channels] → ChannelTopologyScreen
+[点击 Create Channel] → HubListScreen → 选择 Hub → 创建通道
 ```
 
 #### 3.1.3 需修复/对接
 
 - [ ] 消费仪表盘对接 `LocalLogStore` 实际交易数据
-- [ ] 活动流对接 `LocalLogStore.recent_transactions()`
+- [x] 活动流已对接 `DidcommService.messages` 实时数据
 - [ ] 网络状态（Mainnet/Devnet）从配置读取
-- [ ] 待处理消息数从 `DidcommService._messages` 计算
+- [x] 待处理消息数已从 `DidcommService.messages` 计算
 
 ---
 
@@ -386,6 +401,114 @@ AI Agent ──X402──> MCP Server ──DIDComm JWE──> Mediator ──pu
 
 ---
 
+### 3.11 通知中心 (NotificationCenterScreen)
+
+**路由**：push slide-right（从 Dashboard 通知铃铛进入）
+**优先级**：P1 — 已实现
+
+#### 3.11.1 页面结构
+
+| 区域 | 组件 | 数据源 | 状态 |
+|:-----|:-----|:-------|:-----|
+| 标题栏 | PageHeader "Notifications" | 静态 | 已实现 |
+| 全部标为已读 | 点击文本按钮 | SharedPreferences `read_notification_ids` | 已实现 |
+| 消息列表 | 通知卡片列表 | `DidcommService.messages` 过滤非 payment-auth-request | 已实现 |
+| 通知卡片 | 图标 + 摘要 + 消息类型 + 未读圆点 + 箭头 | `DecryptedMsg` | 已实现 |
+| 详情弹窗 | Dialog：消息类型、CID、标签、描述、RAW BODY | `DecryptedMsg` | 已实现 |
+
+#### 3.11.2 已读状态管理
+
+- 使用 SharedPreferences 存储已读通知 ID（key: `read_notification_ids`）
+- ID 由 `msg.rawBody.hashCode.toString()` 生成
+- 未读通知以 NeonCyan 边框 + 圆点标识
+
+---
+
+### 3.12 通道拓扑 (ChannelTopologyScreen)
+
+**路由**：push slide-right（从 Dashboard 快捷导航 Channels 进入）
+**优先级**：P1 — 已实现
+
+#### 3.12.1 页面结构
+
+| 区域 | 组件 | 数据源 | 状态 |
+|:-----|:-----|:-------|:-----|
+| 标题栏 | PageHeader "Channel Topology" | 静态 | 已实现 |
+| 余额总览卡片 | 总余额 (SOL) + 开启/关闭通道数 | `ChannelService.totalBalance` | 已实现 |
+| 本节点卡片 | CPU 图标 + 用户 DID + 连接状态脉冲点 | `DidcommService.did`, `isConnected` | 已实现 |
+| 通道卡片列表 | Hub 端点 + 状态徽章 + 余额/存入/序列/深度 | `ChannelService.channels` | 已实现 |
+| 通道操作 | Close（开启通道）/ Settle（关闭通道）按钮 | Rust `closeChannel` / `settleChannel` | 已实现 |
+| 下拉刷新 | RefreshIndicator | `_loadChannels()` | 已实现 |
+
+#### 3.12.2 交互流程
+
+```
+[打开页面] → 加载通道列表 → 显示余额总览 + 通道列表
+[下拉刷新] → 重新调用 ChannelService.refreshChannels
+[点击 Close] → 确认对话框 → 调用 Rust closeChannel → 刷新列表
+[点击 Settle] → 调用 Rust settleChannel → 刷新列表
+```
+
+---
+
+### 3.13 交易历史 (TransactionHistoryScreen)
+
+**路由**：push slide-right
+**优先级**：P1 — 已实现
+
+#### 3.13.1 页面结构
+
+| 区域 | 组件 | 数据源 | 状态 |
+|:-----|:-----|:-------|:-----|
+| 标题栏 | PageHeader "Transaction History" | 静态 | 已实现 |
+| 筛选标签 | All / Payment / List Sync 横向滚动 | `_TxFilter` 枚举 | 已实现 |
+| 交易卡片列表 | 图标 + 商户DID + 金额 + 状态徽章 | `DidcommService.messages` 按类型筛选 | 已实现 |
+| 交易详情弹窗 | Dialog：类型、Payment ID、商户、金额、描述、RAW BODY | `DecryptedMsg` | 已实现 |
+
+#### 3.13.2 消息类型映射
+
+| 筛选类型 | 图标 | 颜色 | 筛选条件 |
+|:---------|:-----|:-----|:---------|
+| Payment | creditCard | Amber | `msgType.contains('payment')` |
+| List Sync | listChecks | Purple | `msgType.contains('list-sync')` |
+| Other | mail | TextSecondary | 不含以上关键词 |
+
+---
+
+### 3.14 个人资料 (ProfileScreen)
+
+**路由**：push slide-right
+**优先级**：P1 — 已实现
+
+#### 3.14.1 页面结构
+
+| 区域 | 组件 | 数据源 | 状态 |
+|:-----|:-----|:-------|:-----|
+| 头像 | 渐变圆形 + DID 前两字符 | `DidcommService.did` | 已实现 |
+| DID 显示 | 玻璃卡片 + DID 文本 + 复制按钮 | `DidcommService.did` | 已实现 |
+| 显示名称 | 可编辑输入框 + 保存 | SharedPreferences `display_name` | 已实现 |
+| 网络信息 | Devnet/Mainnet 标签 | SharedPreferences `network` | 已实现 |
+| 设备状态 | 连接状态点 + Session Key 激活徽章 | `DidcommService.isConnected`, `SessionKeyService` | 已实现 |
+| 统计卡片 | 通道数 / 余额 / 商户数 | `ChannelService`, `SharedPreferences` | 已实现 |
+| 导出 DID | OutlinedButton "Export DID Document" | `DidcommService.didDocJson` | 已实现 |
+
+---
+
+### 3.15 Hub 列表 (HubListScreen)
+
+**路由**：push slide-right（从 Dashboard "Create Channel" 按钮进入）
+**优先级**：P1 — 已实现
+
+#### 3.15.1 页面结构
+
+| 区域 | 组件 | 数据源 | 状态 |
+|:-----|:-----|:-------|:-----|
+| Hub 列表 | 从 Hub Registry API 获取 | `GET /v1/hubs` | 已实现 |
+| Hub 卡片 | 名称、描述、状态、费率、流动性、延迟 | Hub Registry | 已实现 |
+| 通道创建 | 选择 Hub → 输入参数 → 创建通道 | `sendCreateChannelRequest` | 已实现 |
+
+---
+
 ## 4. 数据模型
 
 ### 4.1 核心状态（DidcommService 管理的全局状态）
@@ -477,6 +600,12 @@ class TransactionLog {
 | `registerDeviceToken` | `DidcommService.connectToMediator()` | 注册 FCM |
 | `parseOobInvitation` | `DidcommService.parseInvitationAndConnect()` | 解析邀请 |
 | `sendConnectionRequest` | `DidcommService.parseInvitationAndConnect()` | P2P 连接 |
+| `parsePaymentQr` | `ChannelService.parsePaymentQr()` | 解析收款二维码 |
+| `listChannels` | `ChannelService.refreshChannels()` | 列出用户通道 |
+| `channelPay` | `ChannelService.channelPay()` | 状态通道支付 |
+| `openChannel` | `ChannelService.openChannel()` | 开通状态通道 |
+| `closeChannel` | `ChannelTopologyScreen._closeChannel()` | 关闭通道 |
+| `settleChannel` | `ChannelTopologyScreen._settleChannel()` | 结算通道 |
 
 ### 5.2 未对接（需新增）
 
@@ -612,6 +741,12 @@ MaterialApp
 │   │   │   └── → AuditLogsPage (push)
 │   │   ├── → PolicyArchitectScreen (push)
 │   │   ├── → ConnectionManagementScreen (push)
+│   │   ├── → ChannelTopologyScreen (push) — 通道拓扑
+│   │   ├── → NotificationCenterScreen (push) — 通知中心
+│   │   ├── → ProfileScreen (push) — 个人资料
+│   │   ├── → TransactionHistoryScreen (push) — 交易历史
+│   │   ├── → HubListScreen (push) — Hub 列表 / 创建通道
+│   │   ├── → QrPaymentScreen (push) — 通道支付确认
 │   │   ├── → showQrScanner (modal)
 │   │   └── → showX402Challenge (modal)
 │   ├── Tab 1: MessagesScreen (消息)

@@ -64,10 +64,12 @@ Ignite Pay 是一套基于 Solana 的去中心化支付系统，由三个核心�
 #### 2.4.2 仪表盘 (Dashboard)
 
 - DID 身份卡片（显示 DID、连接状态、待处理消息数）
-- 快捷入口：Vault（密钥库）、Policies（策略管理）
-- "Scan MCP QR Code" 按钮：扫描商户二维码建立配对
+- 通知铃铛：未读消息数徽章，点击进入通知中心
+- 快捷入口：Vault（密钥库）、Policies（策略管理）、Channels（通道拓扑）
+- "Scan MCP QR Code" 按钮：扫描商户二维码建立配对（支持 PaymentQrData 和 didcomm:// 配对）
+- "Create Channel" 按钮：读取 Hub Registry URL 和 MCP DID，创建通道
 - 信任额度仪表盘：当日消费/限额
-- 最近活动列表
+- 最近活动列表：实时数据，从 `DidcommService.messages` 获取
 - 支付授权横幅：收到 `payment-auth-request` 时弹出
 
 #### 2.4.3 支付授权 (ChallengeScreen — X402 协议)
@@ -135,6 +137,54 @@ DIDComm 消息收件箱：
 - 支付模式：自费 / 赞助
 - 存储管理：清除缓存
 
+#### 2.4.12 通知中心 (NotificationCenterScreen)
+
+系统通知与连接更新消息列表：
+- 消息列表：从 `DidcommService.messages` 中过滤非 payment-auth-request 类型的消息
+- 已读/未读状态：通过 SharedPreferences 存储已读 ID
+- 全部标为已读功能
+- 通知详情弹窗：显示消息类型、CID、标签、描述、RAW BODY
+- 从 Dashboard 通知铃铛图标进入（带未读数徽章）
+
+#### 2.4.13 通道拓扑 (ChannelTopologyScreen)
+
+状态通道网络可视化与管理：
+- 总余额卡片：显示所有通道余额总和（SOL）+ 开启/关闭通道数
+- 本节点卡片：显示用户 DID + 连接状态脉冲动画
+- 通道卡片列表：Hub 端点、状态徽章、余额、存入金额、序列号、树深度
+- 操作：关闭通道（`closeChannel`）、结算通道（`settleChannel`）
+- 下拉刷新
+- 空状态/错误状态/加载中状态
+
+#### 2.4.14 交易历史 (TransactionHistoryScreen)
+
+交易记录浏览：
+- 筛选标签：All / Payment / List Sync
+- 交易卡片列表：商户 DID、金额 (SOL)、状态徽章（Pending/Processed）
+- 交易详情弹窗：类型、Payment ID、商户、金额、描述、RAW BODY
+- 下拉刷新（重连 Mediator 拉取最新消息）
+- 数据源：`DidcommService.messages` 按类型筛选
+
+#### 2.4.15 个人资料 (ProfileScreen)
+
+用户身份与账户总览：
+- DID 头像（前两个字符）
+- DID 显示（可复制）
+- 编辑显示名称（SharedPreferences 持久化）
+- 网络信息：Devnet / Mainnet 切换显示
+- 设备状态：连接状态指示灯 + Session Key 激活状态徽章
+- 统计卡片：通道数 / 余额 (SOL) / 商户数
+- 导出 DID Document（复制到剪贴板）
+
+#### 2.4.16 Hub 列表 (HubListScreen)
+
+Hub 注册发现与通道创建：
+- 从 Hub Registry API (`GET /v1/hubs`) 获取可用 Hub 列表
+- Hub 卡片：名称、描述、状态、费率、流动性、延迟、在线率、成功率
+- 选择 Hub 后配置通道参数（存入金额、Token Mint、树深度）
+- 创建通道按钮 → 调用 `sendCreateChannelRequest` DIDComm 消息
+- 从 Dashboard 的 "Create Channel" 按钮进入
+
 ### 2.5 核心服务
 
 | 服务 | 职责 |
@@ -167,6 +217,7 @@ DIDComm 消息收件箱：
 | `revoke_session_key_onchain` | 链上撤销 Session Key |
 | `save_merchant_policy` / `load_merchant_policy` | 商户策略持久化 |
 | `parse_payment_qr` | 解析收款二维码 |
+| `list_channels` | 列出用户所有状态通道 |
 | `open_channel` / `channel_pay` / `close_channel` / `settle_channel` | 状态通道操作 |
 
 ### 2.7 支付授权完整流程
@@ -226,10 +277,11 @@ DIDComm 消息收件箱：
 
 #### 3.4.2 仪表盘 (DashboardScreen)
 
-- "Ignite Merchant" 头部 + 在线状态
+- "Ignite Merchant" 头部 + 在线状态指示灯（"在线"）
+- 通知铃铛：未读订单数徽章，点击进入通知中心
 - 今日汇总卡片：已收款总额 (USDC) + 笔数（仅计 confirmed）
-- 快捷操作：生成收款码 / 通道管理
-- 最近 5 笔订单列表
+- 快捷操作：生成收款码 / 通道管理 / Hub 选择
+- 最近订单列表：点击进入订单详情
 
 #### 3.4.3 生成收款码 (QrGenerateScreen)
 
@@ -290,6 +342,34 @@ DIDComm 消息收件箱：
 - 推送服务：DIDComm DID（可复制）、Mediator 连接状态、推送通道类型
 - 语音播报：开关、语言切换（中/英）、音量滑块、测试按钮
 - 关于：版本 1.0.0
+
+#### 3.4.9 通知中心 (NotificationCenterScreen)
+
+商户端通知列表（中文界面）：
+- 从 `MerchantService.orders` 转换为通知（收款成功/待确认）
+- 已读/未读状态管理（SharedPreferences `merchant_read_notification_ids`）
+- 全部标为已读功能
+- 通知详情弹窗：订单号、金额、描述、状态、通道
+- 从 Dashboard 通知铃铛图标进入（带未读数徽章）
+
+#### 3.4.10 个人资料 (ProfileScreen)
+
+商户身份与账户总览（中文界面）：
+- DID 头像（前两个字符或 "M"）
+- DID 显示（可复制）+ DID 文档导出
+- 编辑商户名称（SharedPreferences 持久化）
+- 网络信息：Devnet / Mainnet 显示
+- 连接状态：推送服务连接指示灯 + Hub Endpoint 显示
+- 统计卡片：通道数 / 余额 (SOL) / 已确认订单数
+- 从 Dashboard 个人资料入口进入
+
+#### 3.4.11 Hub 选择 (HubSelectionScreen)
+
+Hub 配置与选择：
+- 从 SharedPreferences 读取 Hub Registry URL
+- 获取可用 Hub 列表
+- 选择 Hub 后保存配置
+- 从 Dashboard 快捷操作进入
 
 ### 3.5 核心服务
 
@@ -440,7 +520,7 @@ DIDComm 消息收件箱：
 | **推送触发** | MCP 支付请求 | 支付确认通知 |
 | **特色功能** | 白名单/黑名单策略、外接钱包签名 | 语音播报、订单管理 |
 | **UI 语言** | 英文 | 中文 |
-| **屏幕数** | 11 | 8 |
+| **屏幕数** | 16 | 11 |
 | **Rust 模块** | simple + identity + auth + session + ws_client + channel + channel_store + log_store (8) | merchant + merchant_didcomm (2) |
 | **Bridge 函数** | 30+ | 24 |
 
