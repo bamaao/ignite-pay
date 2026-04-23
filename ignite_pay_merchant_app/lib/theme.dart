@@ -20,13 +20,13 @@ const kTextPrimary = Color(0xFFF0F0F8);
 const kTextSecondary = Color(0xFF7A7A96);
 const kTextTertiary = Color(0xFF4A4A64);
 
-// Accent colors
-const kNeonCyan = Color(0xFF00F5FF);
-const kNeonCyanDim = Color(0xFF00989F);
-const kPurple = Color(0xFF8B5CF6);
-const kPurpleDim = Color(0xFF6D28D9);
-const kBlue = Color(0xFF3B82F6);
-const kCyan = Color(0xFF06B6D4);
+// Accent colors — Orange-Red theme
+const kNeonCyan = Color(0xFFFF5722);
+const kNeonCyanDim = Color(0xFFBF360C);
+const kPurple = Color(0xFFFF8A50);
+const kPurpleDim = Color(0xFFE64A19);
+const kBlue = Color(0xFFFF9100);
+const kCyan = Color(0xFFFF6E40);
 
 // Status colors
 const kSuccess = Color(0xFF00E676);
