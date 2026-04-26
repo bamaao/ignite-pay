@@ -11,7 +11,7 @@ use serde_json::Value;
 use chrono::Utc;
 
 use affinidi_messaging_didcomm::DIDCommAgent;
-use ignite_pay_core::{generate_ignite_did, build_did_document, parse_did_document};
+use ignite_pay_core::{generate_ignite_did, build_did_document};
 use ignite_pay_core::didcomm::{self, is_jwe};
 use ignite_pay_core::identity::{load_identity, save_identity};
 use ignite_pay_core::list_store::ListStore;
@@ -28,6 +28,7 @@ struct IgnitePayCore {
     agent: Arc<Mutex<DIDCommAgent>>,
     our_did: String,
     did_doc: Value,
+    signing_private: [u8; 32],
     outgoing: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
     list_store: Arc<Mutex<Option<ListStore>>>,
     identity_db: Option<sled::Db>,
@@ -39,12 +40,14 @@ impl IgnitePayCore {
     fn new() -> Self {
         let (priv_identity, did) = generate_ignite_did();
         let did_doc = build_did_document(&did, &priv_identity);
+        let signing_private = priv_identity.signing_private.unwrap_or([0u8; 32]);
         let (agent, _) = didcomm::create_agent(priv_identity);
 
         IgnitePayCore {
             agent: Arc::new(Mutex::new(agent)),
             our_did: did,
             did_doc,
+            signing_private,
             outgoing: Arc::new(Mutex::new(None)),
             list_store: Arc::new(Mutex::new(None)),
             identity_db: None,
@@ -75,11 +78,13 @@ impl IgnitePayCore {
         };
 
         let did_doc = build_did_document(&did, &identity);
+        let signing_private = identity.signing_private.unwrap_or([0u8; 32]);
         let (agent, _) = didcomm::create_agent(identity);
 
         self.agent = Arc::new(Mutex::new(agent));
         self.our_did = did;
         self.did_doc = did_doc;
+        self.signing_private = signing_private;
         self.identity_db = Some(db);
 
         Ok(())
@@ -104,12 +109,13 @@ impl IgnitePayCore {
         let agent = self.agent.clone();
         let our_did = self.our_did.clone();
         let did_doc = self.did_doc.clone();
+        let signing_private = self.signing_private;
         let outgoing = self.outgoing.clone();
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async move {
                 println!("DIDComm WebSocket listener starting: {} (DID: {})", ws_url, our_did);
-                real_ws_client(&ws_url, &agent, &our_did, &did_doc, outgoing).await;
+                real_ws_client(&ws_url, &agent, &our_did, &did_doc, outgoing, &signing_private).await;
             });
         });
         Ok(())
@@ -345,9 +351,10 @@ async fn real_ws_client(
     our_did: &str,
     did_doc: &Value,
     outgoing: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
+    signing_private: &[u8; 32],
 ) {
     loop {
-        match connect_and_run(ws_url, agent, our_did, did_doc, &outgoing).await {
+        match connect_and_run(ws_url, agent, our_did, did_doc, &outgoing, signing_private).await {
             Ok(()) => println!("Mediator disconnected, reconnecting..."),
             Err(e) => eprintln!("WS error: {}, reconnecting in 3s...", e),
         }
@@ -367,6 +374,7 @@ async fn connect_and_run(
     our_did: &str,
     did_doc: &Value,
     outgoing: &Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
+    signing_private: &[u8; 32],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (mut ws, _) = connect_async(ws_url).await?;
     println!("Connected to Mediator: {}", ws_url);
@@ -384,33 +392,25 @@ async fn connect_and_run(
 
     let nonce = challenge["body"]["nonce"].as_str()
         .ok_or("Challenge missing body.nonce")?;
-    let mediator_did = challenge["from"].as_str()
-        .ok_or("Challenge missing from field")?;
-    let mediator_doc = challenge["body"].get("did_document")
-        .ok_or("Challenge missing body.did_document")?;
 
-    println!("Received WS challenge from mediator: {}", mediator_did);
+    println!("Received WS challenge");
 
-    // 0b. Register mediator as peer from their DID document
-    {
-        let mut agent_guard = agent.lock().await;
-        if let Some(resolved) = parse_did_document(mediator_did, mediator_doc) {
-            agent_guard.add_peer(resolved);
-            println!("Registered mediator peer from DID document");
-        } else {
-            return Err("Failed to parse mediator DID document".into());
+    // 0b. Sign the nonce with our Ed25519 signing key
+    let signature_b64 = ignite_pay_core::sign_message(signing_private, nonce.as_bytes());
+
+    // 0c. Send signed challenge-response (plaintext, no JWE)
+    let response = serde_json::json!({
+        "type": "https://didcomm.org/ignite-pay/1.0/ws-challenge-response",
+        "id": uuid::Uuid::new_v4().to_string(),
+        "from": our_did,
+        "body": {
+            "nonce": nonce,
+            "signature": signature_b64,
+            "did_document": did_doc,
         }
-    }
-
-    // 0c. Build and send encrypted challenge response
-    {
-        let agent_guard = agent.lock().await;
-        let response_msg = didcomm::build_ws_challenge_response(our_did, mediator_did, nonce, did_doc);
-        let jwe = didcomm::pack_encrypted(&agent_guard, &response_msg, our_did, mediator_did)
-            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
-        send_msg(&mut ws, jwe).await?;
-        println!("Sent WS challenge response");
-    }
+    });
+    send_msg(&mut ws, serde_json::to_string(&response)?).await?;
+    println!("Sent WS challenge response (signed)");
 
     // 0d. Wait for auth result
     let auth_result = read_msg(&mut ws).await?;

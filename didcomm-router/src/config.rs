@@ -20,7 +20,6 @@ pub struct ServerConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct RouterConfig {
-    pub did: String,
     pub max_queued_messages: usize,
     pub max_message_age_seconds: u64,
     #[serde(default)]

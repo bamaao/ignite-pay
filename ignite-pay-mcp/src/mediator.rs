@@ -40,6 +40,7 @@ pub struct MediatorConnection {
     outgoing: Arc<tokio::sync::Mutex<mpsc::UnboundedSender<String>>>,
     /// DID of the paired phone (set during connection-request handshake).
     paired_phone: Arc<tokio::sync::Mutex<Option<String>>>,
+    signing_private: [u8; 32],
 }
 
 impl std::fmt::Debug for MediatorConnection {
@@ -70,6 +71,8 @@ impl MediatorConnection {
         };
 
         let did_doc = build_did_document(&did, &identity);
+        let signing_private = identity.signing_private
+            .ok_or_else(|| anyhow::anyhow!("no signing key in identity"))?;
         let (agent, _) = didcomm::create_agent(identity);
 
         let (outgoing_tx, _outgoing_rx) = mpsc::unbounded_channel();
@@ -82,6 +85,7 @@ impl MediatorConnection {
             connected: Arc::new(Notify::new()),
             outgoing: Arc::new(tokio::sync::Mutex::new(outgoing_tx)),
             paired_phone: Arc::new(tokio::sync::Mutex::new(None)),
+            signing_private,
         })
     }
 
@@ -148,6 +152,7 @@ impl MediatorConnection {
         let ws_url = self.ws_url.clone();
         let connected = self.connected.clone();
         let paired_phone = self.paired_phone.clone();
+        let signing_private = self.signing_private;
 
         // Create a new channel pair for this connection
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel();
@@ -169,6 +174,7 @@ impl MediatorConnection {
                 pending,
                 paired_phone,
                 create_channel_tx,
+                &signing_private,
             )
             .await;
         });
@@ -327,6 +333,7 @@ async fn real_ws_client(
     pending: Arc<PendingAuthStore>,
     paired_phone: Arc<tokio::sync::Mutex<Option<String>>>,
     create_channel_tx: Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+    signing_private: &[u8; 32],
 ) {
     loop {
         match connect_and_run(
@@ -338,6 +345,7 @@ async fn real_ws_client(
             &pending,
             &paired_phone,
             &create_channel_tx,
+            signing_private,
         )
         .await
         {
@@ -362,6 +370,7 @@ async fn connect_and_run(
     pending: &PendingAuthStore,
     paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+    signing_private: &[u8; 32],
 ) -> Result<()> {
     let (mut ws, _) = connect_async(ws_url).await?;
     tracing::info!("Connected to mediator: {}", ws_url);
@@ -387,30 +396,23 @@ async fn connect_and_run(
     let nonce = challenge["body"]["nonce"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("Missing nonce in challenge"))?;
-    let mediator_did = challenge["from"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("Missing from in challenge"))?
-        .to_string();
 
-    // Register mediator as peer so we can encrypt to them
-    let mediator_doc = &challenge["body"]["did_document"];
-    {
-        let mut agent_guard = agent.lock().await;
-        if let Some(resolved) = parse_did_document(&mediator_did, mediator_doc) {
-            agent_guard.add_peer(resolved);
-            tracing::info!("Registered mediator as peer: {}", mediator_did);
+    // Sign the nonce with our Ed25519 signing key
+    let signature_b64 = ignite_pay_core::sign_message(signing_private, nonce.as_bytes());
+
+    // Send signed challenge-response (plaintext, no JWE)
+    let response = serde_json::json!({
+        "type": "https://didcomm.org/ignite-pay/1.0/ws-challenge-response",
+        "id": uuid::Uuid::new_v4().to_string(),
+        "from": our_did,
+        "body": {
+            "nonce": nonce,
+            "signature": signature_b64,
+            "did_document": did_doc,
         }
-    }
-
-    // Build and send encrypted challenge-response
-    let response_msg = didcomm::build_ws_challenge_response(our_did, &mediator_did, nonce, did_doc);
-    {
-        let agent_guard = agent.lock().await;
-        let jwe = didcomm::pack_encrypted(&agent_guard, &response_msg, our_did, &mediator_did)
-            .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
-        send_msg(&mut ws, jwe).await?;
-        tracing::info!("Sent WS challenge-response (encrypted)");
-    }
+    });
+    send_msg(&mut ws, serde_json::to_string(&response)?).await?;
+    tracing::info!("Sent WS challenge-response (signed)");
 
     // Wait for auth-ok
     let auth_result = read_msg_with_timeout(&mut ws, Duration::from_secs(5))

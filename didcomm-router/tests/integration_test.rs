@@ -8,7 +8,6 @@ fn test_config() -> Config {
             port: 0, // Use port 0 for testing (OS assigns)
         },
         router: RouterConfig {
-            did: "did:test:router".to_string(),
             max_queued_messages: 100,
             max_message_age_seconds: 3600,
             known_peers: vec![],
@@ -24,7 +23,8 @@ fn test_config() -> Config {
 async fn test_router_state_creation() {
     let config = test_config();
     let state = RouterState::new(config).unwrap();
-    assert_eq!(state.did_agent.router_did(), "did:test:router");
+    // Verify state was created successfully (no DID agent needed)
+    assert!(state.sessions.is_online("did:test:nobody") == false);
 }
 
 #[tokio::test]

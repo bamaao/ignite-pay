@@ -12,6 +12,7 @@ pub struct IdentityManager {
     did_doc: Value,
     agent: Arc<Mutex<affinidi_messaging_didcomm::DIDCommAgent>>,
     db: sled::Db,
+    signing_private: [u8; 32],
 }
 
 impl IdentityManager {
@@ -31,6 +32,9 @@ impl IdentityManager {
             }
         };
 
+        let signing_private = identity.signing_private
+            .ok_or_else(|| anyhow::anyhow!("no signing key in identity"))?;
+
         let did_doc = build_did_document(&did, &identity);
         let (agent, _) = didcomm::create_agent(identity);
 
@@ -39,6 +43,7 @@ impl IdentityManager {
             did_doc,
             agent: Arc::new(Mutex::new(agent)),
             db,
+            signing_private,
         })
     }
 
@@ -60,5 +65,15 @@ impl IdentityManager {
     /// Get a reference to the sled database.
     pub fn db(&self) -> &sled::Db {
         &self.db
+    }
+
+    /// Sign a message with the Ed25519 signing key, returning base64-no-pad encoded signature.
+    pub fn sign(&self, message: &[u8]) -> String {
+        ignite_pay_core::sign_message(&self.signing_private, message)
+    }
+
+    /// Get the raw Ed25519 signing private key bytes.
+    pub fn signing_key(&self) -> &[u8; 32] {
+        &self.signing_private
     }
 }

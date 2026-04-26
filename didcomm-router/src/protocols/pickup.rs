@@ -34,7 +34,7 @@ pub async fn handle_status_request(
             "live_delivery": msg.typ == super::LIVE_DELIVERY_REQUEST,
         }),
     )
-    .from(state.did_agent.router_did().to_string())
+    .from("didcomm-router".to_string())
     .to(vec![from.to_string()])
     .thid(msg.id.clone());
 
@@ -89,7 +89,7 @@ pub async fn handle_batch_pickup(
             "messages": all_messages,
         }),
     )
-    .from(state.did_agent.router_did().to_string())
+    .from("didcomm-router".to_string())
     .to(vec![from.to_string()])
     .thid(msg.id.clone());
 

@@ -3,6 +3,10 @@ name = "didcomm-router"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "didcomm-router"
+path = "src/main.rs"
+
 [dependencies]
 # Shared library
 ignite-pay-core = { path = "../ignite-pay-core" }

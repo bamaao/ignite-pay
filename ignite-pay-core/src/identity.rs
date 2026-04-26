@@ -183,6 +183,15 @@ pub fn extract_pubkey_from_did(did: &str) -> Option<[u8; 32]> {
     Some(pk)
 }
 
+/// Sign a message with an Ed25519 signing key, returning base64-no-pad encoded signature.
+/// `signing_private` is the 32-byte Ed25519 private key (seed).
+pub fn sign_message(signing_private: &[u8; 32], message: &[u8]) -> String {
+    use ed25519_dalek::Signer;
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(signing_private);
+    let signature = signing_key.sign(message);
+    base64::engine::general_purpose::STANDARD_NO_PAD.encode(signature.to_bytes())
+}
+
 /// Verify an Ed25519 signature from a did:ignite DID key.
 /// Extracts the public key from the DID and verifies the signature over the message.
 pub fn verify_did_signature(did: &str, message: &str, signature_b64: &str) -> bool {

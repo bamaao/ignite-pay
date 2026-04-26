@@ -1,6 +1,7 @@
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
 use axum::response::IntoResponse;
+use base64::Engine;
 use futures::{SinkExt, StreamExt};
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -25,31 +26,25 @@ pub async fn ws_handler(
 /// Result of a successful WS challenge-response authentication.
 struct AuthenticatedClient {
     did: String,
-    did_doc: Option<serde_json::Value>,
 }
 
 /// Phase 0: Challenge-Response authentication.
 ///
 /// The mediator sends a random nonce challenge. The client must respond with
-/// a JWE-encrypted challenge-response containing the nonce and their DID document.
-/// Successful JWE decryption proves the client holds the private key for their DID.
+/// a signed challenge-response proving they hold the private key for their DID.
 async fn authenticate_ws_client(
     tx: &tokio::sync::mpsc::UnboundedSender<Message>,
     ws_receiver: &mut futures::stream::SplitStream<WebSocket>,
-    state: &RouterState,
+    _state: &RouterState,
 ) -> anyhow::Result<AuthenticatedClient> {
     let nonce = uuid::Uuid::new_v4().to_string();
-    let mediator_did = state.did_agent.router_did();
-    let mediator_doc = state.did_agent.did_doc();
 
     // Send challenge (plaintext)
     let challenge = serde_json::json!({
         "type": WS_CHALLENGE,
         "id": uuid::Uuid::new_v4().to_string(),
-        "from": mediator_did,
         "body": {
             "nonce": nonce,
-            "did_document": mediator_doc,
         }
     });
     tx.send(Message::Text(challenge.to_string().into()))?;
@@ -72,46 +67,61 @@ async fn authenticate_ws_client(
     })
     .await??;
 
-    // Unpack JWE — this proves the client holds the private key
-    let agent = state.did_agent.read().await;
-    let unpack_result = agent
-        .unpack(&response_text, None)
-        .map_err(|e| anyhow::anyhow!("JWE unpack failed: {:?}", e))?;
-
-    let msg = match unpack_result {
-        affinidi_messaging_didcomm::UnpackResult::Encrypted { message, .. } => message,
-        affinidi_messaging_didcomm::UnpackResult::Signed { message, .. } => message,
-        affinidi_messaging_didcomm::UnpackResult::Plaintext(message) => message,
-    };
-    drop(agent);
+    // Parse signed response: {did, nonce, signature_b64, did_document}
+    let resp: serde_json::Value = serde_json::from_str(&response_text)?;
 
     // Verify message type
-    if msg.typ != WS_CHALLENGE_RESPONSE {
+    if resp.get("type").and_then(|v| v.as_str()) != Some(WS_CHALLENGE_RESPONSE) {
         return Err(anyhow::anyhow!(
             "Wrong message type during auth: {}",
-            msg.typ
+            resp.get("type").and_then(|v| v.as_str()).unwrap_or("missing")
         ));
     }
 
-    // Verify nonce matches (prevents replay)
-    let resp_nonce = msg
-        .body
-        .get("nonce")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let did = resp["from"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Missing 'from' in challenge response"))?
+        .to_string();
+    let resp_nonce = resp["body"]["nonce"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Missing nonce in response"))?;
+    let signature_b64 = resp["body"]["signature"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Missing signature in response"))?;
+    let did_doc = resp["body"].get("did_document").cloned();
+
+    // Verify nonce matches
     if resp_nonce != nonce {
         return Err(anyhow::anyhow!("Nonce mismatch"));
     }
 
-    // Extract client DID
-    let did = msg
-        .from
-        .ok_or_else(|| anyhow::anyhow!("Missing 'from' in challenge response"))?;
+    // Verify signature: try DID-embedded key first, then fall back to DID document
+    let verified = ignite_pay_core::verify_did_signature(&did, &nonce, signature_b64);
+    if !verified {
+        // Fallback: extract verifying key from DID document
+        let doc = did_doc.as_ref().ok_or_else(|| anyhow::anyhow!("Signature verification failed and no did_document provided for fallback"))?;
+        let resolved = ignite_pay_core::parse_did_document(&did, doc)
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse DID document"))?;
+        let vk = resolved.verifying_key
+            .ok_or_else(|| anyhow::anyhow!("No verifying key in DID document"))?;
+        let sig_bytes = base64::engine::general_purpose::STANDARD_NO_PAD
+            .decode(signature_b64)
+            .map_err(|_| anyhow::anyhow!("Invalid signature encoding"))?;
+        if sig_bytes.len() != 64 {
+            return Err(anyhow::anyhow!("Invalid signature length"));
+        }
+        let mut sig_arr = [0u8; 64];
+        sig_arr.copy_from_slice(&sig_bytes);
+        let sig = ed25519_dalek::Signature::try_from(sig_arr.as_slice())
+            .map_err(|_| anyhow::anyhow!("Invalid signature"))?;
+        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&vk)
+            .map_err(|_| anyhow::anyhow!("Invalid verifying key"))?;
+        use ed25519_dalek::Verifier;
+        verifying_key.verify(nonce.as_bytes(), &sig)
+            .map_err(|_| anyhow::anyhow!("Signature verification failed"))?;
+    }
 
-    // Extract DID document for peer registration
-    let did_doc = msg.body.get("did_document").cloned();
-
-    Ok(AuthenticatedClient { did, did_doc })
+    Ok(AuthenticatedClient { did })
 }
 
 async fn handle_socket(socket: WebSocket, state: RouterState) {
@@ -132,21 +142,10 @@ async fn handle_socket(socket: WebSocket, state: RouterState) {
 
     let session_did = match auth_result {
         Ok(client) => {
-            // Register the peer in mediator's agent for future JWE
-            if let Some(ref doc) = client.did_doc {
-                if let Some(resolved) =
-                    ignite_pay_core::parse_did_document(&client.did, doc)
-                {
-                    let mut agent = state.did_agent.write().await;
-                    agent.add_peer(resolved);
-                }
-            }
-
             // Send auth-ok
             let ok_msg = serde_json::json!({
                 "type": WS_AUTH_OK,
                 "id": uuid::Uuid::new_v4().to_string(),
-                "from": state.did_agent.router_did(),
             });
             let _ = tx.send(Message::Text(ok_msg.to_string().into()));
 

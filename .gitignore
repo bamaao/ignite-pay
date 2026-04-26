@@ -4,7 +4,10 @@ Cargo.lock
 
 # Sled database data
 did_registry_data/
+didcomm-router/data/
 didcomm-router/registry_data/
+**/data/channel_*/
+**/data/merchant-router/
 
 # Solana local validator ledger
 test-ledger/

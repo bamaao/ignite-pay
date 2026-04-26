@@ -25,8 +25,7 @@ async fn main() -> anyhow::Result<()> {
     let bind_addr = config.bind_addr();
 
     info!(
-        "Starting DIDComm Router [{}] on {}{}",
-        config.router.did,
+        "Starting DIDComm Router on {}{}",
         bind_addr,
         if config.tls.is_enabled() { " (TLS)" } else { "" }
     );

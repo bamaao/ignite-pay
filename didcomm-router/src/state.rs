@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::did::resolver::RouterDidAgent;
 use crate::notification::NotificationSender;
 use crate::session::manager::SessionManager;
 use crate::storage::in_memory::{
@@ -14,7 +13,6 @@ use crate::storage::in_memory::{
 #[derive(Clone)]
 pub struct RouterState {
     pub config: Config,
-    pub did_agent: RouterDidAgent,
     pub sessions: Arc<SessionManager>,
     pub message_store: SharedMessageStore,
     pub keylist_store: SharedKeylistStore,
@@ -28,16 +26,22 @@ pub struct RouterState {
 
 impl RouterState {
     pub fn new(config: Config) -> Result<Self, crate::error::RouterError> {
-        let did_agent = RouterDidAgent::new(config.router.did.clone());
         let sessions = Arc::new(SessionManager::new());
 
-        // Create stores: sled-backed if storage.path is configured, in-memory otherwise
+        // Open sled database if configured
+        let db_opt: Option<Arc<sled::Db>> = if let Some(ref path) = config.storage.path {
+            tracing::info!("Persistent storage enabled: {}", path);
+            Some(Arc::new(
+                sled::open(path).map_err(|e| crate::error::RouterError::Storage(e.to_string()))?,
+            ))
+        } else {
+            tracing::warn!("No storage.path configured — using in-memory stores. All data will be lost on restart.");
+            None
+        };
+
+        // Create stores
         let (message_store, keylist_store, device_token_store, agent_binding_store) =
-            if let Some(ref path) = config.storage.path {
-                tracing::info!("Persistent storage enabled: {}", path);
-                let db = Arc::new(
-                    sled::open(path).map_err(|e| crate::error::RouterError::Storage(e.to_string()))?,
-                );
+            if let Some(db) = db_opt {
                 (
                     Arc::new(crate::storage::sled_store::SledMessageStore::new(
                         db.clone(),
@@ -52,7 +56,6 @@ impl RouterState {
                         as SharedAgentBindingStore,
                 )
             } else {
-                tracing::warn!("No storage.path configured — using in-memory stores. All data will be lost on restart.");
                 (
                     Arc::new(InMemoryMessageStore::with_max_age(
                         config.router.max_queued_messages,
@@ -88,7 +91,6 @@ impl RouterState {
 
         Ok(Self {
             config,
-            did_agent,
             sessions,
             message_store,
             keylist_store,

@@ -5,7 +5,6 @@ use affinidi_messaging_didcomm::DIDCommAgent;
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use ignite_pay_core::didcomm::{self, is_jwe};
-use ignite_pay_core::parse_did_document;
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,6 +22,7 @@ pub struct WsClient {
     agent: Arc<Mutex<DIDCommAgent>>,
     our_did: String,
     did_doc: Value,
+    signing_private: [u8; 32],
     outgoing: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
     pending_auth_callback: Arc<Mutex<Option<AuthCallback>>>,
 }
@@ -33,6 +33,7 @@ impl WsClient {
             agent: identity_mgr.agent(),
             our_did: identity_mgr.did().to_string(),
             did_doc: identity_mgr.did_doc().clone(),
+            signing_private: identity_mgr.signing_key().clone(),
             outgoing: Arc::new(Mutex::new(None)),
             pending_auth_callback: Arc::new(Mutex::new(None)),
         }
@@ -49,13 +50,14 @@ impl WsClient {
         let agent = self.agent.clone();
         let our_did = self.our_did.clone();
         let did_doc = self.did_doc.clone();
+        let signing_private = self.signing_private;
         let outgoing = self.outgoing.clone();
         let callback = self.pending_auth_callback.clone();
         let ws_url = ws_url.to_string();
 
         tokio::spawn(async move {
             loop {
-                match run_ws_loop(&ws_url, &agent, &our_did, &did_doc, &outgoing, &callback).await {
+                match run_ws_loop(&ws_url, &agent, &our_did, &did_doc, &signing_private, &outgoing, &callback).await {
                     Ok(()) => tracing::warn!("Mediator disconnected, reconnecting..."),
                     Err(e) => tracing::error!("WS error: {}, reconnecting in 3s...", e),
                 }
@@ -144,6 +146,7 @@ async fn run_ws_loop(
     agent: &Arc<Mutex<DIDCommAgent>>,
     our_did: &str,
     did_doc: &Value,
+    signing_private: &[u8; 32],
     outgoing: &Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
     callback: &Arc<Mutex<Option<AuthCallback>>>,
 ) -> Result<()> {
@@ -171,30 +174,23 @@ async fn run_ws_loop(
     let nonce = challenge["body"]["nonce"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("Missing nonce in challenge"))?;
-    let mediator_did = challenge["from"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("Missing from in challenge"))?
-        .to_string();
 
-    // Register mediator as peer so we can encrypt to them
-    let mediator_doc = &challenge["body"]["did_document"];
-    {
-        let mut agent_guard = agent.lock().await;
-        if let Some(resolved) = parse_did_document(&mediator_did, mediator_doc) {
-            agent_guard.add_peer(resolved);
-            tracing::info!("Registered mediator as peer: {}", mediator_did);
+    // Sign the nonce with our Ed25519 signing key
+    let signature_b64 = ignite_pay_core::sign_message(signing_private, nonce.as_bytes());
+
+    // Send signed challenge-response (plaintext, no JWE)
+    let response = serde_json::json!({
+        "type": "https://didcomm.org/ignite-pay/1.0/ws-challenge-response",
+        "id": uuid::Uuid::new_v4().to_string(),
+        "from": our_did,
+        "body": {
+            "nonce": nonce,
+            "signature": signature_b64,
+            "did_document": did_doc,
         }
-    }
-
-    // Build and send encrypted challenge-response
-    let response_msg = didcomm::build_ws_challenge_response(our_did, &mediator_did, nonce, did_doc);
-    {
-        let agent_guard = agent.lock().await;
-        let jwe = didcomm::pack_encrypted(&agent_guard, &response_msg, our_did, &mediator_did)
-            .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
-        send_msg(&mut ws, jwe).await?;
-        tracing::info!("Sent WS challenge-response (encrypted)");
-    }
+    });
+    send_msg(&mut ws, serde_json::to_string(&response)?).await?;
+    tracing::info!("Sent WS challenge-response (signed)");
 
     // Wait for auth-ok
     let auth_result = read_msg_with_timeout(&mut ws, Duration::from_secs(5))

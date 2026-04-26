@@ -23,10 +23,9 @@ pub async fn handle_mediate_request(
     let grant = Message::new(
         super::MEDIATE_GRANT,
         serde_json::json!({
-            "mediator_did": state.did_agent.router_did(),
+            "mediator_did": "didcomm-router",
         }),
     )
-    .from(state.did_agent.router_did().to_string())
     .to(vec![from.to_string()])
     .thid(msg.id.clone());
 
@@ -126,7 +125,6 @@ pub async fn handle_keylist_update(
         super::KEYLIST_UPDATE_RESPONSE,
         serde_json::json!({ "updated": results }),
     )
-    .from(state.did_agent.router_did().to_string())
     .to(vec![from.to_string()])
     .thid(msg.id.clone());
 

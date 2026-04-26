@@ -23,35 +23,14 @@ pub const BATCH: &str = "https://didcomm.org/messagepickup/3.0/batch";
 pub const LIVE_DELIVERY_REQUEST: &str =
     "https://didcomm.org/messagepickup/3.0/live-delivery-request";
 
-/// Dispatch an incoming DIDComm message to the appropriate protocol handler.
+/// Dispatch an incoming message to the appropriate protocol handler.
 ///
 /// `session_did` is the DID of the currently connected WebSocket client (if any).
-/// The raw `text` may be plaintext, JWE, or JWS.
+/// All messages are plaintext JSON (TLS protects the transport).
 pub async fn dispatch(text: &str, state: &RouterState, session_did: Option<&str>) -> Result<()> {
-    let value: serde_json::Value =
-        serde_json::from_str(text).map_err(|e| RouterError::Didcomm(format!("Invalid JSON: {}", e)))?;
-
-    // If encrypted (JWE), decrypt first then route the inner message
-    if value.get("ciphertext").is_some() && value.get("recipients").is_some() {
-        debug!("Received encrypted JWE, decrypting");
-        let agent = state.did_agent.read().await;
-        let unpack_result = agent
-            .unpack(text, None)
-            .map_err(|e| RouterError::Didcomm(format!("Unpack failed: {:?}", e)))?;
-
-        let inner_msg = match unpack_result {
-            affinidi_messaging_didcomm::UnpackResult::Encrypted { message, .. } => message,
-            affinidi_messaging_didcomm::UnpackResult::Signed { message, .. } => message,
-            affinidi_messaging_didcomm::UnpackResult::Plaintext(message) => message,
-        };
-        drop(agent);
-
-        route_message(&inner_msg, state, session_did).await
-    } else {
-        let msg: Message = serde_json::from_value(value)
-            .map_err(|e| RouterError::Didcomm(format!("Invalid message: {}", e)))?;
-        route_message(&msg, state, session_did).await
-    }
+    let msg: Message = serde_json::from_str(text)
+        .map_err(|e| RouterError::Didcomm(format!("Invalid message: {}", e)))?;
+    route_message(&msg, state, session_did).await
 }
 
 /// Route a parsed plaintext Message to the appropriate protocol handler.

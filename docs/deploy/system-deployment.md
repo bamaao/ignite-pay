@@ -264,18 +264,19 @@ anchor deploy --provider.cluster devnet
 
 ```bash
 cd didcomm-router
-cargo build --release --bin didcomm-router
-
-# 编辑配置文件
-cp config.toml config.toml.bak
-# 按需修改 config.toml
+cargo build --release
 
 # 创建数据目录
 mkdir -p ./data
 
+# 编辑 config.toml（按需修改端口、FCM、TLS 等）
+# 路由器不需要 DID，启动即可使用
+
 # 启动
 RUST_LOG=info ./target/release/didcomm-router ./config.toml
 ```
+
+> **说明**：路由器不持有 DID 身份，仅做消息中继。WS 客户端通过 Ed25519 签名验证身份，无需为路由器预先配置密钥。
 
 **验证**: `curl http://localhost:8080/health`
 
@@ -293,7 +294,6 @@ host = "0.0.0.0"
 port = 4000
 
 [router]
-did = "did:ignite:z6MkMerchantRouterDIDPlaceholder"
 max_queued_messages = 1000
 max_message_age_seconds = 86400
 
@@ -308,7 +308,7 @@ mkdir -p ./data/merchant-router
 RUST_LOG=info ./target/release/didcomm-router ./config/merchant-router/config.toml
 ```
 
-> **说明**：两个 Router 实例使用不同的端口（8080 / 4000）、不同的 DID、不同的 sled 数据目录。用户侧 MCP 连接 :8080，商户侧 MCP 连接 :4000。
+> **说明**：两个 Router 实例使用不同的端口（8080 / 4000）和不同的 sled 数据目录。用户侧 MCP 连接 :8080，商户侧 MCP 连接 :4000。
 
 **验证**: `curl http://localhost:4000/health`
 
@@ -473,8 +473,6 @@ host = "0.0.0.0"       # 监听地址
 port = 8080             # 监听端口
 
 [router]
-# 路由器自身的 DID 标识
-did = "did:ignite:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
 # 内存中最大排队消息数
 max_queued_messages = 1000
 # 消息最大存活时间（秒）
@@ -499,6 +497,8 @@ max_message_age_seconds = 86400
 [storage]
 path = "./data"         # sled 持久化存储路径
 ```
+
+> **说明**：路由器不使用 DID 身份。WS 客户端连接时，路由器发送 nonce 挑战，客户端用 Ed25519 私钥签名响应，路由器从客户端的 `did:ignite` 中提取公钥验证签名。
 
 ### 5.2 DID Registry (`did-registry/config.toml`)
 
@@ -687,8 +687,6 @@ host = "0.0.0.0"
 port = 4000                  # 商户侧端口（区别于用户侧 :8080）
 
 [router]
-# 商户侧 Router 使用独立的 DID
-did = "did:ignite:z6MkMerchantRouterDIDPlaceholder"
 max_queued_messages = 1000
 max_message_age_seconds = 86400
 
@@ -699,7 +697,6 @@ path = "./data/merchant-router"   # 独立的 sled 数据目录
 | 字段 | 说明 |
 |:-----|:-----|
 | `server.port` | 必须为 `4000`，与 Merchant MCP 的 `mediator.ws_url` 对应 |
-| `router.did` | 商户侧 Router 的独立 DID，不能与用户侧 Router 重复 |
 | `storage.path` | 独立的 sled 数据目录，不能与用户侧 Router 共享 |
 
 > 两个 Router 实例共享相同的源码（`didcomm-router`），仅配置不同。可选启用 FCM 推送和 TLS 配置，与用户侧配置方式相同。
@@ -746,7 +743,9 @@ solana airdrop 2 $(solana-keygen pubkey ./keys/payer.json) --url devnet
 
 ### 6.3 DID 身份初始化
 
-商户和用户的 DID 通过 `ignite-pay-core` 的 `identity` 模块生成：
+#### 移动端和 MCP DID
+
+移动端 App（消费者/商户）和 MCP 服务的 DID 通过 `ignite-pay-core` 的 `identity` 模块在首次运行时自动生成：
 
 ```rust
 use ignite_pay_core::identity::{generate_ignite_did, build_did_document, save_identity};
@@ -757,7 +756,6 @@ save_identity(&db, &identity, &did)?;
 
 // DID 格式: did:ignite:z + Base58(0xed 0x01 + Ed25519_PublicKey)
 println!("DID: {}", did);
-// 输出: did:ignite:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK
 ```
 
 **DID 编码规则**：`did:ignite:z` + Base58(`0xed 0x01` + Ed25519 公钥)，其中 `0xed 0x01` 是 multicodec 中 Ed25519 公钥的标识前缀。
@@ -2003,3 +2001,4 @@ AUDIT_LOG_DIR=/var/log/ignite-pay/audit
 |:-----|:-----|:---------|
 | v0.1 | 2025-06-01 | 初始版本：涵盖部署步骤、配置、Docker、生产注意事项、健康检查、故障排查 |
 | v0.2 | 2025-06-15 | 补充商户侧 DIDComm Router 部署步骤；新增备份与恢复、升级与回滚、环境变量参考章节；添加防火墙规则、完整 docker-compose.yml、DID Registry / Hub Registry Nginx 配置；修复健康检查脚本 PostgreSQL 检测 |
+| v0.3 | 2026-04-26 | 移除路由器 DID 要求，WS 认证改为 Ed25519 签名验证；移除 `didcomm-router-init` 工具；更新步骤 3、5.1、5.9、6.3 节 |
