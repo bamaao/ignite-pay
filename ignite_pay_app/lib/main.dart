@@ -2,21 +2,19 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:local_auth/local_auth.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/src/rust/frb_generated.dart';
 import 'package:ignite_pay_app/challenge_screen.dart';
 import 'package:ignite_pay_app/policy_screen.dart';
 import 'package:ignite_pay_app/vault_screen.dart';
-import 'package:ignite_pay_app/qr_scanner_screen.dart';
-import 'package:ignite_pay_app/qr_payment_screen.dart';
 import 'package:ignite_pay_app/messages_screen.dart';
 import 'package:ignite_pay_app/settings_screen.dart';
-import 'package:ignite_pay_app/hub_list_screen.dart';
 import 'package:ignite_pay_app/notification_screen.dart';
 import 'package:ignite_pay_app/channel_topology_screen.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
-import 'package:ignite_pay_app/services/channel_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
+import 'package:ignite_pay_app/onboarding_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:app_links/app_links.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -27,8 +25,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 const _kBackground = Color(0xFF0F0F1A);
 const _kSurfaceDark = Color(0xFF1A1A2E);
 const _kSurfaceMid = Color(0xFF16213E);
-const _kNeonCyan = Color(0xFF00F5FF);
-const _kNeonCyanDim = Color(0xFF00989F);
+const _kNeonCyan = Color(0xFFFF5722);
+const _kNeonCyanDim = Color(0xFFBF360C);
 const _kTextPrimary = Color(0xFFE8E8F0);
 const _kTextSecondary = Color(0xFF8A8AA0);
 const _kSuccess = Color(0xFF00E676);
@@ -44,16 +42,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await RustLib.init();
 
-  // Initialize DID identity
-  final didService = DidcommService();
-  await didService.initialize();
-
-  runApp(
-    ChangeNotifierProvider.value(
-      value: didService,
-      child: const IgnitePayApp(),
-    ),
-  );
+  runApp(const IgnitePayApp());
 }
 
 // ---------------------------------------------------------------------------
@@ -64,21 +53,235 @@ class IgnitePayApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Ignite Pay',
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: _kBackground,
-        colorScheme: const ColorScheme.dark(
-          primary: _kNeonCyan,
-          surface: _kSurfaceDark,
+    return ChangeNotifierProvider(
+      create: (_) => DidcommService(),
+      child: MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: 'Ignite Pay',
+        theme: ThemeData(
+          brightness: Brightness.dark,
+          scaffoldBackgroundColor: _kBackground,
+          colorScheme: const ColorScheme.dark(
+            primary: _kNeonCyan,
+            surface: _kSurfaceDark,
+          ),
+          textTheme: GoogleFonts.interTextTheme(
+            ThemeData.dark().textTheme,
+          ),
         ),
-        textTheme: GoogleFonts.interTextTheme(
-          ThemeData.dark().textTheme,
+        home: const _AppShell(),
+      ),
+    );
+  }
+}
+
+// Shell that decides: onboarding or main navigator
+class _AppShell extends StatefulWidget {
+  const _AppShell();
+
+  @override
+  State<_AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
+  bool _loading = true;
+  bool _showOnboarding = false;
+  bool _isLocked = false;
+  bool _authenticating = false;
+  final _localAuth = LocalAuthentication();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _checkOnboarding();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused && !_loading && !_showOnboarding) {
+      setState(() { _isLocked = true; });
+    } else if (state == AppLifecycleState.resumed && _isLocked) {
+      _authenticate();
+    }
+  }
+
+  Future<void> _checkOnboarding() async {
+    final prefs = await SharedPreferences.getInstance();
+    final hasDid = prefs.getBool('onboarding_complete') ?? false;
+
+    if (hasDid) {
+      // Load existing identity
+      final svc = context.read<DidcommService>();
+      await svc.initialize();
+      // Auto-reconnect mediator if URL was previously saved
+      final wsUrl = svc.mediatorWsUrl;
+      if (wsUrl.isNotEmpty) {
+        try { await svc.connectToMediator(wsUrl); } catch (_) {}
+      }
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _isLocked = true;
+        });
+        _authenticate();
+      }
+    } else {
+      if (mounted) setState(() { _loading = false; _showOnboarding = true; });
+    }
+  }
+
+  Future<void> _authenticate() async {
+    if (_authenticating) return;
+    _authenticating = true;
+    try {
+      final authenticated = await _localAuth.authenticate(
+        localizedReason: 'Unlock Ignite Pay',
+        biometricOnly: false,
+        persistAcrossBackgrounding: true,
+      );
+      if (authenticated && mounted) {
+        setState(() { _isLocked = false; });
+      }
+    } catch (_) {
+      // Auth failed or unavailable — keep locked
+    } finally {
+      _authenticating = false;
+    }
+  }
+
+  Future<void> _onOnboardingComplete() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('onboarding_complete', true);
+    setState(() { _showOnboarding = false; _isLocked = true; });
+    _authenticate();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return Scaffold(
+        backgroundColor: _kBackground,
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  gradient: const LinearGradient(
+                    colors: [_kNeonCyan, _kNeonCyanDim],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Image.asset('assets/icons/ignite_pay.png', width: 64, height: 64, fit: BoxFit.cover),
+                ),
+              ),
+              const SizedBox(height: 20),
+              CircularProgressIndicator(color: _kNeonCyan.withValues(alpha: 0.7), strokeWidth: 2),
+            ],
+          ),
+        ),
+      );
+    }
+    if (_showOnboarding) {
+      return OnboardingScreen(onComplete: _onOnboardingComplete);
+    }
+    if (_isLocked) {
+      return _LockScreen(onUnlock: _authenticate);
+    }
+    return const _MainNavigator();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Lock Screen (biometric / PIN)
+// ---------------------------------------------------------------------------
+class _LockScreen extends StatelessWidget {
+  final VoidCallback onUnlock;
+  const _LockScreen({required this.onUnlock});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _kBackground,
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                gradient: const LinearGradient(
+                  colors: [_kNeonCyan, _kNeonCyanDim],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Image.asset('assets/icons/ignite_pay.png', width: 80, height: 80, fit: BoxFit.cover),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Ignite Pay is locked',
+              style: GoogleFonts.inter(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: _kTextPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Authenticate to continue',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                color: _kTextSecondary,
+              ),
+            ),
+            const SizedBox(height: 32),
+            GestureDetector(
+              onTap: onUnlock,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(colors: [_kNeonCyan, _kNeonCyanDim]),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(LucideIcons.lock, size: 18, color: _kBackground),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Unlock',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: _kBackground,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
-      home: const _MainNavigator(),
     );
   }
 }
@@ -285,11 +488,6 @@ class IgnitePayDashboard extends StatelessWidget {
                       const DIDCard(),
                       const SizedBox(height: 20),
                       const _QuickNavRow(),
-                      const SizedBox(height: 12),
-                      const _PairButton(),
-                      const SizedBox(height: 12),
-                      const _CreateChannelButton(),
-                      const SizedBox(height: 20),
                       const SizedBox(height: 20),
                       const TrustScoreGauge(
                         spent: 0.42,
@@ -341,7 +539,10 @@ class _DashboardHeader extends StatelessWidget {
                   end: Alignment.bottomRight,
                 ),
               ),
-              child: const Icon(LucideIcons.shieldCheck, size: 20, color: _kBackground),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.asset('assets/icons/ignite_pay.png', width: 36, height: 36, fit: BoxFit.cover),
+              ),
             ),
             const SizedBox(width: 12),
             Text(
@@ -451,95 +652,6 @@ class _DashboardHeader extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Pair with MCP via QR scan
-// ---------------------------------------------------------------------------
-class _PairButton extends StatelessWidget {
-  const _PairButton();
-
-  @override
-  Widget build(BuildContext context) {
-    final didService = DidcommService();
-    return GestureDetector(
-      onTap: () async {
-        final result = await showQrScanner(context);
-        if (result == null || !context.mounted) return;
-
-        if (result is PaymentQrData) {
-          // Payment QR — navigate to payment confirmation screen
-          Navigator.of(context).push(
-            PageRouteBuilder(
-              transitionDuration: const Duration(milliseconds: 350),
-              pageBuilder: (_, animation, _) => SlideTransition(
-                position: Tween<Offset>(
-                  begin: const Offset(1, 0),
-                  end: Offset.zero,
-                ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
-                child: QrPaymentScreen(
-                  paymentData: result,
-                  storagePath: DidcommService().storagePath,
-                  onConfirmPayment: ChannelService().channelPay,
-                ),
-              ),
-            ),
-          );
-        } else if (result is String) {
-          // didcomm:// pairing — save mcp_did
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('mcp_did', result);
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                backgroundColor: _kSuccess,
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                content: Text(
-                  'Paired with MCP',
-                  style: GoogleFonts.inter(fontWeight: FontWeight.w600),
-                ),
-                duration: const Duration(seconds: 2),
-              ),
-            );
-          }
-        }
-      },
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-        decoration: BoxDecoration(
-          color: _kSurfaceDark.withValues(alpha: 0.6),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: didService.isConnected
-                ? _kSuccess.withValues(alpha: 0.3)
-                : _kNeonCyan.withValues(alpha: 0.3),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              LucideIcons.scanLine,
-              size: 18,
-              color: didService.isConnected ? _kSuccess : _kNeonCyan,
-            ),
-            const SizedBox(width: 10),
-            Text(
-              didService.isConnected ? 'Pair New MCP' : 'Scan MCP QR Code',
-              style: GoogleFonts.inter(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: didService.isConnected ? _kSuccess : _kNeonCyan,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Quick Nav Row (Vault & Policy shortcuts)
 // ---------------------------------------------------------------------------
 class _QuickNavRow extends StatelessWidget {
@@ -554,7 +666,7 @@ class _QuickNavRow extends StatelessWidget {
             icon: LucideIcons.lock,
             label: 'Vault',
             subtitle: 'Keys & Identity',
-            gradientColors: [const Color(0xFF8B5CF6), const Color(0xFF6D28D9)],
+            gradientColors: [const Color(0xFFFF8A50), const Color(0xFFE64A19)],
             onTap: () => openVaultIdentity(context),
           ),
         ),
@@ -574,78 +686,11 @@ class _QuickNavRow extends StatelessWidget {
             icon: LucideIcons.layers,
             label: 'Channels',
             subtitle: 'State channels',
-            gradientColors: [const Color(0xFF06B6D4), const Color(0xFF0891B2)],
+            gradientColors: [const Color(0xFFFF6E40), const Color(0xFFE65100)],
             onTap: () => openChannelTopology(context),
           ),
         ),
       ],
-    );
-  }
-}
-
-class _CreateChannelButton extends StatefulWidget {
-  const _CreateChannelButton();
-
-  @override
-  State<_CreateChannelButton> createState() => _CreateChannelButtonState();
-}
-
-class _CreateChannelButtonState extends State<_CreateChannelButton> {
-  String _registryUrl = '';
-  String _mcpDid = '';
-
-  @override
-  void initState() {
-    super.initState();
-    _loadConfig();
-  }
-
-  Future<void> _loadConfig() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (mounted) {
-      setState(() {
-        _registryUrl = prefs.getString('hub_registry_url') ?? '';
-        _mcpDid = prefs.getString('mcp_did') ?? '';
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final storagePath = DidcommService().storagePath;
-    return SizedBox(
-      width: double.infinity,
-      child: OutlinedButton.icon(
-        onPressed: () {
-          Navigator.of(context).push(
-            PageRouteBuilder(
-              transitionDuration: const Duration(milliseconds: 350),
-              pageBuilder: (_, animation, _) => SlideTransition(
-                position: Tween<Offset>(
-                  begin: const Offset(1, 0),
-                  end: Offset.zero,
-                ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
-                child: HubListScreen(
-                  registryUrl: _registryUrl,
-                  storagePath: storagePath,
-                  mcpDid: _mcpDid,
-                ),
-              ),
-            ),
-          );
-        },
-        icon: const Icon(LucideIcons.layers, size: 18),
-        label: const Text(
-          'Create Channel',
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-        ),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: _kNeonCyan,
-          side: const BorderSide(color: _kNeonCyan, width: 1),
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      ),
     );
   }
 }
@@ -670,13 +715,13 @@ class _QuickNavCard extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
         decoration: BoxDecoration(
           color: _kSurfaceDark.withValues(alpha: 0.6),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: _kGlassBorder),
         ),
-        child: Row(
+        child: Column(
           children: [
             Container(
               width: 36,
@@ -691,30 +736,26 @@ class _QuickNavCard extends StatelessWidget {
               ),
               child: Icon(icon, size: 18, color: _kBackground),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: _kTextPrimary,
-                    ),
-                  ),
-                  Text(
-                    subtitle,
-                    style: GoogleFonts.inter(
-                      fontSize: 10,
-                      color: _kTextSecondary,
-                    ),
-                  ),
-                ],
+            const SizedBox(height: 10),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: _kTextPrimary,
               ),
+              textAlign: TextAlign.center,
             ),
-            Icon(LucideIcons.chevronRight, size: 16, color: _kTextSecondary),
+            const SizedBox(height: 2),
+            Text(
+              subtitle,
+              style: GoogleFonts.inter(
+                fontSize: 10,
+                color: _kTextSecondary,
+              ),
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+            ),
           ],
         ),
       ),

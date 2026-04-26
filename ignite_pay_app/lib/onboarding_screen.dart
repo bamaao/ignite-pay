@@ -8,14 +8,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 // ---------------------------------------------------------------------------
 // Entry Point — shown only on first launch (no existing DID)
 // ---------------------------------------------------------------------------
-Future<bool> showOnboardingIfNeeded(BuildContext context) async {
+Future<bool> showOnboardingIfNeeded(BuildContext context, {required VoidCallback onComplete}) async {
   final svc = DidcommService();
   if (svc.isInitialized && svc.did.isNotEmpty) return false;
   if (!context.mounted) return false;
 
   await Navigator.of(context).pushReplacement(
     PageRouteBuilder(
-      pageBuilder: (_, a, b) => const OnboardingScreen(),
+      pageBuilder: (_, a, b) => OnboardingScreen(onComplete: onComplete),
       transitionDuration: Duration.zero,
     ),
   );
@@ -26,7 +26,8 @@ Future<bool> showOnboardingIfNeeded(BuildContext context) async {
 // Onboarding Screen (multi-step)
 // ---------------------------------------------------------------------------
 class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen({super.key});
+  final VoidCallback onComplete;
+  const OnboardingScreen({super.key, required this.onComplete});
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -49,6 +50,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   final _hubRegistryController = TextEditingController(
     text: 'http://localhost:3004',
   );
+
+  // Step 2c: connecting state
+  bool _isConnecting = false;
+
+  // Onboarding complete (step 3)
+  bool _complete = false;
 
   @override
   void dispose() {
@@ -84,26 +91,27 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   Future<void> _connectAndFinish() async {
     final wsUrl = _mediatorController.text.trim();
-    if (wsUrl.isNotEmpty) {
-      try {
-        await DidcommService().connectToMediator(wsUrl);
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              backgroundColor: const Color(0xFFFFB300),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              content: Text(
-                'Could not connect to mediator. You can configure it later.',
-                style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: Color(0xFF0A0A14)),
-              ),
-              duration: const Duration(seconds: 4),
-            ),
-          );
-        }
+
+    // Validate URL format
+    if (wsUrl.isEmpty) {
+      _showError('Mediator URL is required.');
+      return;
+    }
+    if (!wsUrl.startsWith('ws://') && !wsUrl.startsWith('wss://')) {
+      _showError('URL must start with ws:// or wss://');
+      return;
+    }
+
+    setState(() => _isConnecting = true);
+
+    try {
+      await DidcommService().connectToMediator(wsUrl);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isConnecting = false);
+        _showError('Connection failed: $e');
       }
+      return;
     }
 
     // Save hub registry URL
@@ -113,22 +121,80 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       await prefs.setString('hub_registry_url', hubUrl);
     }
 
-    if (mounted) {
-      Navigator.of(context).pushReplacement(
-        PageRouteBuilder(
-          pageBuilder: (_, a, b) => const _OnboardingComplete(),
-          transitionDuration: const Duration(milliseconds: 400),
-          transitionsBuilder: (_, animation, c, child) => FadeTransition(
-            opacity: animation,
-            child: child,
-          ),
+    if (mounted) setState(() { _isConnecting = false; _complete = true; });
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: kDanger,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        content: Text(
+          message,
+          style: GoogleFonts.inter(fontWeight: FontWeight.w600),
         ),
-      );
-    }
+        duration: const Duration(seconds: 4),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_complete) {
+      return Scaffold(
+        backgroundColor: kBackground,
+        body: SafeArea(
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(18),
+                    color: kSuccess.withValues(alpha: 0.12),
+                    border: Border.all(color: kSuccess.withValues(alpha: 0.3)),
+                  ),
+                  child: Icon(LucideIcons.check, size: 36, color: kSuccess),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'You\'re all set!',
+                  style: GoogleFonts.inter(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
+                    color: kTextPrimary,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Scan an MCP QR code to pair with\nyour first AI agent via Settings → Connections.',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    color: kTextSecondary,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 32),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 40),
+                  child: _OnboardingButton(
+                    label: 'Enter Ignite Pay',
+                    onTap: widget.onComplete,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: kBackground,
       body: SafeArea(
@@ -159,7 +225,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                         key: const ValueKey('mediator'),
                         controller: _mediatorController,
                         hubRegistryController: _hubRegistryController,
-                        onSkip: _connectAndFinish,
+                        isConnecting: _isConnecting,
                         onConnect: _connectAndFinish,
                       ),
                     _ => const SizedBox.shrink(),
@@ -284,6 +350,11 @@ class _WelcomeStep extends StatelessWidget {
         _FeatureItem(
           icon: LucideIcons.shield,
           text: 'Whitelist/blacklist risk control',
+        ),
+        const SizedBox(height: 10),
+        _FeatureItem(
+          icon: LucideIcons.scanLine,
+          text: 'Scan-to-pay micro-payments via μ-state channels',
         ),
         const Spacer(flex: 3),
         _OnboardingButton(label: 'Get Started', onTap: onNext),
@@ -438,14 +509,14 @@ class _CreateIdentityStep extends StatelessWidget {
 class _MediatorConfigStep extends StatelessWidget {
   final TextEditingController controller;
   final TextEditingController hubRegistryController;
-  final VoidCallback onSkip;
+  final bool isConnecting;
   final VoidCallback onConnect;
 
   const _MediatorConfigStep({
     super.key,
     required this.controller,
     required this.hubRegistryController,
-    required this.onSkip,
+    required this.isConnecting,
     required this.onConnect,
   });
 
@@ -491,6 +562,7 @@ class _MediatorConfigStep extends StatelessWidget {
           ),
           child: TextField(
             controller: controller,
+            enabled: !isConnecting,
             style: GoogleFonts.jetBrainsMono(
               fontSize: 14,
               color: kTextPrimary,
@@ -527,6 +599,7 @@ class _MediatorConfigStep extends StatelessWidget {
           ),
           child: TextField(
             controller: hubRegistryController,
+            enabled: !isConnecting,
             style: GoogleFonts.jetBrainsMono(
               fontSize: 14,
               color: kTextPrimary,
@@ -544,85 +617,24 @@ class _MediatorConfigStep extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 20),
-        _OnboardingButton(label: 'Connect & Continue', onTap: onConnect),
-        const SizedBox(height: 12),
-        GestureDetector(
-          onTap: onSkip,
-          child: Text(
-            'Skip — configure later in Settings',
-            style: GoogleFonts.inter(
-              fontSize: 12,
-              color: kTextTertiary,
-              decoration: TextDecoration.underline,
-              decorationColor: kTextTertiary,
-            ),
-          ),
-        ),
-        const Spacer(flex: 2),
-      ],
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Onboarding Complete
-// ---------------------------------------------------------------------------
-class _OnboardingComplete extends StatelessWidget {
-  const _OnboardingComplete();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: kBackground,
-      body: SafeArea(
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+        if (isConnecting)
+          Column(
             children: [
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  color: kSuccess.withValues(alpha: 0.12),
-                  border: Border.all(color: kSuccess.withValues(alpha: 0.3)),
-                ),
-                child: Icon(LucideIcons.check, size: 36, color: kSuccess),
+              CircularProgressIndicator(
+                color: kNeonCyan.withValues(alpha: 0.7),
+                strokeWidth: 2,
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 12),
               Text(
-                'You\'re all set!',
-                style: GoogleFonts.inter(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  color: kTextPrimary,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Scan an MCP QR code to pair with\nyour first AI agent.',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.inter(
-                  fontSize: 13,
-                  color: kTextSecondary,
-                  height: 1.5,
-                ),
-              ),
-              const SizedBox(height: 32),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 40),
-                child: _OnboardingButton(
-                  label: 'Enter Ignite Pay',
-                  onTap: () {
-                    Navigator.of(context)
-                        .popUntil((route) => route.isFirst);
-                  },
-                ),
+                'Connecting to mediator...',
+                style: GoogleFonts.inter(fontSize: 12, color: kTextTertiary),
               ),
             ],
-          ),
-        ),
-      ),
+          )
+        else
+          _OnboardingButton(label: 'Connect & Continue', onTap: onConnect),
+        const Spacer(flex: 2),
+      ],
     );
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:local_auth/local_auth.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_merchant/theme.dart';
 import 'package:ignite_pay_merchant/dashboard_screen.dart';
@@ -78,13 +79,32 @@ class _AppShell extends StatefulWidget {
   State<_AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<_AppShell> {
+class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   bool? _onboarded;
+  bool _isLocked = false;
+  bool _authenticating = false;
+  final _localAuth = LocalAuthentication();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _checkOnboarding();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused && _onboarded == true) {
+      setState(() { _isLocked = true; });
+    } else if (state == AppLifecycleState.resumed && _isLocked) {
+      _authenticate();
+    }
   }
 
   @override
@@ -101,11 +121,38 @@ class _AppShellState extends State<_AppShell> {
   Future<void> _checkOnboarding() async {
     final prefs = await SharedPreferences.getInstance();
     final hub = prefs.getString('hub_endpoint') ?? '';
-    setState(() => _onboarded = hub.isNotEmpty);
+    final onboarded = hub.isNotEmpty;
+    if (mounted) {
+      setState(() {
+        _onboarded = onboarded;
+        _isLocked = onboarded;
+      });
+      if (onboarded) _authenticate();
+    }
+  }
+
+  Future<void> _authenticate() async {
+    if (_authenticating) return;
+    _authenticating = true;
+    try {
+      final authenticated = await _localAuth.authenticate(
+        localizedReason: 'Unlock Ignite Merchant',
+        biometricOnly: false,
+        persistAcrossBackgrounding: true,
+      );
+      if (authenticated && mounted) {
+        setState(() { _isLocked = false; });
+      }
+    } catch (_) {
+      // Auth failed or unavailable — keep locked
+    } finally {
+      _authenticating = false;
+    }
   }
 
   void _onOnboardingComplete() {
-    setState(() => _onboarded = true);
+    setState(() { _onboarded = true; _isLocked = true; });
+    _authenticate();
   }
 
   @override
@@ -119,7 +166,88 @@ class _AppShellState extends State<_AppShell> {
     if (!_onboarded!) {
       return OnboardingScreen(onComplete: _onOnboardingComplete);
     }
+    if (_isLocked) {
+      return _MerchantLockScreen(onUnlock: _authenticate);
+    }
     return const _MainNavigator();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Lock Screen (biometric / PIN)
+// ---------------------------------------------------------------------------
+class _MerchantLockScreen extends StatelessWidget {
+  final VoidCallback onUnlock;
+  const _MerchantLockScreen({required this.onUnlock});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: kBackground,
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                gradient: const LinearGradient(
+                  colors: [kNeonCyan, kNeonCyanDim],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Icon(LucideIcons.store, size: 36, color: kBackground),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Ignite Merchant is locked',
+              style: GoogleFonts.inter(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: kTextPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Authenticate to continue',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                color: kTextSecondary,
+              ),
+            ),
+            const SizedBox(height: 32),
+            GestureDetector(
+              onTap: onUnlock,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(colors: [kNeonCyan, kNeonCyanDim]),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(LucideIcons.lock, size: 18, color: kBackground),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Unlock',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: kBackground,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

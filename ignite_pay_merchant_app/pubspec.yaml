@@ -28,6 +28,9 @@ dependencies:
   url_launcher: ^6.3.0
   app_links: ^6.3.0
 
+  # Biometric / device PIN lock
+  local_auth: ^3.0.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -37,3 +40,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/icons/

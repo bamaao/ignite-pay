@@ -90,7 +90,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       end: Alignment.bottomRight,
                     ),
                   ),
-                  child: const Icon(LucideIcons.store, size: 32, color: kBackground),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Image.asset('assets/icons/ignite_pay_merchant.png', width: 64, height: 64, fit: BoxFit.cover),
+                  ),
                 ),
                 const SizedBox(height: 16),
                 Text('Ignite Merchant',
