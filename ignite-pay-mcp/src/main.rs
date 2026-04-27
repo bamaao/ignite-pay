@@ -1531,6 +1531,24 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     tracing::info!("Connecting to mediator at {}...", config.mediator.ws_url);
 
+    // Auto-display pairing QR if no phone is paired and no phone_did in config
+    if mediator.paired_phone_did().await.is_none() && config.mediator.phone_did.is_empty() {
+        let url = mediator.generate_invitation();
+        match mediator.generate_invitation_qr() {
+            Ok(qr) => {
+                tracing::info!("\n{}", qr);
+                tracing::info!("\nInvitation URL:\n{}", url);
+                tracing::info!("Scan the QR code above with Ignite Pay to pair.");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to generate QR code: {}. Invitation URL:\n{}", e, url);
+                tracing::info!("Use the invitation URL above to pair manually.");
+            }
+        }
+    } else if let Some(phone) = mediator.paired_phone_did().await {
+        tracing::info!("Phone already paired: {}", phone);
+    }
+
     // V3.0: Initialize state channel client if Hub endpoint is configured
     let channel_client = if !config.solana.hub_endpoint.is_empty() {
         let channel_db = sled::open(format!("{}/channel", config.storage.path))?;

@@ -289,6 +289,24 @@ async fn main() -> anyhow::Result<()> {
     mediator.connect(Some(create_channel_tx)).await?;
     tracing::info!("Merchant mediator connected");
 
+    // Auto-display pairing QR if no merchant app is paired
+    if mediator.paired_phone_did().await.is_none() {
+        let url = mediator.generate_invitation();
+        match mediator.generate_invitation_qr() {
+            Ok(qr) => {
+                tracing::info!("\n{}", qr);
+                tracing::info!("\nInvitation URL:\n{}", url);
+                tracing::info!("Scan the QR code above with Ignite Pay Merchant to pair.");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to generate QR code: {}. Invitation URL:\n{}", e, url);
+                tracing::info!("Use the invitation URL above to pair manually.");
+            }
+        }
+    } else if let Some(phone) = mediator.paired_phone_did().await {
+        tracing::info!("Merchant app already paired: {}", phone);
+    }
+
     let orders = Arc::new(PaymentOrderStore::from_db(db.clone()));
     let audit = Arc::new(AuditLogStore::from_db(db.clone()));
 

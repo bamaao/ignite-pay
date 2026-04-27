@@ -5,7 +5,10 @@ Cargo.lock
 # Sled database data
 did_registry_data/
 didcomm-router/data/
+didcomm-router/logs/
 didcomm-router/registry_data/
+ignite-pay-mcp/data/
+ignite-pay-merchant-mcp/data/
 **/data/channel_*/
 **/data/merchant-router/
 

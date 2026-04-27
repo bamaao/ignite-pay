@@ -41,6 +41,19 @@ pub struct MediatorConnection {
     /// DID of the paired phone (set during connection-request handshake).
     paired_phone: Arc<tokio::sync::Mutex<Option<String>>>,
     signing_private: [u8; 32],
+    db: sled::Db,
+}
+
+fn save_paired_phone(db: &sled::Db, did: &str) {
+    let _ = db.insert("__paired_phone__", did.as_bytes());
+    let _ = db.flush();
+}
+
+fn load_paired_phone(db: &sled::Db) -> Option<String> {
+    db.get("__paired_phone__")
+        .ok()
+        .flatten()
+        .map(|v| String::from_utf8_lossy(&v).to_string())
 }
 
 impl std::fmt::Debug for MediatorConnection {
@@ -84,8 +97,9 @@ impl MediatorConnection {
             ws_url: ws_url.to_string(),
             connected: Arc::new(Notify::new()),
             outgoing: Arc::new(tokio::sync::Mutex::new(outgoing_tx)),
-            paired_phone: Arc::new(tokio::sync::Mutex::new(None)),
+            paired_phone: Arc::new(tokio::sync::Mutex::new(load_paired_phone(db))),
             signing_private,
+            db: db.clone(),
         })
     }
 
@@ -153,6 +167,7 @@ impl MediatorConnection {
         let connected = self.connected.clone();
         let paired_phone = self.paired_phone.clone();
         let signing_private = self.signing_private;
+        let db = self.db.clone();
 
         // Create a new channel pair for this connection
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel();
@@ -175,6 +190,7 @@ impl MediatorConnection {
                 paired_phone,
                 create_channel_tx,
                 &signing_private,
+                &db,
             )
             .await;
         });
@@ -334,6 +350,7 @@ async fn real_ws_client(
     paired_phone: Arc<tokio::sync::Mutex<Option<String>>>,
     create_channel_tx: Option<mpsc::UnboundedSender<CreateChannelCommand>>,
     signing_private: &[u8; 32],
+    db: &sled::Db,
 ) {
     loop {
         match connect_and_run(
@@ -346,6 +363,7 @@ async fn real_ws_client(
             &paired_phone,
             &create_channel_tx,
             signing_private,
+            db,
         )
         .await
         {
@@ -371,6 +389,7 @@ async fn connect_and_run(
     paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
     signing_private: &[u8; 32],
+    db: &sled::Db,
 ) -> Result<()> {
     let (mut ws, _) = connect_async(ws_url).await?;
     tracing::info!("Connected to mediator: {}", ws_url);
@@ -535,7 +554,7 @@ async fn connect_and_run(
                                     for entry in messages {
                                         if let Some(jwe) = entry.get("message").and_then(|m| m.as_str()) {
                                             handle_incoming_message(
-                                                jwe, agent, pending, paired_phone, create_channel_tx,
+                                                jwe, agent, pending, paired_phone, create_channel_tx, db,
                                             )
                                             .await;
                                         }
@@ -574,7 +593,7 @@ async fn connect_and_run(
             msg = ws.next() => {
                 match msg {
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
-                        handle_incoming_message(&text, agent, pending, paired_phone, create_channel_tx).await;
+                        handle_incoming_message(&text, agent, pending, paired_phone, create_channel_tx, db).await;
                     }
                     Some(Ok(_)) => {}
                     Some(Err(e)) => return Err(e.into()),
@@ -604,6 +623,7 @@ async fn handle_incoming_message(
     pending: &PendingAuthStore,
     paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+    db: &sled::Db,
 ) {
     // Try encrypted unpack first
     if is_jwe(text) {
@@ -611,7 +631,7 @@ async fn handle_incoming_message(
         match didcomm::unpack_message(&agent_guard, text, None) {
             Ok(msg) => {
                 drop(agent_guard);
-                process_inner_message(&msg, pending, paired_phone, agent, create_channel_tx).await;
+                process_inner_message(&msg, pending, paired_phone, agent, create_channel_tx, db).await;
                 return;
             }
             Err(e) => {
@@ -663,6 +683,7 @@ async fn handle_incoming_message(
             let mut guard = paired_phone.lock().await;
             *guard = Some(phone_did.to_string());
         }
+        save_paired_phone(db, phone_did);
 
         tracing::info!(
             "Phone {} paired successfully via plaintext (push_channel: {})",
@@ -746,6 +767,7 @@ async fn process_inner_message(
     paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
     agent: &Arc<Mutex<DIDCommAgent>>,
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+    db: &sled::Db,
 ) {
     // Check for connection-request type (pairing from phone)
     if msg.typ.contains("connection-request") {
@@ -784,6 +806,7 @@ async fn process_inner_message(
             let mut guard = paired_phone.lock().await;
             *guard = Some(phone_did.clone());
         }
+        save_paired_phone(db, &phone_did);
 
         tracing::info!(
             "Phone {} paired successfully (push_channel: {})",
