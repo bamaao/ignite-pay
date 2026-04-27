@@ -390,6 +390,144 @@ pub async fn fetch_hub_list(registry_url: String) -> Result<Vec<HubInfo>> {
     Ok(result)
 }
 
+// ── OOB Invitation & Connection (QR pairing) ───────────────────────────
+
+/// Parsed OOB invitation data from a QR code scan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OobInvitationData {
+    pub mcp_did: String,
+    pub did_doc_json: String,
+    pub mediator_ws_url: String,
+    pub label: String,
+}
+
+/// Parse an OOB invitation URL (from QR code scan).
+/// Expected format: didcomm://?_oob=<base64url-encoded JSON>
+pub fn parse_oob_invitation(invitation_url: String) -> Result<OobInvitationData> {
+    let url = url::Url::parse(&invitation_url)
+        .map_err(|e| anyhow::anyhow!("Invalid URL: {}", e))?;
+
+    let oob_b64 = url
+        .query_pairs()
+        .find(|(k, _)| k == "_oob")
+        .map(|(_, v)| v.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Missing _oob parameter in invitation URL"))?;
+
+    let json_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(&oob_b64)
+        .map_err(|e| anyhow::anyhow!("Base64 decode failed: {}", e))?;
+
+    let invitation: serde_json::Value = serde_json::from_slice(&json_bytes)
+        .map_err(|e| anyhow::anyhow!("JSON parse failed: {}", e))?;
+
+    let mcp_did = invitation
+        .get("from")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Missing 'from' in invitation"))?
+        .to_string();
+
+    let did_doc = invitation
+        .get("body")
+        .and_then(|b| b.get("did_document"))
+        .cloned();
+
+    let mediator_ws_url = invitation
+        .get("body")
+        .and_then(|b| b.get("services"))
+        .and_then(|s| s.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|svc| svc.get("service_endpoint"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let label = invitation
+        .get("body")
+        .and_then(|b| b.get("label"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Ok(OobInvitationData {
+        mcp_did,
+        did_doc_json: did_doc
+            .map(|d| serde_json::to_string(&d).unwrap_or_default())
+            .unwrap_or_default(),
+        mediator_ws_url,
+        label,
+    })
+}
+
+/// Send a connection request to the MCP after parsing the QR invitation.
+pub async fn send_connection_request(
+    storage_path: String,
+    mcp_did: String,
+    mcp_did_doc_json: String,
+    mediator_ws_url: String,
+    push_channel: String,
+    fcm_token: Option<String>,
+) -> Result<()> {
+    let db = sled::open(&storage_path)?;
+    let identity = ignite_pay_core::identity::load_identity(&db)?
+        .ok_or_else(|| anyhow::anyhow!("DIDComm identity not initialized"))?;
+
+    let our_did = identity.did.clone();
+    let (mut agent, _) = ignite_pay_core::didcomm::create_agent(identity);
+
+    // Register MCP as a peer using its DID document
+    if !mcp_did_doc_json.is_empty() {
+        if let Ok(mcp_doc) = serde_json::from_str::<serde_json::Value>(&mcp_did_doc_json) {
+            if let Some(resolved) = ignite_pay_core::identity::parse_did_document(&mcp_did, &mcp_doc) {
+                agent.add_peer(resolved);
+                tracing::info!("Registered MCP peer from invitation: {}", mcp_did);
+            }
+        }
+    }
+
+    // Build connection request message
+    let msg = ignite_pay_core::didcomm::build_connection_request(
+        &our_did,
+        &mcp_did,
+        &push_channel,
+        fcm_token.as_deref(),
+    );
+
+    // Encrypt with authcrypt
+    let jwe = ignite_pay_core::didcomm::pack_encrypted(&agent, &msg, &our_did, &mcp_did)
+        .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
+
+    // Send via HTTP to mediator
+    let client = reqwest::Client::new();
+    let url = format!(
+        "{}/v1/agents/{}/command",
+        mediator_ws_url
+            .replace("ws://", "http://")
+            .replace("wss://", "https://")
+            .trim_end_matches("/ws"),
+        mcp_did
+    );
+    let response = client
+        .post(&url)
+        .json(&serde_json::json!({
+            "jwe_envelope": jwe
+        }))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "Connection request failed: {} - {}",
+            status,
+            body
+        ));
+    }
+    tracing::info!("Connection request sent to MCP {} via HTTP", mcp_did);
+
+    Ok(())
+}
+
 /// Send a create-channel request to the merchant MCP server via DIDComm.
 pub async fn send_create_channel_request(
     storage_path: String,

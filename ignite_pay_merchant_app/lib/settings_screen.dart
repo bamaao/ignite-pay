@@ -8,6 +8,7 @@ import 'package:ignite_pay_merchant/services/voice_service.dart';
 import 'package:ignite_pay_merchant/services/merchant_push_service.dart';
 import 'package:ignite_pay_merchant/notification_center_screen.dart';
 import 'package:ignite_pay_merchant/profile_screen.dart';
+import 'package:ignite_pay_merchant/qr_scanner_screen.dart';
 import 'package:ignite_pay_merchant/src/rust/api/merchant.dart' as rust;
 import 'package:provider/provider.dart';
 
@@ -97,6 +98,15 @@ class SettingsScreen extends StatelessWidget {
                       ),
                     ],
                   ),
+                ),
+                const SizedBox(height: 8),
+                SettingsTile(
+                  icon: LucideIcons.scanLine,
+                  iconColor: kSuccess,
+                  title: 'Scan MCP QR Code',
+                  subtitle: 'Pair with an MCP agent',
+                  trailing: const Icon(LucideIcons.chevronRight, size: 16, color: kTextSecondary),
+                  onTap: () => showQrScanner(context),
                 ),
                 const SizedBox(height: 16),
 

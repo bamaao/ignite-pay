@@ -301,6 +301,47 @@ class MerchantPushService extends ChangeNotifier {
     _pullAndDecryptMessages();
   }
 
+  /// Parse an OOB invitation URL from a QR code scan and send a connection request.
+  /// Returns the MCP DID on success, or throws on error.
+  Future<String> parseInvitationAndConnect(String invitationUrl) async {
+    try {
+      // Parse invitation via Rust (single source of truth)
+      final invitation = await rust.parseOobInvitation(invitationUrl: invitationUrl);
+      final mcpDid = invitation.mcpDid;
+      final mediatorWsUrl = invitation.mediatorWsUrl;
+
+      debugPrint('Parsed OOB invitation: MCP DID=$mcpDid, mediator=$mediatorWsUrl');
+
+      // Determine push channel based on locale
+      final pushChannel = _isChineseUser ? 'websocket' : 'fcm';
+      String? fcmToken;
+      if (!_isChineseUser) {
+        fcmToken = FcmService().fcmToken;
+      }
+
+      // Connect to mediator if URL is present and not already connected
+      if (mediatorWsUrl.isNotEmpty && !_isConnected) {
+        await connectToMediator(mediatorWsUrl);
+      }
+
+      // Send connection request via Rust
+      await rust.sendConnectionRequest(
+        storagePath: _storagePath,
+        mcpDid: mcpDid,
+        mcpDidDocJson: invitation.didDocJson,
+        mediatorWsUrl: mediatorWsUrl.isNotEmpty ? mediatorWsUrl : _mediatorWsUrl,
+        pushChannel: pushChannel,
+        fcmToken: fcmToken,
+      );
+
+      debugPrint('Connection request sent to MCP $mcpDid');
+      return mcpDid;
+    } catch (e) {
+      debugPrint('Failed to parse invitation and connect: $e');
+      rethrow;
+    }
+  }
+
   @override
   void dispose() {
     _wsSubscription?.cancel();

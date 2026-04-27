@@ -65,7 +65,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -191838605;
+  int get rustContentHash => -335304412;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -184,6 +184,10 @@ abstract class RustLibApi extends BaseApi {
     required String storagePath,
   });
 
+  Future<OobInvitationData> crateApiMerchantDidcommParseOobInvitation({
+    required String invitationUrl,
+  });
+
   Future<List<DidcommMessage>> crateApiMerchantDidcommPullMessages({
     required String mediatorUrl,
     required String token,
@@ -200,6 +204,15 @@ abstract class RustLibApi extends BaseApi {
     required String mediatorUrl,
     required String authToken,
     required String fcmToken,
+  });
+
+  Future<void> crateApiMerchantDidcommSendConnectionRequest({
+    required String storagePath,
+    required String mcpDid,
+    required String mcpDidDocJson,
+    required String mediatorWsUrl,
+    required String pushChannel,
+    String? fcmToken,
   });
 
   Future<void> crateApiMerchantDidcommSendCreateChannelRequest({
@@ -995,6 +1008,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<OobInvitationData> crateApiMerchantDidcommParseOobInvitation({
+    required String invitationUrl,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(invitationUrl, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 23,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_oob_invitation_data,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiMerchantDidcommParseOobInvitationConstMeta,
+        argValues: [invitationUrl],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMerchantDidcommParseOobInvitationConstMeta =>
+      const TaskConstMeta(
+        debugName: "parse_oob_invitation",
+        argNames: ["invitationUrl"],
+      );
+
+  @override
   Future<List<DidcommMessage>> crateApiMerchantDidcommPullMessages({
     required String mediatorUrl,
     required String token,
@@ -1012,7 +1058,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 23,
+            funcId: 24,
             port: port_,
           );
         },
@@ -1047,7 +1093,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 24,
+            funcId: 25,
             port: port_,
           );
         },
@@ -1084,7 +1130,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 25,
+            funcId: 26,
             port: port_,
           );
         },
@@ -1103,6 +1149,63 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(
         debugName: "register_device_token",
         argNames: ["mediatorUrl", "authToken", "fcmToken"],
+      );
+
+  @override
+  Future<void> crateApiMerchantDidcommSendConnectionRequest({
+    required String storagePath,
+    required String mcpDid,
+    required String mcpDidDocJson,
+    required String mediatorWsUrl,
+    required String pushChannel,
+    String? fcmToken,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(mcpDid, serializer);
+          sse_encode_String(mcpDidDocJson, serializer);
+          sse_encode_String(mediatorWsUrl, serializer);
+          sse_encode_String(pushChannel, serializer);
+          sse_encode_opt_String(fcmToken, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 27,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiMerchantDidcommSendConnectionRequestConstMeta,
+        argValues: [
+          storagePath,
+          mcpDid,
+          mcpDidDocJson,
+          mediatorWsUrl,
+          pushChannel,
+          fcmToken,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMerchantDidcommSendConnectionRequestConstMeta =>
+      const TaskConstMeta(
+        debugName: "send_connection_request",
+        argNames: [
+          "storagePath",
+          "mcpDid",
+          "mcpDidDocJson",
+          "mediatorWsUrl",
+          "pushChannel",
+          "fcmToken",
+        ],
       );
 
   @override
@@ -1129,7 +1232,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 26,
+            funcId: 28,
             port: port_,
           );
         },
@@ -1353,6 +1456,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Uint8List;
+  }
+
+  @protected
+  OobInvitationData dco_decode_oob_invitation_data(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return OobInvitationData(
+      mcpDid: dco_decode_String(arr[0]),
+      didDocJson: dco_decode_String(arr[1]),
+      mediatorWsUrl: dco_decode_String(arr[2]),
+      label: dco_decode_String(arr[3]),
+    );
   }
 
   @protected
@@ -1697,6 +1814,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  OobInvitationData sse_decode_oob_invitation_data(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_mcpDid = sse_decode_String(deserializer);
+    var var_didDocJson = sse_decode_String(deserializer);
+    var var_mediatorWsUrl = sse_decode_String(deserializer);
+    var var_label = sse_decode_String(deserializer);
+    return OobInvitationData(
+      mcpDid: var_mcpDid,
+      didDocJson: var_didDocJson,
+      mediatorWsUrl: var_mediatorWsUrl,
+      label: var_label,
+    );
+  }
+
+  @protected
   String? sse_decode_opt_String(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -2036,6 +2170,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     serializer.buffer.putUint8List(self);
+  }
+
+  @protected
+  void sse_encode_oob_invitation_data(
+    OobInvitationData self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.mcpDid, serializer);
+    sse_encode_String(self.didDocJson, serializer);
+    sse_encode_String(self.mediatorWsUrl, serializer);
+    sse_encode_String(self.label, serializer);
   }
 
   @protected

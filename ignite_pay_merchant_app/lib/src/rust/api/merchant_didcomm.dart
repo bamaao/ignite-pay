@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'merchant.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Initialize the DIDComm communication identity.
 /// Uses ignite_pay_core's identity module (same DID format as user app).
@@ -79,6 +79,30 @@ Future<List<HubInfo>> fetchHubList({required String registryUrl}) => RustLib
     .instance
     .api
     .crateApiMerchantDidcommFetchHubList(registryUrl: registryUrl);
+
+/// Parse an OOB invitation URL (from QR code scan).
+/// Expected format: didcomm://?_oob=<base64url-encoded JSON>
+Future<OobInvitationData> parseOobInvitation({required String invitationUrl}) =>
+    RustLib.instance.api.crateApiMerchantDidcommParseOobInvitation(
+      invitationUrl: invitationUrl,
+    );
+
+/// Send a connection request to the MCP after parsing the QR invitation.
+Future<void> sendConnectionRequest({
+  required String storagePath,
+  required String mcpDid,
+  required String mcpDidDocJson,
+  required String mediatorWsUrl,
+  required String pushChannel,
+  String? fcmToken,
+}) => RustLib.instance.api.crateApiMerchantDidcommSendConnectionRequest(
+  storagePath: storagePath,
+  mcpDid: mcpDid,
+  mcpDidDocJson: mcpDidDocJson,
+  mediatorWsUrl: mediatorWsUrl,
+  pushChannel: pushChannel,
+  fcmToken: fcmToken,
+);
 
 /// Send a create-channel request to the merchant MCP server via DIDComm.
 Future<void> sendCreateChannelRequest({
@@ -245,4 +269,36 @@ class HubInfo {
           avgLatencyMs == other.avgLatencyMs &&
           activeChannels == other.activeChannels &&
           supportedTokens == other.supportedTokens;
+}
+
+/// Parsed OOB invitation data from a QR code scan.
+class OobInvitationData {
+  final String mcpDid;
+  final String didDocJson;
+  final String mediatorWsUrl;
+  final String label;
+
+  const OobInvitationData({
+    required this.mcpDid,
+    required this.didDocJson,
+    required this.mediatorWsUrl,
+    required this.label,
+  });
+
+  @override
+  int get hashCode =>
+      mcpDid.hashCode ^
+      didDocJson.hashCode ^
+      mediatorWsUrl.hashCode ^
+      label.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OobInvitationData &&
+          runtimeType == other.runtimeType &&
+          mcpDid == other.mcpDid &&
+          didDocJson == other.didDocJson &&
+          mediatorWsUrl == other.mediatorWsUrl &&
+          label == other.label;
 }

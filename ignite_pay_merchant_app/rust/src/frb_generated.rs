@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -191838605;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -335304412;
 
 // Section: executor
 
@@ -904,6 +904,42 @@ fn wire__crate__api__merchant__merchant_list_channels_impl(
         },
     )
 }
+fn wire__crate__api__merchant_didcomm__parse_oob_invitation_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "parse_oob_invitation",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_invitation_url = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok =
+                            crate::api::merchant_didcomm::parse_oob_invitation(api_invitation_url)?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__merchant_didcomm__pull_messages_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1018,6 +1054,55 @@ fn wire__crate__api__merchant_didcomm__register_device_token_impl(
                         let output_ok = crate::api::merchant_didcomm::register_device_token(
                             api_mediator_url,
                             api_auth_token,
+                            api_fcm_token,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__merchant_didcomm__send_connection_request_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "send_connection_request",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_mcp_did = <String>::sse_decode(&mut deserializer);
+            let api_mcp_did_doc_json = <String>::sse_decode(&mut deserializer);
+            let api_mediator_ws_url = <String>::sse_decode(&mut deserializer);
+            let api_push_channel = <String>::sse_decode(&mut deserializer);
+            let api_fcm_token = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::merchant_didcomm::send_connection_request(
+                            api_storage_path,
+                            api_mcp_did,
+                            api_mcp_did_doc_json,
+                            api_mediator_ws_url,
+                            api_push_channel,
                             api_fcm_token,
                         )
                         .await?;
@@ -1319,6 +1404,22 @@ impl SseDecode for Vec<u8> {
     }
 }
 
+impl SseDecode for crate::api::merchant_didcomm::OobInvitationData {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_mcpDid = <String>::sse_decode(deserializer);
+        let mut var_didDocJson = <String>::sse_decode(deserializer);
+        let mut var_mediatorWsUrl = <String>::sse_decode(deserializer);
+        let mut var_label = <String>::sse_decode(deserializer);
+        return crate::api::merchant_didcomm::OobInvitationData {
+            mcp_did: var_mcpDid,
+            did_doc_json: var_didDocJson,
+            mediator_ws_url: var_mediatorWsUrl,
+            label: var_label,
+        };
+    }
+}
+
 impl SseDecode for Option<String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1548,20 +1649,32 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        23 => wire__crate__api__merchant_didcomm__pull_messages_impl(
+        23 => wire__crate__api__merchant_didcomm__parse_oob_invitation_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        24 => wire__crate__api__merchant__recent_audit_impl(port, ptr, rust_vec_len, data_len),
-        25 => wire__crate__api__merchant_didcomm__register_device_token_impl(
+        24 => wire__crate__api__merchant_didcomm__pull_messages_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        26 => wire__crate__api__merchant_didcomm__send_create_channel_request_impl(
+        25 => wire__crate__api__merchant__recent_audit_impl(port, ptr, rust_vec_len, data_len),
+        26 => wire__crate__api__merchant_didcomm__register_device_token_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        27 => wire__crate__api__merchant_didcomm__send_connection_request_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        28 => wire__crate__api__merchant_didcomm__send_create_channel_request_impl(
             port,
             ptr,
             rust_vec_len,
@@ -1732,6 +1845,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::merchant_didcomm::HubInfo>
     for crate::api::merchant_didcomm::HubInfo
 {
     fn into_into_dart(self) -> crate::api::merchant_didcomm::HubInfo {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::merchant_didcomm::OobInvitationData {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.mcp_did.into_into_dart().into_dart(),
+            self.did_doc_json.into_into_dart().into_dart(),
+            self.mediator_ws_url.into_into_dart().into_dart(),
+            self.label.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::merchant_didcomm::OobInvitationData
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::merchant_didcomm::OobInvitationData>
+    for crate::api::merchant_didcomm::OobInvitationData
+{
+    fn into_into_dart(self) -> crate::api::merchant_didcomm::OobInvitationData {
         self
     }
 }
@@ -1926,6 +2062,16 @@ impl SseEncode for Vec<u8> {
         for item in self {
             <u8>::sse_encode(item, serializer);
         }
+    }
+}
+
+impl SseEncode for crate::api::merchant_didcomm::OobInvitationData {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.mcp_did, serializer);
+        <String>::sse_encode(self.did_doc_json, serializer);
+        <String>::sse_encode(self.mediator_ws_url, serializer);
+        <String>::sse_encode(self.label, serializer);
     }
 }
 

@@ -28,6 +28,9 @@ dependencies:
   url_launcher: ^6.3.0
   app_links: ^6.3.0
 
+  # QR code scanning
+  mobile_scanner: ^6.0.0
+
   # Biometric / device PIN lock
   local_auth: ^3.0.1
 
