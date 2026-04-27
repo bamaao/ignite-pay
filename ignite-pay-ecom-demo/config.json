@@ -1,0 +1,26 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 9090
+  },
+  "merchant": {
+    "did": "did:ignite:zMERCHANT_DID_HERE",
+    "payment_address": "MERCHANT_SOLANA_WALLET_ADDRESS",
+    "name": "Ignite Demo Store"
+  },
+  "solana": {
+    "rpc_url": "https://api.devnet.solana.com",
+    "session_program_id": "6EFvVTh7rEBpHH2JGryjKQmBLRtbYtSEerGNfkHqKiei",
+    "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+    "asset_native": "So11111111111111111111111111111111111111112"
+  },
+  "x402": {
+    "scheme": "exact",
+    "maxTimeoutSeconds": 60
+  },
+  "products": [
+    { "id": "coffee", "name": "Premium Coffee", "price_lamports": 100000 },
+    { "id": "sandwich", "name": "Club Sandwich", "price_lamports": 250000 },
+    { "id": "juice", "name": "Fresh Orange Juice", "price_lamports": 150000 }
+  ]
+}

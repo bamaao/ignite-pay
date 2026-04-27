@@ -269,50 +269,65 @@ impl IgnitePayMcpServer {
             Err(e) => return format!("Error: Invalid JSON in challenge body: {}", e),
         };
 
-        // Extract payment details from the x402 "accepts" array
-        let accepts = match challenge.get("accepts").and_then(|v| v.as_array()) {
-            Some(arr) if !arr.is_empty() => &arr[0],
-            _ => return "Error: No payment schemes found in 402 response".to_string(),
+        // Try Coinbase x402 standard PaymentRequirements format first (flat: scheme, network, amount, asset, payTo),
+        // then fall back to legacy "accepts" array format.
+        let (network, amount, token, recipient, merchant_did) = if let Some(scheme) = challenge.get("scheme").and_then(|v| v.as_str()) {
+            // Coinbase x402 standard format
+            let network = challenge.get("network").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+            let amount = challenge.get("amount").and_then(|v| v.as_str()).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            let asset = challenge.get("asset").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+            let pay_to = challenge.get("payTo").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+
+            // Merchant DID: header > extra.memo > unknown
+            let merchant_did = input
+                .x402_merchant_did
+                .as_deref()
+                .or_else(|| challenge.get("extra").and_then(|e| e.get("memo")).and_then(|v| v.as_str()))
+                .unwrap_or("unknown")
+                .to_string();
+
+            tracing::info!("Parsed Coinbase x402 standard format: scheme={}, network={}, amount={}, asset={}", scheme, network, amount, asset);
+            (network, amount, asset, pay_to, merchant_did)
+        } else {
+            // Legacy "accepts" array format
+            let accepts = match challenge.get("accepts").and_then(|v| v.as_array()) {
+                Some(arr) if !arr.is_empty() => &arr[0],
+                _ => return "Error: No payment schemes found in 402 response (expected Coinbase x402 PaymentRequirements or legacy accepts array)".to_string(),
+            };
+
+            let network = accepts.get("network").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+            let amount = accepts.get("amount").and_then(|v| v.as_str()).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            let token = accepts.get("token").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+
+            let merchant_did = input
+                .x402_merchant_did
+                .as_deref()
+                .or_else(|| challenge.get("provider_did").and_then(|v| v.as_str()))
+                .unwrap_or("unknown")
+                .to_string();
+
+            let recipient = input
+                .x402_payment_address
+                .as_deref()
+                .or_else(|| accepts.get("recipient").and_then(|v| v.as_str()))
+                .unwrap_or("unknown")
+                .to_string();
+
+            tracing::info!("Parsed legacy accepts array format: network={}, amount={}, token={}", network, amount, token);
+            (network, amount, token, recipient, merchant_did)
         };
 
-        let payment_type = accepts
-            .get("paymentType")
-            .and_then(|v| v.as_str())
-            .unwrap_or("transfer");
-        let network = accepts
-            .get("network")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        let token = accepts
-            .get("token")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        let amount = accepts
-            .get("amount")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(0);
-
-        // Step A: Extract merchant_did from X402 headers (V1.1)
-        let merchant_did = input
-            .x402_merchant_did
-            .as_deref()
-            .or_else(|| challenge.get("provider_did").and_then(|v| v.as_str()))
-            .unwrap_or("unknown")
-            .to_string();
-
-        // Use x402_payment_address as recipient if present (V1.1)
+        // Use x402_payment_address header as recipient override if present
         let recipient = input
             .x402_payment_address
             .as_deref()
-            .or_else(|| accepts.get("recipient").and_then(|v| v.as_str()))
-            .unwrap_or("unknown")
-            .to_string();
+            .map(|s| s.to_string())
+            .unwrap_or(recipient);
 
         let payment_id = uuid::Uuid::new_v4().to_string();
         let description = format!(
-            "{} {} {} on {} to {}",
-            amount, token, payment_type, network, recipient
+            "{} SOL transfer on {} to {}",
+            amount, network, recipient
         );
 
         // 2. Create payment record
@@ -321,8 +336,8 @@ impl IgnitePayMcpServer {
             recipient: recipient.clone(),
             merchant_did: merchant_did.clone(),
             amount,
-            token: token.to_string(),
-            network: network.to_string(),
+            token: token.clone(),
+            network: network.clone(),
             description: description.clone(),
             status: PaymentStatus::PendingAuth,
             created_at: chrono::Utc::now(),
