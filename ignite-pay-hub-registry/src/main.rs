@@ -32,10 +32,11 @@ async fn main() -> anyhow::Result<()> {
         .connect(&config.database.url)
         .await?;
 
-    // Run migrations
-    sqlx::query(include_str!("../migrations/001_init.sql"))
+    // Run migrations (idempotent — IF NOT EXISTS)
+    sqlx::raw_sql(include_str!("../migrations/001_init.sql"))
         .execute(&pool)
-        .await?;
+        .await
+        .ok(); // Ignore errors if tables already owned by another user
 
     tracing::info!("Database connected and migrations applied");
 

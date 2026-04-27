@@ -1,4 +1,4 @@
-CREATE TABLE hubs (
+CREATE TABLE IF NOT EXISTS hubs (
     hub_id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     hub_did             VARCHAR(128) NOT NULL UNIQUE,
     endpoint_url        VARCHAR(512) NOT NULL,
@@ -18,4 +18,4 @@ CREATE TABLE hubs (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_hubs_status ON hubs(status);
+CREATE INDEX IF NOT EXISTS idx_hubs_status ON hubs(status);
