@@ -135,6 +135,11 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     if (_authenticating) return;
     _authenticating = true;
     try {
+      final canAuth = await _localAuth.canCheckBiometrics || await _localAuth.isDeviceSupported();
+      if (!canAuth) {
+        if (mounted) setState(() { _isLocked = false; });
+        return;
+      }
       final authenticated = await _localAuth.authenticate(
         localizedReason: 'Unlock Ignite Merchant',
         biometricOnly: false,
@@ -143,8 +148,9 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       if (authenticated && mounted) {
         setState(() { _isLocked = false; });
       }
-    } catch (_) {
-      // Auth failed or unavailable — keep locked
+    } catch (e) {
+      debugPrint('Auth error: $e');
+      if (mounted) setState(() { _isLocked = false; });
     } finally {
       _authenticating = false;
     }
