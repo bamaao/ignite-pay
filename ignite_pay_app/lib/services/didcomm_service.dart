@@ -1,14 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:ignite_pay_app/services/app_log_service.dart';
 import 'package:ignite_pay_app/services/fcm_service.dart';
 import 'package:ignite_pay_app/services/mediator_api.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 
 /// A payment authorization request from the MCP server.
 class AuthRequest {
@@ -40,6 +41,35 @@ class AuthResponseData {
     this.listLabel,
     this.listMaxAmount,
   });
+}
+
+/// A paired MCP server with its identity info received from connection-response.
+class PairedMcp {
+  final String did;
+  final String didDocJson;
+  final String mediatorHttpUrl;
+  final DateTime pairedAt;
+
+  PairedMcp({
+    required this.did,
+    required this.didDocJson,
+    required this.mediatorHttpUrl,
+    required this.pairedAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'did': did,
+    'didDocJson': didDocJson,
+    'mediatorHttpUrl': mediatorHttpUrl,
+    'pairedAt': pairedAt.toIso8601String(),
+  };
+
+  factory PairedMcp.fromJson(Map<String, dynamic> json) => PairedMcp(
+    did: json['did'] as String,
+    didDocJson: json['didDocJson'] as String,
+    mediatorHttpUrl: json['mediatorHttpUrl'] as String,
+    pairedAt: DateTime.parse(json['pairedAt'] as String),
+  );
 }
 
 /// A decrypted DIDComm message.
@@ -84,10 +114,10 @@ class DidcommService extends ChangeNotifier {
   bool _isInitialized = false;
   String? _authToken;
   String? _lastPulledId;
-  WebSocketChannel? _wsChannel;
-  StreamSubscription? _wsSubscription;
+  Timer? _messagePollTimer;
 
   final List<DecryptedMsg> _messages = [];
+  final List<PairedMcp> _pairedMcps = [];
   AuthRequest? _pendingAuth;
 
   final MediatorApi _api = MediatorApi();
@@ -104,6 +134,7 @@ class DidcommService extends ChangeNotifier {
   bool get isConnected => _isConnected;
   bool get isInitialized => _isInitialized;
   List<DecryptedMsg> get messages => List.unmodifiable(_messages);
+  List<PairedMcp> get pairedMcps => List.unmodifiable(_pairedMcps);
   AuthRequest? get pendingAuth => _pendingAuth;
   int get pendingMessageCount => _messages.length;
 
@@ -143,17 +174,18 @@ class DidcommService extends ChangeNotifier {
       _didDocJson = info.didDocJson;
 
       _isInitialized = true;
-      debugPrint('DID initialized: $_did (storage: $_storagePath)');
+      AppLogService().info('DID', 'Initialized: $_did');
+      _loadPairedMcps();
       notifyListeners();
     } catch (e) {
-      debugPrint('Failed to initialize DID: $e');
+      AppLogService().error('DID', 'Failed to initialize: $e');
     }
   }
 
   /// Connect to the DIDComm mediator.
   Future<void> connectToMediator(String wsUrl, {String? httpUrl}) async {
     _mediatorWsUrl = wsUrl;
-    _mediatorHttpUrl = httpUrl ?? wsUrl.replaceFirst('ws', 'http');
+    _mediatorHttpUrl = httpUrl ?? wsUrl.replaceFirst('ws', 'http').replaceAll(RegExp(r'/ws$'), '');
 
     // Save for later
     final prefs = await SharedPreferences.getInstance();
@@ -163,24 +195,26 @@ class DidcommService extends ChangeNotifier {
     _api.setBaseUrl(_mediatorHttpUrl);
 
     try {
+      AppLogService().info('Mediator', 'Connecting Rust WsClient to $wsUrl (storagePath=$_storagePath)');
       await rust.connectMediator(storagePath: _storagePath, wsUrl: wsUrl);
 
       _isConnected = true;
-      debugPrint('Connected to mediator: $wsUrl');
+      AppLogService().info('Mediator', 'WsClient connected to $wsUrl');
       notifyListeners();
 
       // Authenticate and pull any pending messages
+      AppLogService().info('Mediator', 'Starting HTTP auth to $_mediatorHttpUrl (did=$_did)');
       await _authenticateAndPull();
 
-      if (_isChineseUser) {
-        // Chinese users: register websocket push channel, maintain WS long connection
-        await _initWebSocketChannel();
-      } else {
-        // Overseas users: use FCM for push notifications
+      // Start polling messages received by the Rust WS connection
+      _startMessagePolling();
+
+      // Overseas users: also use FCM for push notifications
+      if (!_isChineseUser) {
         await _initFcm();
       }
     } catch (e) {
-      debugPrint('Failed to connect to mediator: $e');
+      AppLogService().error('Mediator', 'Failed to connect: $e');
       _isConnected = false;
       notifyListeners();
     }
@@ -188,11 +222,9 @@ class DidcommService extends ChangeNotifier {
 
   /// Disconnect from the mediator.
   Future<void> disconnect() async {
+    _messagePollTimer?.cancel();
+    _messagePollTimer = null;
     try {
-      _wsSubscription?.cancel();
-      _wsSubscription = null;
-      await _wsChannel?.sink.close();
-      _wsChannel = null;
       await rust.disconnectMediator();
     } catch (_) {}
 
@@ -218,11 +250,12 @@ class DidcommService extends ChangeNotifier {
 
       debugPrint(
           'Auth response: ${response.paymentId} -> ${response.authorized} (${response.listAction})');
+      AppLogService().info('Auth', 'Response: ${response.paymentId} -> ${response.authorized} (${response.listAction})');
 
       _pendingAuth = null;
       notifyListeners();
     } catch (e) {
-      debugPrint('Failed to send auth response: $e');
+      AppLogService().error('Auth', 'Failed to send response: $e');
     }
   }
 
@@ -266,11 +299,12 @@ class DidcommService extends ChangeNotifier {
           'V2.0 Auth response with session key: $paymentId -> $authorized '
           '(limit: $spendingLimit lamports, duration: ${durationSecs}s, '
           'action: $listAction)');
+      AppLogService().info('Auth', 'V2.0 response: $paymentId -> $authorized (limit: $spendingLimit, action: $listAction)');
 
       _pendingAuth = null;
       notifyListeners();
     } catch (e) {
-      debugPrint('Failed to send auth response with session key: $e');
+      AppLogService().error('Auth', 'Failed to send V2.0 response: $e');
       rethrow;
     }
   }
@@ -282,6 +316,7 @@ class DidcommService extends ChangeNotifier {
     try {
       _authToken = await rust.authenticateWithMediator(
         mediatorUrl: _mediatorHttpUrl,
+        storagePath: _storagePath,
         did: _did,
       );
 
@@ -289,7 +324,7 @@ class DidcommService extends ChangeNotifier {
         await _pullAndDecryptMessages();
       }
     } catch (e) {
-      debugPrint('Auth/pull failed: $e');
+      AppLogService().error('Mediator', 'Auth/pull failed: $e');
     }
   }
 
@@ -310,16 +345,72 @@ class DidcommService extends ChangeNotifier {
         _lastPulledId = msg.msgId;
       }
     } catch (e) {
-      debugPrint('Pull/decrypt failed: $e');
+      AppLogService().error('Mediator', 'Pull/decrypt failed: $e');
+    }
+  }
+
+  /// Send a connection-confirm message to the MCP as part of the 3-step handshake.
+  /// Generates a random nonce, signs it with our Ed25519 key, and sends via HTTP POST.
+  Future<void> _sendConnectionConfirm(String mcpDid, String mcpMediatorHttpUrl) async {
+    try {
+      // Generate random nonce
+      final nonce = '${DateTime.now().millisecondsSinceEpoch}-${DateTime.now().microsecond}';
+      AppLogService().info('DIDComm', 'Sending connection-confirm: nonce=$nonce, mcpDid=$mcpDid');
+
+      // Sign the nonce with our Ed25519 key
+      final signature = await rust.signNonce(
+        storagePath: _storagePath,
+        nonce: nonce,
+      );
+
+      // Build plaintext connection-confirm message
+      final innerMsg = jsonEncode({
+        'type': 'https://didcomm.org/ignite-pay/1.0/connection-confirm',
+        'id': 'conn-confirm-${DateTime.now().millisecondsSinceEpoch}',
+        'from': _did,
+        'to': [mcpDid],
+        'body': {
+          'phone_nonce': nonce,
+          'phone_signature': signature,
+        },
+      });
+
+      // Wrap in forward message and send to MCP's mediator via HTTP POST
+      final forwardMsg = jsonEncode({
+        'type': 'https://didcomm.org/routing/2.0/forward',
+        'id': 'fwd-confirm-${DateTime.now().millisecondsSinceEpoch}',
+        'body': {'next': mcpDid},
+        'attachments': [
+          {
+            'data': {'json': jsonDecode(innerMsg)},
+          },
+        ],
+      });
+
+      final httpClient = HttpClient();
+      final req = await httpClient.postUrl(Uri.parse(mcpMediatorHttpUrl));
+      req.headers.set('Content-Type', 'application/json');
+      req.write(forwardMsg);
+      final resp = await req.close();
+      final statusCode = resp.statusCode;
+      AppLogService().info('DIDComm', 'Connection-confirm sent, MCP mediator responded: $statusCode');
+      if (statusCode != 200 && statusCode != 202) {
+        final body = await resp.transform(utf8.decoder).join();
+        AppLogService().error('DIDComm', 'MCP mediator rejected connection-confirm: $statusCode $body');
+      }
+    } catch (e) {
+      AppLogService().error('DIDComm', 'Failed to send connection-confirm: $e');
     }
   }
 
   /// Decrypt a JWE envelope and process the message.
-  Future<void> _decryptAndProcess(String jweEnvelope) async {
+  /// Also handles plaintext JSON messages (e.g. connection-response forwarded
+  /// by the mediator without encryption).
+  Future<void> _decryptAndProcess(String rawMessage) async {
     try {
       final decrypted = await rust.decryptMessage(
         storagePath: _storagePath,
-        jwe: jweEnvelope,
+        jwe: rawMessage,
       );
 
       final msg = DecryptedMsg(
@@ -336,6 +427,71 @@ class DidcommService extends ChangeNotifier {
 
       _messages.add(msg);
 
+      AppLogService().info('DIDComm', 'Decrypted: ${msg.msgType} (paymentId: ${msg.paymentId ?? "N/A"})');
+
+      // Check if it's a connection-response (pairing reply from MCP)
+      if (msg.msgType.contains('connection-response')) {
+        final body = jsonDecode(msg.rawBody) as Map<String, dynamic>;
+        final accepted = body['accepted'] as bool? ?? false;
+        if (accepted) {
+          final mcpDidFromDoc = body['did_document'] != null
+              ? (body['did_document'] as Map<String, dynamic>)['id'] as String? ?? ''
+              : '';
+          final mcpMediatorHttpUrl = body['mediator_http_url'] as String? ?? '';
+          final didDocJson = body['did_document'] != null
+              ? jsonEncode(body['did_document'])
+              : '';
+          final mcpNonce = body['mcp_nonce'] as String? ?? '';
+          final mcpSignature = body['mcp_signature'] as String? ?? '';
+
+          AppLogService().info('DIDComm', 'Connection-response: mcpDid=$mcpDidFromDoc, mediator=$mcpMediatorHttpUrl');
+
+          if (mcpDidFromDoc.isNotEmpty && didDocJson.isNotEmpty) {
+            // Verify MCP's signature
+            if (mcpNonce.isNotEmpty && mcpSignature.isNotEmpty) {
+              try {
+                final valid = await rust.verifyDidSignature(
+                  did: mcpDidFromDoc,
+                  message: mcpNonce,
+                  signatureB64: mcpSignature,
+                );
+                if (!valid) {
+                  AppLogService().error('DIDComm', 'MCP signature verification FAILED');
+                  return;
+                }
+                AppLogService().info('DIDComm', 'MCP signature verified');
+              } catch (e) {
+                AppLogService().error('DIDComm', 'MCP signature verification error: $e');
+                return;
+              }
+            }
+
+            // Save MCP info
+            final existing = _pairedMcps.indexWhere((m) => m.did == mcpDidFromDoc);
+            final paired = PairedMcp(
+              did: mcpDidFromDoc,
+              didDocJson: didDocJson,
+              mediatorHttpUrl: mcpMediatorHttpUrl,
+              pairedAt: DateTime.now(),
+            );
+            if (existing >= 0) {
+              _pairedMcps[existing] = paired;
+            } else {
+              _pairedMcps.add(paired);
+            }
+            await _savePairedMcps();
+            AppLogService().info('DIDComm', 'MCP paired and saved: $mcpDidFromDoc');
+
+            // Send connection-confirm with our signed nonce
+            _sendConnectionConfirm(mcpDidFromDoc, mcpMediatorHttpUrl);
+          }
+        } else {
+          AppLogService().warn('DIDComm', 'Connection-response rejected by MCP');
+        }
+        notifyListeners();
+        return;
+      }
+
       // Check if it's a payment-auth-request
       if (msg.msgType.contains('payment-auth-request')) {
         final authReq = AuthRequest(
@@ -350,71 +506,118 @@ class DidcommService extends ChangeNotifier {
 
       notifyListeners();
     } catch (e) {
-      debugPrint('Decrypt failed: $e');
+      // JWE decryption failed — try plaintext JSON fallback for messages
+      // that the mediator forwards without encryption (e.g. connection-response).
+      AppLogService().info('DIDComm', 'JWE decrypt failed, trying plaintext fallback');
+      try {
+        final v = jsonDecode(rawMessage) as Map<String, dynamic>;
+        final msgType = v['type'] as String? ?? '';
+
+        if (msgType.contains('connection-response')) {
+          await _handlePlaintextConnectionResponse(v);
+          return;
+        }
+
+        AppLogService().info('DIDComm', 'Plaintext message type not handled: $msgType');
+      } catch (e2) {
+        AppLogService().error('DIDComm', 'Decrypt/parse failed: $e');
+      }
     }
   }
 
-  /// Initialize WebSocket channel for Chinese users (direct push, no FCM).
-  Future<void> _initWebSocketChannel() async {
-    if (_authToken == null || _mediatorWsUrl.isEmpty) return;
+  /// Handle a plaintext connection-response (not JWE-encrypted).
+  /// Verifies MCP's signature, saves MCP info, then sends connection-confirm.
+  Future<void> _handlePlaintextConnectionResponse(Map<String, dynamic> msg) async {
+    final body = msg['body'] as Map<String, dynamic>? ?? {};
+    final accepted = body['accepted'] as bool? ?? false;
+    if (!accepted) {
+      AppLogService().warn('DIDComm', 'Plaintext connection-response rejected by MCP');
+      notifyListeners();
+      return;
+    }
 
+    final mcpDid = (msg['from'] as String?) ??
+        (body['did_document'] != null
+            ? (body['did_document'] as Map<String, dynamic>)['id'] as String? ?? ''
+            : '');
+    final mcpMediatorHttpUrl = body['mediator_http_url'] as String? ?? '';
+    final didDocJson = body['did_document'] != null
+        ? jsonEncode(body['did_document'])
+        : '';
+    final mcpNonce = body['mcp_nonce'] as String? ?? '';
+    final mcpSignature = body['mcp_signature'] as String? ?? '';
+
+    AppLogService().info('DIDComm', 'Connection-response: mcpDid=$mcpDid, mediator=$mcpMediatorHttpUrl, hasSig=${mcpSignature.isNotEmpty}');
+
+    if (mcpDid.isEmpty || didDocJson.isEmpty) {
+      AppLogService().error('DIDComm', 'Connection-response missing MCP DID or DID doc');
+      return;
+    }
+
+    // Verify MCP's signature over their nonce
+    if (mcpNonce.isNotEmpty && mcpSignature.isNotEmpty) {
+      try {
+        final valid = await rust.verifyDidSignature(
+          did: mcpDid,
+          message: mcpNonce,
+          signatureB64: mcpSignature,
+        );
+        if (!valid) {
+          AppLogService().error('DIDComm', 'MCP signature verification FAILED');
+          return;
+        }
+        AppLogService().info('DIDComm', 'MCP signature verified');
+      } catch (e) {
+        AppLogService().error('DIDComm', 'MCP signature verification error: $e');
+        return;
+      }
+    }
+
+    // Signature verified — save MCP info
+    final existing = _pairedMcps.indexWhere((m) => m.did == mcpDid);
+    final paired = PairedMcp(
+      did: mcpDid,
+      didDocJson: didDocJson,
+      mediatorHttpUrl: mcpMediatorHttpUrl,
+      pairedAt: DateTime.now(),
+    );
+    if (existing >= 0) {
+      _pairedMcps[existing] = paired;
+    } else {
+      _pairedMcps.add(paired);
+    }
+    await _savePairedMcps();
+    AppLogService().info('DIDComm', 'MCP paired and saved: $mcpDid');
+
+    // Send connection-confirm with our signed nonce
+    _sendConnectionConfirm(mcpDid, mcpMediatorHttpUrl);
+    notifyListeners();
+  }
+
+  /// Start periodic polling of messages received by the Rust WS connection.
+  void _startMessagePolling() {
+    _messagePollTimer?.cancel();
+    _messagePollTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
+      _pollRustMessages();
+    });
+  }
+
+  /// Poll messages queued by the Rust WsClient and process them.
+  Future<void> _pollRustMessages() async {
     try {
-      // Register websocket push channel preference with mediator
-      await _api.registerWebSocketChannel(_authToken!);
-
-      // Establish WS long connection for receiving messages directly
-      _wsChannel = WebSocketChannel.connect(Uri.parse(_mediatorWsUrl));
-
-      // Send identification message with DID so mediator can route to us
-      _wsChannel!.sink.add('{"from":"$_did","type":"identify"}');
-
-      _wsSubscription = _wsChannel!.stream.listen(
-        (data) {
-          if (data is String) {
-            _onWsMessage(data);
-          }
-        },
-        onError: (error) {
-          debugPrint('WS channel error: $error');
-          _reconnectWebSocket();
-        },
-        onDone: () {
-          debugPrint('WS channel closed, attempting reconnect');
-          _reconnectWebSocket();
-        },
-      );
-
-      debugPrint('WebSocket channel initialized for user $_did');
+      final messages = await rust.drainMediatorMessages();
+      if (messages.isNotEmpty) {
+        AppLogService().info('Mediator', 'Polled ${messages.length} message(s) from Rust WS queue');
+      }
+      for (final msg in messages) {
+        await _decryptAndProcess(msg);
+      }
     } catch (e) {
-      debugPrint('Failed to initialize WebSocket channel: $e');
+      AppLogService().error('Mediator', 'Message poll failed: $e');
     }
   }
 
-  /// Handle a message received directly via WebSocket.
-  void _onWsMessage(String jweEnvelope) {
-    debugPrint('WS message received (${jweEnvelope.length} bytes)');
-    // Decrypt and process the JWE directly
-    _decryptAndProcess(jweEnvelope);
-  }
-
-  /// Attempt to reconnect the WebSocket after a delay, pulling missed messages.
-  Future<void> _reconnectWebSocket() async {
-    _wsSubscription?.cancel();
-    _wsSubscription = null;
-    _wsChannel = null;
-
-    // Pull any messages that arrived while disconnected
-    await _pullAndDecryptMessages();
-
-    // Wait before reconnecting
-    await Future.delayed(const Duration(seconds: 3));
-
-    if (_isConnected && _isChineseUser) {
-      await _initWebSocketChannel();
-    }
-  }
-
-  /// Initialize FCM for push notifications.
+  /// Initialize FCM for push notifications (overseas users only).
   Future<void> _initFcm() async {
     try {
       await FcmService().initialize(
@@ -431,13 +634,13 @@ class DidcommService extends ChangeNotifier {
         );
       }
     } catch (e) {
-      debugPrint('FCM init failed (non-fatal): $e');
+      AppLogService().warn('FCM', 'Init failed (non-fatal): $e');
     }
   }
 
   /// Called when an FCM signal is received.
   void _onFcmSignal(String msgId) {
-    debugPrint('FCM signal received for msg: $msgId');
+    AppLogService().info('FCM', 'Signal received for msg: $msgId');
     _pullAndDecryptMessages();
   }
 
@@ -460,15 +663,16 @@ class DidcommService extends ChangeNotifier {
     if (_authToken == null) return;
     try {
       await _api.bindAgent(_authToken!, agentDid);
-      debugPrint('Bound agent $agentDid to user $_did');
+      AppLogService().info('Agent', 'Bound $agentDid to user $_did');
     } catch (e) {
-      debugPrint('Failed to bind agent: $e');
+      AppLogService().error('Agent', 'Failed to bind: $e');
     }
   }
 
   /// Parse an OOB invitation URL from a QR code scan and send a connection request.
   /// Returns the MCP DID on success, or throws on error.
   Future<String> parseInvitationAndConnect(String invitationUrl) async {
+    AppLogService().info('QR', 'Scanned invitation URL (${invitationUrl.length} chars)');
     try {
       // Parse the invitation URL (didcomm://?_oob=<base64url-json>)
       final uri = Uri.parse(invitationUrl);
@@ -492,14 +696,27 @@ class DidcommService extends ChangeNotifier {
       // Extract body
       final body = invitation['body'] as Map<String, dynamic>? ?? {};
 
-      // Extract mediator WS URL from services
+      // Extract mediator endpoint URL from services
+      // The invitation now contains the HTTP URL directly (not WSS).
+      // services can contain Map objects or plain URL strings (DIDComm OOB spec)
       final services = body['services'] as List<dynamic>? ?? [];
-      String mediatorWsUrl = '';
+      String mcpMediatorUrl = '';
       if (services.isNotEmpty) {
-        mediatorWsUrl = (services.first as Map<String, dynamic>)['service_endpoint'] as String? ?? '';
+        final svc = services.first;
+        if (svc is Map<String, dynamic>) {
+          mcpMediatorUrl = svc['service_endpoint'] as String? ?? '';
+        } else if (svc is String) {
+          mcpMediatorUrl = svc;
+        }
       }
 
-      debugPrint('Parsed OOB invitation: MCP DID=$mcpDid, mediator=$mediatorWsUrl');
+      // Ensure URL ends with / for the POST endpoint
+      if (mcpMediatorUrl.isNotEmpty && !mcpMediatorUrl.endsWith('/')) {
+        mcpMediatorUrl = '$mcpMediatorUrl/';
+      }
+
+      debugPrint('Parsed OOB invitation: MCP DID=$mcpDid, mediator=$mcpMediatorUrl');
+      AppLogService().info('QR', 'Parsed OOB: MCP DID=$mcpDid, mediator=$mcpMediatorUrl');
 
       // Determine push channel based on locale
       final pushChannel = _isChineseUser ? 'websocket' : 'fcm';
@@ -508,43 +725,75 @@ class DidcommService extends ChangeNotifier {
         fcmToken = FcmService().fcmToken;
       }
 
-      // Save mediator URL if it changed and connect to mediator
-      if (mediatorWsUrl.isNotEmpty && mediatorWsUrl != _mediatorWsUrl) {
-        await connectToMediator(mediatorWsUrl);
-      } else if (!_isConnected && mediatorWsUrl.isNotEmpty) {
-        await connectToMediator(mediatorWsUrl);
+      // Ensure we are connected to our own mediator before sending.
+      // We do NOT switch to the MCP's mediator — both parties may use
+      // different mediators, so we send through our own connection.
+      if (!_isConnected && _mediatorWsUrl.isNotEmpty) {
+        debugPrint('Reconnecting to our mediator before sending connection-request...');
+        AppLogService().info('QR', 'Reconnecting to own mediator before sending...');
+        await connectToMediator(_mediatorWsUrl);
       }
 
-      // Send connection request via the WS channel or HTTP API
+      // Build the connection-request inner message
       final connectionBody = <String, dynamic>{
         'push_channel': pushChannel,
+        'mediator_http_url': _mediatorHttpUrl.isNotEmpty
+            ? _mediatorHttpUrl
+            : _mediatorWsUrl.replaceFirst('ws', 'http').replaceAll(RegExp(r'/ws$'), ''),
+        'did_document': jsonDecode(_didDocJson), // phone's DID doc so MCP can encrypt to us
       };
       if (fcmToken != null) {
         connectionBody['fcm_token'] = fcmToken;
       }
 
-      // Build the connection-request message as JSON
-      final connectionMsg = jsonEncode({
+      final innerMsg = {
         'type': 'https://didcomm.org/ignite-pay/1.0/connection-request',
+        'id': 'conn-req-${DateTime.now().millisecondsSinceEpoch}',
         'from': _did,
         'to': [mcpDid],
         'body': connectionBody,
+      };
+
+      // Wrap in a forward message so the mediator can route to the MCP's DID.
+      // The mediator uses the `forward` protocol: body.next = target DID,
+      // attachments[0].data.json = the actual message payload.
+      final forwardMsg = jsonEncode({
+        'type': 'https://didcomm.org/routing/2.0/forward',
+        'id': 'fwd-${DateTime.now().millisecondsSinceEpoch}',
+        'body': {'next': mcpDid},
+        'attachments': [
+          {
+            'data': {'json': innerMsg},
+          },
+        ],
       });
 
-      // Send via WS if available, otherwise via mediator HTTP
-      if (_wsChannel != null) {
-        _wsChannel!.sink.add(connectionMsg);
-        debugPrint('Connection request sent to MCP $mcpDid via WS');
-      } else if (_authToken != null) {
-        await _api.submitCommand(_authToken!, mcpDid, connectionMsg);
-        debugPrint('Connection request sent to MCP $mcpDid via HTTP');
-      } else {
-        throw Exception('Not connected to mediator. Connect first.');
+      AppLogService().info('QR', 'Sending forward msg to MCP mediator: body=${jsonEncode(connectionBody)}');
+      AppLogService().info('QR', 'Forward msg: next=$mcpDid, innerMsg=${jsonEncode(innerMsg)}');
+
+      // Send the forward-wrapped connection-request to MCP's mediator via HTTP POST.
+      // The mediator's POST / endpoint is unauthenticated and will queue the message
+      // until it can be delivered to the MCP (which has a persistent WS connection).
+      debugPrint('Sending forward-wrapped connection request to MCP mediator: $mcpMediatorUrl');
+      AppLogService().info('QR', 'Sending connection-request to MCP mediator: $mcpMediatorUrl');
+      final httpClient = HttpClient();
+      final req = await httpClient.postUrl(Uri.parse(mcpMediatorUrl));
+      req.headers.set('Content-Type', 'application/json');
+      req.write(forwardMsg);
+      final resp = await req.close();
+      final statusCode = resp.statusCode;
+      debugPrint('MCP mediator responded: $statusCode');
+      AppLogService().info('QR', 'MCP mediator responded: $statusCode');
+      if (statusCode != 200 && statusCode != 202) {
+        final body = await resp.transform(utf8.decoder).join();
+        AppLogService().error('QR', 'MCP mediator rejected: $statusCode $body');
+        throw Exception('MCP mediator rejected message: $statusCode $body');
       }
 
+      AppLogService().info('QR', 'Connection request sent to MCP: $mcpDid, waiting for handshake...');
       return mcpDid;
     } catch (e) {
-      debugPrint('Failed to parse invitation and connect: $e');
+      AppLogService().error('QR', 'Failed to pair: $e');
       rethrow;
     }
   }
@@ -562,10 +811,31 @@ class DidcommService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Load paired MCPs from SharedPreferences.
+  void _loadPairedMcps() {
+    SharedPreferences.getInstance().then((prefs) {
+      final json = prefs.getString('paired_mcps');
+      if (json != null) {
+        final list = jsonDecode(json) as List<dynamic>;
+        _pairedMcps.clear();
+        _pairedMcps.addAll(
+          list.map((e) => PairedMcp.fromJson(e as Map<String, dynamic>)),
+        );
+        notifyListeners();
+      }
+    });
+  }
+
+  /// Save paired MCPs to SharedPreferences.
+  Future<void> _savePairedMcps() async {
+    final prefs = await SharedPreferences.getInstance();
+    final json = jsonEncode(_pairedMcps.map((e) => e.toJson()).toList());
+    await prefs.setString('paired_mcps', json);
+  }
+
   @override
   void dispose() {
-    _wsSubscription?.cancel();
-    _wsChannel?.sink.close();
+    _messagePollTimer?.cancel();
     _authRequestController.close();
     super.dispose();
   }

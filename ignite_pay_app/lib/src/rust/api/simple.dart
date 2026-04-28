@@ -104,12 +104,14 @@ Future<SessionKeyInfo> createSessionKeyForPayment({
 );
 
 /// Authenticate with the mediator and get a JWT token.
-/// Uses challenge-response: fetches a nonce, signs it with the DID key, and exchanges for JWT.
+/// Uses challenge-response: fetches a nonce, signs it with the DID's Ed25519 signing key, and exchanges for JWT.
 Future<String> authenticateWithMediator({
   required String mediatorUrl,
+  required String storagePath,
   required String did,
 }) => RustLib.instance.api.crateApiSimpleAuthenticateWithMediator(
   mediatorUrl: mediatorUrl,
+  storagePath: storagePath,
   did: did,
 );
 
@@ -188,6 +190,33 @@ Future<void> deleteSessionKeyLocal({
   storagePath: storagePath,
   sessionPubkey: sessionPubkey,
 );
+
+/// Sign a nonce string with the phone's Ed25519 signing key.
+/// Returns the base64-no-pad encoded signature.
+Future<String> signNonce({
+  required String storagePath,
+  required String nonce,
+}) => RustLib.instance.api.crateApiSimpleSignNonce(
+  storagePath: storagePath,
+  nonce: nonce,
+);
+
+/// Verify an Ed25519 signature from a DID.
+/// Returns true if the signature is valid for the given message and DID.
+Future<bool> verifyDidSignature({
+  required String did,
+  required String message,
+  required String signatureB64,
+}) => RustLib.instance.api.crateApiSimpleVerifyDidSignature(
+  did: did,
+  message: message,
+  signatureB64: signatureB64,
+);
+
+/// Drain all queued mediator messages received via the Rust WS connection.
+/// Called periodically by the Dart layer to process incoming messages.
+Future<List<String>> drainMediatorMessages() =>
+    RustLib.instance.api.crateApiSimpleDrainMediatorMessages();
 
 /// Send a connection request to the MCP via the mediator.
 /// This is called after parsing the QR code invitation.

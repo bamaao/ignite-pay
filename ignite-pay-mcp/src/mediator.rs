@@ -40,6 +40,10 @@ pub struct MediatorConnection {
     outgoing: Arc<tokio::sync::Mutex<mpsc::UnboundedSender<String>>>,
     /// DID of the paired phone (set during connection-request handshake).
     paired_phone: Arc<tokio::sync::Mutex<Option<String>>>,
+    /// DID of a phone that has sent connection-request but not yet confirmed (pending 3-step handshake).
+    pending_phone: Arc<tokio::sync::Mutex<Option<String>>>,
+    /// Mediator HTTP URL of the paired phone (used to forward messages via HTTP POST).
+    phone_mediator_http_url: Arc<tokio::sync::Mutex<Option<String>>>,
     signing_private: [u8; 32],
     db: sled::Db,
 }
@@ -51,6 +55,18 @@ fn save_paired_phone(db: &sled::Db, did: &str) {
 
 fn load_paired_phone(db: &sled::Db) -> Option<String> {
     db.get("__paired_phone__")
+        .ok()
+        .flatten()
+        .map(|v| String::from_utf8_lossy(&v).to_string())
+}
+
+fn save_phone_mediator_http_url(db: &sled::Db, url: &str) {
+    let _ = db.insert("__phone_mediator_http_url__", url.as_bytes());
+    let _ = db.flush();
+}
+
+fn load_phone_mediator_http_url(db: &sled::Db) -> Option<String> {
+    db.get("__phone_mediator_http_url__")
         .ok()
         .flatten()
         .map(|v| String::from_utf8_lossy(&v).to_string())
@@ -98,6 +114,8 @@ impl MediatorConnection {
             connected: Arc::new(Notify::new()),
             outgoing: Arc::new(tokio::sync::Mutex::new(outgoing_tx)),
             paired_phone: Arc::new(tokio::sync::Mutex::new(load_paired_phone(db))),
+            pending_phone: Arc::new(tokio::sync::Mutex::new(None)),
+            phone_mediator_http_url: Arc::new(tokio::sync::Mutex::new(load_phone_mediator_http_url(db))),
             signing_private,
             db: db.clone(),
         })
@@ -123,18 +141,41 @@ impl MediatorConnection {
         self.paired_phone.lock().await.clone()
     }
 
-    /// Generate an Out-of-Band invitation URL for P2P pairing.
-    /// The phone scans this QR code to learn our DID, DID document, and mediator endpoint.
-    /// Returns the OOB invitation as a URL-encoded JSON string.
+    /// Generate a lightweight Out-of-Band invitation URL without the DID document.
+    /// The DID document is resolved later by the phone via the mediator's peer introduction.
+    /// This produces a much shorter QR code that is scannable by phone cameras.
     pub fn generate_invitation(&self) -> String {
+        // Minimal invitation with routing info for message delivery.
+        // routing_keys = our DID so the sender knows how to route to us.
+        // Use HTTP URL directly so the phone app doesn't need to convert.
+        let endpoint = self.ws_url
+            .replace("wss://", "https://")
+            .replace("ws://", "http://")
+            .trim_end_matches("/ws")
+            .to_string();
+        let invitation = serde_json::json!({
+            "type": "https://didcomm.org/out-of-band/2.0/invitation",
+            "from": self.our_did,
+            "body": {
+                "services": [{
+                    "service_endpoint": endpoint,
+                    "routing_keys": [self.our_did]
+                }]
+            }
+        });
+        let json = serde_json::to_string(&invitation).unwrap_or_default();
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json.as_bytes());
+        format!("didcomm://?_oob={}", b64)
+    }
+
+    /// Generate a full Out-of-Band invitation URL including the DID document.
+    pub fn generate_invitation_full(&self) -> String {
         let invitation = didcomm::build_oob_invitation(
             &self.our_did,
             "Ignite Pay MCP",
             &self.ws_url,
             &self.did_doc,
         );
-        // Serialize the invitation message to JSON, then base64url-encode it
-        // as a DIDComm out-of-band URL: didcomm://?_oob=<base64url-json>
         let json = serde_json::to_string(&invitation).unwrap_or_default();
         let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json.as_bytes());
         format!("didcomm://?_oob={}", b64)
@@ -153,6 +194,22 @@ impl MediatorConnection {
         Ok(string)
     }
 
+    /// Generate the pairing QR as an SVG file and save to disk.
+    pub fn generate_invitation_qr_svg(&self, path: &str) -> Result<String> {
+        let url = self.generate_invitation();
+        let code = qrcode::QrCode::new(url.as_bytes())
+            .map_err(|e| anyhow::anyhow!("QR generation failed: {}", e))?;
+        let svg = code
+            .render::<qrcode::render::svg::Color>()
+            .min_dimensions(1024, 1024)
+            .dark_color(qrcode::render::svg::Color("#000000"))
+            .light_color(qrcode::render::svg::Color("#ffffff"))
+            .quiet_zone(true)
+            .build();
+        std::fs::write(path, &svg)?;
+        Ok(url)
+    }
+
     /// Connect to mediator, perform plaintext handshake, then start bidirectional loop.
     /// Spawns a background task that handles both sending and receiving.
     pub async fn connect(
@@ -166,6 +223,8 @@ impl MediatorConnection {
         let ws_url = self.ws_url.clone();
         let connected = self.connected.clone();
         let paired_phone = self.paired_phone.clone();
+        let pending_phone = self.pending_phone.clone();
+        let phone_mediator_http_url = self.phone_mediator_http_url.clone();
         let signing_private = self.signing_private;
         let db = self.db.clone();
 
@@ -188,6 +247,8 @@ impl MediatorConnection {
                 outgoing_rx,
                 pending,
                 paired_phone,
+                pending_phone,
+                phone_mediator_http_url,
                 create_channel_tx,
                 &signing_private,
                 &db,
@@ -198,8 +259,8 @@ impl MediatorConnection {
         Ok(())
     }
 
-    /// Send a payment authorization request to the phone via the mediator.
-    /// Encrypts and sends the JWE through the WebSocket connection.
+    /// Send a payment authorization request to the phone.
+    /// Encrypts to JWE, wraps in forward message, and sends directly to the phone's mediator.
     pub async fn send_auth_request(
         &self,
         phone_did: &str,
@@ -219,13 +280,7 @@ impl MediatorConnection {
             .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
         drop(agent);
 
-        // Send the JWE through the outgoing channel
-        {
-            let sender = self.outgoing.lock().await;
-            sender
-                .send(jwe.clone())
-                .map_err(|_| anyhow::anyhow!("WebSocket channel closed"))?;
-        }
+        self.send_to_phone_mediator(phone_did, &jwe).await?;
 
         tracing::info!(
             "Auth request sent for payment {} to phone {}",
@@ -281,12 +336,7 @@ impl MediatorConnection {
             .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
         drop(agent);
 
-        {
-            let sender = self.outgoing.lock().await;
-            sender
-                .send(jwe.clone())
-                .map_err(|_| anyhow::anyhow!("WebSocket channel closed"))?;
-        }
+        self.send_to_phone_mediator(phone_did, &jwe).await?;
 
         tracing::info!(
             "List sync notification sent: {} {} for {} (cid={})",
@@ -324,10 +374,7 @@ impl MediatorConnection {
             .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
         drop(agent);
 
-        let sender = self.outgoing.lock().await;
-        sender
-            .send(jwe.clone())
-            .map_err(|_| anyhow::anyhow!("WebSocket channel closed"))?;
+        self.send_to_phone_mediator(app_did, &jwe).await?;
 
         tracing::info!(
             "Create channel response sent to {}: success={}, channel_id={}",
@@ -337,6 +384,76 @@ impl MediatorConnection {
         );
 
         Ok(jwe)
+    }
+
+    /// Send a JWE to the phone's mediator via HTTP POST.
+    /// Wraps the JWE in a forward message so the mediator routes it to the phone.
+    /// Uses the mediator's public POST / endpoint (no auth required).
+    async fn send_to_phone_mediator(&self, phone_did: &str, jwe: &str) -> Result<()> {
+        let phone_http_url = self.phone_mediator_http_url.lock().await.clone();
+
+        // If same mediator, send through our own outgoing channel
+        let same_mediator = match &phone_http_url {
+            Some(url) => {
+                // Derive our own HTTP URL from WS URL for comparison
+                let our_http = self.ws_url
+                    .replace("wss://", "https://")
+                    .replace("ws://", "http://")
+                    .trim_end_matches("/ws")
+                    .to_string() + "/";
+                url == &our_http
+            }
+            None => false,
+        };
+
+        if same_mediator {
+            let sender = self.outgoing.lock().await;
+            sender
+                .send(jwe.to_string())
+                .map_err(|_| anyhow::anyhow!("WebSocket channel closed"))?;
+            return Ok(());
+        }
+
+        // Different mediator — wrap in forward and send via HTTP POST
+        let http_url = phone_http_url
+            .ok_or_else(|| anyhow::anyhow!("Phone mediator HTTP URL not known (not paired?)"))?;
+
+        let forward_msg = serde_json::json!({
+            "type": "https://didcomm.org/routing/2.0/forward",
+            "id": format!("fwd-{}", uuid::Uuid::new_v4()),
+            "body": { "next": phone_did },
+            "attachments": [{
+                "data": { "json": serde_json::Value::String(jwe.to_string()) }
+            }]
+        });
+
+        let forward_str = serde_json::to_string(&forward_msg)?;
+
+        tracing::info!(
+            "Sending forward-wrapped JWE to phone {} via their mediator HTTP {}",
+            phone_did,
+            http_url
+        );
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&http_url)
+            .header("Content-Type", "application/json")
+            .body(forward_str)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "Phone mediator rejected message: {} - {}",
+                status,
+                body
+            ));
+        }
+
+        Ok(())
     }
 }
 async fn real_ws_client(
@@ -348,6 +465,8 @@ async fn real_ws_client(
     mut outgoing_rx: mpsc::UnboundedReceiver<String>,
     pending: Arc<PendingAuthStore>,
     paired_phone: Arc<tokio::sync::Mutex<Option<String>>>,
+    pending_phone: Arc<tokio::sync::Mutex<Option<String>>>,
+    phone_mediator_http_url: Arc<tokio::sync::Mutex<Option<String>>>,
     create_channel_tx: Option<mpsc::UnboundedSender<CreateChannelCommand>>,
     signing_private: &[u8; 32],
     db: &sled::Db,
@@ -361,6 +480,8 @@ async fn real_ws_client(
             &mut outgoing_rx,
             &pending,
             &paired_phone,
+            &pending_phone,
+            &phone_mediator_http_url,
             &create_channel_tx,
             signing_private,
             db,
@@ -387,6 +508,8 @@ async fn connect_and_run(
     outgoing_rx: &mut mpsc::UnboundedReceiver<String>,
     pending: &PendingAuthStore,
     paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
+    pending_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
+    phone_mediator_http_url: &Arc<tokio::sync::Mutex<Option<String>>>,
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
     signing_private: &[u8; 32],
     db: &sled::Db,
@@ -554,7 +677,7 @@ async fn connect_and_run(
                                     for entry in messages {
                                         if let Some(jwe) = entry.get("message").and_then(|m| m.as_str()) {
                                             handle_incoming_message(
-                                                jwe, agent, pending, paired_phone, create_channel_tx, db,
+                                                jwe, agent, pending, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, db, our_did, did_doc, ws_url, signing_private,
                                             )
                                             .await;
                                         }
@@ -593,7 +716,7 @@ async fn connect_and_run(
             msg = ws.next() => {
                 match msg {
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
-                        handle_incoming_message(&text, agent, pending, paired_phone, create_channel_tx, db).await;
+                        handle_incoming_message(&text, agent, pending, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, db, our_did, did_doc, ws_url, signing_private).await;
                     }
                     Some(Ok(_)) => {}
                     Some(Err(e)) => return Err(e.into()),
@@ -616,14 +739,95 @@ async fn connect_and_run(
     }
 }
 
+/// Forward a message to a phone's mediator via HTTP POST.
+async fn http_forward_to_phone(phone_did: &str, inner_msg: &str, phone_http_url: &str) -> Result<()> {
+    let forward_msg = serde_json::json!({
+        "type": "https://didcomm.org/routing/2.0/forward",
+        "id": format!("fwd-{}", uuid::Uuid::new_v4()),
+        "body": { "next": phone_did },
+        "attachments": [{
+            "data": { "json": serde_json::from_str::<serde_json::Value>(inner_msg).unwrap_or_else(|_| serde_json::Value::String(inner_msg.to_string())) }
+        }]
+    });
+    let forward_str = serde_json::to_string(&forward_msg)?;
+    tracing::info!(
+        "Sending connection-response to phone {} via mediator HTTP {}",
+        phone_did, phone_http_url
+    );
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(phone_http_url)
+        .header("Content-Type", "application/json")
+        .body(forward_str)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!("Phone mediator rejected: {} - {}", status, body));
+    }
+    Ok(())
+}
+
+/// Build and send a connection-response to the phone via its mediator.
+/// Includes MCP's nonce and Ed25519 signature so the phone can verify MCP's identity.
+async fn send_conn_response(
+    phone_did: &str,
+    phone_http_url: &str,
+    our_did: &str,
+    did_doc: &Value,
+    our_ws_url: &str,
+    signing_private: &[u8; 32],
+    accepted: bool,
+) {
+    // Derive our HTTP URL from our WS URL for inclusion in the response
+    let our_http_url = our_ws_url
+        .replace("wss://", "https://")
+        .replace("ws://", "http://")
+        .trim_end_matches("/ws")
+        .to_string() + "/";
+
+    let body = if accepted {
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let signature = ignite_pay_core::sign_message(signing_private, nonce.as_bytes());
+        serde_json::json!({
+            "accepted": true,
+            "did_document": did_doc,
+            "mediator_http_url": our_http_url,
+            "mcp_nonce": nonce,
+            "mcp_signature": signature,
+        })
+    } else {
+        serde_json::json!({ "accepted": false })
+    };
+    let msg = serde_json::json!({
+        "type": "https://didcomm.org/ignite-pay/1.0/connection-response",
+        "id": format!("conn-resp-{}", uuid::Uuid::new_v4()),
+        "from": our_did,
+        "to": [phone_did],
+        "body": body,
+    });
+    let msg_str = serde_json::to_string(&msg).unwrap_or_default();
+    match http_forward_to_phone(phone_did, &msg_str, phone_http_url).await {
+        Ok(()) => tracing::info!("Sent connection-response to {} (accepted: {})", phone_did, accepted),
+        Err(e) => tracing::error!("Failed to send connection-response: {}", e),
+    }
+}
+
 /// Handle an incoming message: try JWE unpack, check for auth response or connection request.
 async fn handle_incoming_message(
     text: &str,
     agent: &Arc<Mutex<DIDCommAgent>>,
     pending: &PendingAuthStore,
     paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
+    pending_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
+    phone_mediator_http_url: &Arc<tokio::sync::Mutex<Option<String>>>,
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
     db: &sled::Db,
+    our_did: &str,
+    did_doc: &Value,
+    mcp_ws_url: &str,
+    signing_private: &[u8; 32],
 ) {
     // Try encrypted unpack first
     if is_jwe(text) {
@@ -631,7 +835,7 @@ async fn handle_incoming_message(
         match didcomm::unpack_message(&agent_guard, text, None) {
             Ok(msg) => {
                 drop(agent_guard);
-                process_inner_message(&msg, pending, paired_phone, agent, create_channel_tx, db).await;
+                process_inner_message(&msg, pending, paired_phone, pending_phone, phone_mediator_http_url, agent, create_channel_tx, db, our_did, did_doc, mcp_ws_url, signing_private).await;
                 return;
             }
             Err(e) => {
@@ -662,12 +866,39 @@ async fn handle_incoming_message(
             .get("push_channel")
             .and_then(|v| v.as_str())
             .unwrap_or("fcm");
+        let phone_http_url = v["body"]
+            .get("mediator_http_url")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         tracing::info!(
-            "Received plaintext connection-request from phone: {} (push_channel: {})",
+            "Received plaintext connection-request from phone: {} (push_channel: {}, mediator: {:?})",
             phone_did,
-            push_channel
+            push_channel,
+            phone_http_url
         );
+
+        // Check if already paired — only first-time pairing is allowed
+        {
+            let guard = paired_phone.lock().await;
+            if guard.is_some() {
+                tracing::warn!("Rejecting pairing from {}: already paired", phone_did);
+                drop(guard);
+                if let Some(ref http_url) = phone_http_url {
+                    send_conn_response(phone_did, http_url, our_did, did_doc, mcp_ws_url, signing_private, false).await;
+                }
+                return;
+            }
+        }
+
+        // Allow overwriting a stale pending pairing (e.g. phone reinstalled, new DID)
+        {
+            let mut guard = pending_phone.lock().await;
+            if let Some(ref existing) = *guard {
+                tracing::warn!("Overwriting pending pairing from {} with new request from {}", existing, phone_did);
+            }
+            *guard = None;
+        }
 
         // Try to parse phone's DID document from the message body
         if let Some(phone_doc) = v["body"].get("did_document") {
@@ -678,18 +909,94 @@ async fn handle_incoming_message(
             }
         }
 
-        // Store the phone DID
+        // Store as pending (not yet fully paired — needs connection-confirm)
+        {
+            let mut guard = pending_phone.lock().await;
+            *guard = Some(phone_did.to_string());
+        }
+
+        // Store the phone's mediator HTTP URL
+        if let Some(ref http_url) = phone_http_url {
+            let mut guard = phone_mediator_http_url.lock().await;
+            *guard = Some(http_url.clone());
+            save_phone_mediator_http_url(db, http_url);
+            tracing::info!("Saved phone mediator HTTP URL: {}", http_url);
+        }
+
+        tracing::info!(
+            "Phone {} connection-request stored as pending (push_channel: {})",
+            phone_did,
+            push_channel
+        );
+
+        // Send connection-response back to phone with MCP's identity info
+        if let Some(ref http_url) = phone_http_url {
+            send_conn_response(phone_did, http_url, our_did, did_doc, mcp_ws_url, signing_private, true).await;
+        } else {
+            tracing::warn!("Cannot send connection-response: phone mediator HTTP URL missing");
+        }
+
+        return;
+    }
+
+    // Check for connection-confirm in plaintext (3-step handshake step 3)
+    if v
+        .get("type")
+        .and_then(|t| t.as_str())
+        .map(|t| t.contains("connection-confirm"))
+        .unwrap_or(false)
+    {
+        let phone_did = v["from"].as_str().unwrap_or("");
+        let phone_nonce = v["body"]
+            .get("phone_nonce")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let phone_signature = v["body"]
+            .get("phone_signature")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        tracing::info!(
+            "Received plaintext connection-confirm from phone: {} (nonce: {}...)",
+            phone_did,
+            &phone_nonce[..phone_nonce.len().min(8)]
+        );
+
+        // Verify that this phone has a pending pairing
+        {
+            let guard = pending_phone.lock().await;
+            match guard.as_deref() {
+                Some(did) if did == phone_did => {}
+                _ => {
+                    tracing::warn!("No pending pairing for {}, ignoring connection-confirm", phone_did);
+                    return;
+                }
+            }
+        }
+
+        // Verify phone's signature over the nonce
+        let sig_valid = ignite_pay_core::verify_did_signature(phone_did, phone_nonce, phone_signature);
+        if !sig_valid {
+            tracing::warn!("Phone {} signature verification FAILED, rejecting", phone_did);
+            let mut guard = pending_phone.lock().await;
+            *guard = None;
+            return;
+        }
+
+        tracing::info!("Phone {} signature verified, completing pairing", phone_did);
+
+        // Move from pending to paired
         {
             let mut guard = paired_phone.lock().await;
             *guard = Some(phone_did.to_string());
         }
+        {
+            let mut guard = pending_phone.lock().await;
+            *guard = None;
+        }
         save_paired_phone(db, phone_did);
 
-        tracing::info!(
-            "Phone {} paired successfully via plaintext (push_channel: {})",
-            phone_did,
-            push_channel
-        );
+        tracing::info!("Phone {} fully paired", phone_did);
         return;
     }
 
@@ -765,9 +1072,15 @@ async fn process_inner_message(
     msg: &affinidi_messaging_didcomm::Message,
     pending: &PendingAuthStore,
     paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
+    pending_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
+    phone_mediator_http_url: &Arc<tokio::sync::Mutex<Option<String>>>,
     agent: &Arc<Mutex<DIDCommAgent>>,
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
     db: &sled::Db,
+    our_did: &str,
+    did_doc: &Value,
+    mcp_ws_url: &str,
+    signing_private: &[u8; 32],
 ) {
     // Check for connection-request type (pairing from phone)
     if msg.typ.contains("connection-request") {
@@ -780,12 +1093,40 @@ async fn process_inner_message(
             .get("push_channel")
             .and_then(|v| v.as_str())
             .unwrap_or("fcm");
+        let phone_http_url = msg
+            .body
+            .get("mediator_http_url")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         tracing::info!(
-            "Received connection-request from phone: {} (push_channel: {})",
+            "Received connection-request from phone: {} (push_channel: {}, mediator: {:?})",
             phone_did,
-            push_channel
+            push_channel,
+            phone_http_url
         );
+
+        // Check if already paired — only first-time pairing is allowed
+        {
+            let guard = paired_phone.lock().await;
+            if guard.is_some() {
+                tracing::warn!("Rejecting pairing from {}: already paired", phone_did);
+                drop(guard);
+                if let Some(ref http_url) = phone_http_url {
+                    send_conn_response(&phone_did, http_url, our_did, did_doc, mcp_ws_url, signing_private, false).await;
+                }
+                return;
+            }
+        }
+
+        // Allow overwriting a stale pending pairing (e.g. phone reinstalled, new DID)
+        {
+            let mut guard = pending_phone.lock().await;
+            if let Some(ref existing) = *guard {
+                tracing::warn!("Overwriting pending pairing from {} with new request from {}", existing, phone_did);
+            }
+            *guard = None;
+        }
 
         // Try to register phone from its DID document included in the message body
         if let Some(phone_doc) = msg.body.get("did_document") {
@@ -801,18 +1142,91 @@ async fn process_inner_message(
             );
         }
 
-        // Store the phone DID
+        // Store as pending (not yet fully paired — needs connection-confirm)
+        {
+            let mut guard = pending_phone.lock().await;
+            *guard = Some(phone_did.clone());
+        }
+
+        // Store the phone's mediator HTTP URL
+        if let Some(ref http_url) = phone_http_url {
+            let mut guard = phone_mediator_http_url.lock().await;
+            *guard = Some(http_url.clone());
+            save_phone_mediator_http_url(db, http_url);
+            tracing::info!("Saved phone mediator HTTP URL: {}", http_url);
+        }
+
+        tracing::info!(
+            "Phone {} connection-request stored as pending (push_channel: {})",
+            phone_did,
+            push_channel
+        );
+
+        // Send connection-response back to phone with MCP's identity info
+        if let Some(ref http_url) = phone_http_url {
+            send_conn_response(&phone_did, http_url, our_did, did_doc, mcp_ws_url, signing_private, true).await;
+        } else {
+            tracing::warn!("Cannot send connection-response: phone mediator HTTP URL missing");
+        }
+
+        return;
+    }
+
+    // Check for connection-confirm type (3-step handshake step 3)
+    if msg.typ.contains("connection-confirm") {
+        let phone_did = msg.from.clone().unwrap_or_default();
+        let phone_nonce = msg
+            .body
+            .get("phone_nonce")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let phone_signature = msg
+            .body
+            .get("phone_signature")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        tracing::info!(
+            "Received connection-confirm from phone: {} (nonce: {}...)",
+            phone_did,
+            &phone_nonce[..phone_nonce.len().min(8)]
+        );
+
+        // Verify that this phone has a pending pairing
+        {
+            let guard = pending_phone.lock().await;
+            match guard.as_deref() {
+                Some(did) if did == phone_did => {}
+                _ => {
+                    tracing::warn!("No pending pairing for {}, ignoring connection-confirm", phone_did);
+                    return;
+                }
+            }
+        }
+
+        // Verify phone's signature over the nonce
+        let sig_valid = ignite_pay_core::verify_did_signature(&phone_did, phone_nonce, phone_signature);
+        if !sig_valid {
+            tracing::warn!("Phone {} signature verification FAILED, rejecting", phone_did);
+            let mut guard = pending_phone.lock().await;
+            *guard = None;
+            return;
+        }
+
+        tracing::info!("Phone {} signature verified, completing pairing", phone_did);
+
+        // Move from pending to paired
         {
             let mut guard = paired_phone.lock().await;
             *guard = Some(phone_did.clone());
         }
+        {
+            let mut guard = pending_phone.lock().await;
+            *guard = None;
+        }
         save_paired_phone(db, &phone_did);
 
-        tracing::info!(
-            "Phone {} paired successfully (push_channel: {})",
-            phone_did,
-            push_channel
-        );
+        tracing::info!("Phone {} fully paired", phone_did);
         return;
     }
 

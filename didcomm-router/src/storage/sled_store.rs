@@ -209,6 +209,17 @@ impl KeylistStore for SledKeylistStore {
             None => Ok(None),
         }
     }
+
+    async fn resolve_session_prefix(&self, recipient_did_prefix: &str) -> crate::error::Result<Option<String>> {
+        let reverse = self.reverse_tree()?;
+        for item in reverse.scan_prefix(recipient_did_prefix.as_bytes()) {
+            let (_, v) = item?;
+            return Ok(Some(
+                String::from_utf8(v.to_vec()).map_err(|e| crate::error::RouterError::Storage(e.to_string()))?,
+            ));
+        }
+        Ok(None)
+    }
 }
 
 // ── Sled-backed DeviceTokenStore ─────────────────────────────────────

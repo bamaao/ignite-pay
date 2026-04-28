@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -335304412;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 518462751;
 
 // Section: executor
 
@@ -114,6 +114,7 @@ fn wire__crate__api__merchant_didcomm__authenticate_with_mediator_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_mediator_url = <String>::sse_decode(&mut deserializer);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
             let api_did = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
@@ -121,6 +122,7 @@ fn wire__crate__api__merchant_didcomm__authenticate_with_mediator_impl(
                     (move || async move {
                         let output_ok = crate::api::merchant_didcomm::authenticate_with_mediator(
                             api_mediator_url,
+                            api_storage_path,
                             api_did,
                         )
                         .await?;
@@ -1093,6 +1095,8 @@ fn wire__crate__api__merchant_didcomm__send_connection_request_impl(
             let api_mediator_ws_url = <String>::sse_decode(&mut deserializer);
             let api_push_channel = <String>::sse_decode(&mut deserializer);
             let api_fcm_token = <Option<String>>::sse_decode(&mut deserializer);
+            let api_app_mediator_ws_url = <Option<String>>::sse_decode(&mut deserializer);
+            let api_app_mediator_http_url = <Option<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
@@ -1104,6 +1108,8 @@ fn wire__crate__api__merchant_didcomm__send_connection_request_impl(
                             api_mediator_ws_url,
                             api_push_channel,
                             api_fcm_token,
+                            api_app_mediator_ws_url,
+                            api_app_mediator_http_url,
                         )
                         .await?;
                         Ok(output_ok)
@@ -1160,6 +1166,84 @@ fn wire__crate__api__merchant_didcomm__send_create_channel_request_impl(
                         Ok(output_ok)
                     })()
                     .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__merchant_didcomm__sign_nonce_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "sign_nonce",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_nonce = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok =
+                            crate::api::merchant_didcomm::sign_nonce(api_storage_path, api_nonce)?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__merchant_didcomm__verify_did_signature_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "verify_did_signature",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_did = <String>::sse_decode(&mut deserializer);
+            let api_message = <String>::sse_decode(&mut deserializer);
+            let api_signature_b64 = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::merchant_didcomm::verify_did_signature(
+                            api_did,
+                            api_message,
+                            api_signature_b64,
+                        )?;
+                        Ok(output_ok)
+                    })(),
                 )
             }
         },
@@ -1675,6 +1759,15 @@ fn pde_ffi_dispatcher_primary_impl(
             data_len,
         ),
         28 => wire__crate__api__merchant_didcomm__send_create_channel_request_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        29 => {
+            wire__crate__api__merchant_didcomm__sign_nonce_impl(port, ptr, rust_vec_len, data_len)
+        }
+        30 => wire__crate__api__merchant_didcomm__verify_did_signature_impl(
             port,
             ptr,
             rust_vec_len,

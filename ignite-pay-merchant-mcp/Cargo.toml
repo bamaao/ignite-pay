@@ -14,8 +14,12 @@ ignite-pay-state-channel = { path = "../ignite-pay-state-channel" }
 ignite-pay-solana = { path = "../ignite-pay-solana" }
 
 # MCP SDK
-rmcp = { version = "=1.4.0", features = ["transport-io"] }
+rmcp = { version = "1.5", features = ["transport-io", "transport-streamable-http-server"] }
 schemars = "1"
+
+# HTTP server for SSE transport
+axum = { version = "0.8", features = ["http1", "tokio"], default-features = false }
+tokio-util = "0.7"
 
 # Async
 tokio = { version = "1", features = ["full"] }

@@ -33,6 +33,10 @@ use rmcp::{
     model::ServerCapabilities,
     tool, tool_handler, tool_router,
     transport::stdio,
+    transport::streamable_http_server::{
+        StreamableHttpServerConfig, StreamableHttpService,
+        session::local::LocalSessionManager,
+    },
     ServerHandler, ServiceExt,
 };
 use std::sync::Arc;
@@ -43,6 +47,8 @@ use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 #[derive(Debug, serde::Deserialize)]
 struct Config {
+    #[serde(default)]
+    mcp: McpConfig,
     mediator: MediatorConfig,
     storage: StorageConfig,
     policy: PolicyConfig,
@@ -50,6 +56,12 @@ struct Config {
     ipfs: IpfsConfig,
     #[serde(default)]
     solana: SolanaConfig,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+struct McpConfig {
+    #[serde(default)]
+    sse_port: u16,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -1408,22 +1420,23 @@ impl ServerHandler for IgnitePayMcpServer {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Install rustls crypto provider (required for TLS connections)
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .ok();
+
     // Initialize tracing with optional file output
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "ignite_pay_mcp=info".into());
+        .unwrap_or_else(|_| "ignite_pay_mcp=info,ignite_pay_core=info".into());
 
-    if let Ok(log_dir) = std::env::var("AUDIT_LOG_DIR") {
-        let file_appender = tracing_appender::rolling::daily(&log_dir, "ignite-pay-mcp.log");
-        tracing_subscriber::fmt()
-            .with_writer(std::io::stderr.and(file_appender))
-            .with_env_filter(env_filter)
-            .init();
-    } else {
-        tracing_subscriber::fmt()
-            .with_writer(std::io::stderr)
-            .with_env_filter(env_filter)
-            .init();
-    }
+    // Always log to file (./data/logs/) and stderr
+    let log_dir = std::env::var("AUDIT_LOG_DIR").unwrap_or_else(|_| "./data/logs".to_string());
+    let _ = std::fs::create_dir_all(&log_dir);
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "ignite-pay-mcp.log");
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr.and(file_appender))
+        .with_env_filter(env_filter)
+        .init();
 
     let config = load_config()?;
     tracing::info!("Loaded config: mediator={}", config.mediator.ws_url);
@@ -1548,16 +1561,25 @@ async fn main() -> anyhow::Result<()> {
 
     // Auto-display pairing QR if no phone is paired and no phone_did in config
     if mediator.paired_phone_did().await.is_none() && config.mediator.phone_did.is_empty() {
-        let url = mediator.generate_invitation();
-        match mediator.generate_invitation_qr() {
-            Ok(qr) => {
-                tracing::info!("\n{}", qr);
-                tracing::info!("\nInvitation URL:\n{}", url);
-                tracing::info!("Scan the QR code above with Ignite Pay to pair.");
+        let qr_path = format!("{}/pairing_qr.svg", config.storage.path);
+        match mediator.generate_invitation_qr_svg(&qr_path) {
+            Ok(url) => {
+                tracing::info!("Pairing QR saved to: {}", qr_path);
+                tracing::info!("Invitation URL:\n{}", url);
+                tracing::info!("Scan the QR image with Ignite Pay to pair.");
+
+                // Open the QR image with the system default viewer
+                #[cfg(target_os = "windows")]
+                std::process::Command::new("cmd").args(["/c", "start", &qr_path]).spawn().ok();
+                #[cfg(target_os = "macos")]
+                std::process::Command::new("open").arg(&qr_path).spawn().ok();
+                #[cfg(target_os = "linux")]
+                std::process::Command::new("xdg-open").arg(&qr_path).spawn().ok();
             }
             Err(e) => {
-                tracing::warn!("Failed to generate QR code: {}. Invitation URL:\n{}", e, url);
-                tracing::info!("Use the invitation URL above to pair manually.");
+                tracing::warn!("Failed to generate QR image: {}", e);
+                let url = mediator.generate_invitation();
+                tracing::info!("Invitation URL (manual):\n{}", url);
             }
         }
     } else if let Some(phone) = mediator.paired_phone_did().await {
@@ -1670,8 +1692,69 @@ async fn main() -> anyhow::Result<()> {
     };
 
     tracing::info!("Starting MCP server on stdio...");
-    let service = server.serve(stdio()).await?;
-    service.waiting().await?;
+    // Spawn the MCP stdio server in a background task.
+    // If no MCP client connects (e.g. running standalone), log a warning
+    // but keep the process alive — the mediator WS connection and DIDComm
+    // message loop continue working independently.
+    tokio::spawn({
+        let server = server.clone();
+        async move {
+            match server.serve(stdio()).await {
+                Ok(service) => {
+                    if let Err(e) = service.waiting().await {
+                        tracing::warn!("MCP stdio service ended: {}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("MCP stdio server failed to start (non-fatal): {}. Process stays alive for DIDComm mediator connection.", e);
+                }
+            }
+        }
+    });
+
+    // Start SSE/Streamable HTTP server if port is configured
+    if config.mcp.sse_port > 0 {
+        let sse_port = config.mcp.sse_port;
+        let ct = tokio_util::sync::CancellationToken::new();
+        let session_manager = Arc::new(LocalSessionManager::default());
+        let http_service = StreamableHttpService::new(
+            {
+                let server = server.clone();
+                move || Ok(server.clone())
+            },
+            session_manager,
+            StreamableHttpServerConfig::default()
+                .with_sse_keep_alive(None)
+                .with_cancellation_token(ct.child_token()),
+        );
+
+        let router = axum::Router::new().nest_service("/mcp", http_service);
+
+        let listener = match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", sse_port)).await {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::error!("Failed to bind SSE port {}: {}", sse_port, e);
+                return Err(e.into());
+            }
+        };
+        tracing::info!("MCP SSE server listening on http://0.0.0.0:{}/mcp", sse_port);
+
+        tokio::spawn({
+            let ct = ct.clone();
+            async move {
+                let _ = axum::serve(listener, router)
+                    .with_graceful_shutdown(async move { ct.cancelled_owned().await })
+                    .await;
+            }
+        });
+    } else {
+        tracing::info!("SSE transport disabled (mcp.sse_port = 0)");
+    }
+
+    // Keep the process alive — the mediator WS loop runs in the background.
+    // The process should only exit on explicit signal (Ctrl+C).
+    tokio::signal::ctrl_c().await?;
+    tracing::info!("Shutting down...");
 
     Ok(())
 }

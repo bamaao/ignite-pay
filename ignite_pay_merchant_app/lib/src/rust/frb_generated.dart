@@ -65,7 +65,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -335304412;
+  int get rustContentHash => 518462751;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -87,6 +87,7 @@ abstract class RustLibApi extends BaseApi {
 
   Future<String> crateApiMerchantDidcommAuthenticateWithMediator({
     required String mediatorUrl,
+    required String storagePath,
     required String did,
   });
 
@@ -213,6 +214,8 @@ abstract class RustLibApi extends BaseApi {
     required String mediatorWsUrl,
     required String pushChannel,
     String? fcmToken,
+    String? appMediatorWsUrl,
+    String? appMediatorHttpUrl,
   });
 
   Future<void> crateApiMerchantDidcommSendCreateChannelRequest({
@@ -223,6 +226,17 @@ abstract class RustLibApi extends BaseApi {
     required String tokenMint,
     required BigInt deposit,
     required int treeDepth,
+  });
+
+  Future<String> crateApiMerchantDidcommSignNonce({
+    required String storagePath,
+    required String nonce,
+  });
+
+  Future<bool> crateApiMerchantDidcommVerifyDidSignature({
+    required String did,
+    required String message,
+    required String signatureB64,
   });
 }
 
@@ -278,6 +292,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @override
   Future<String> crateApiMerchantDidcommAuthenticateWithMediator({
     required String mediatorUrl,
+    required String storagePath,
     required String did,
   }) {
     return handler.executeNormal(
@@ -285,6 +300,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(mediatorUrl, serializer);
+          sse_encode_String(storagePath, serializer);
           sse_encode_String(did, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
@@ -298,7 +314,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiMerchantDidcommAuthenticateWithMediatorConstMeta,
-        argValues: [mediatorUrl, did],
+        argValues: [mediatorUrl, storagePath, did],
         apiImpl: this,
       ),
     );
@@ -307,7 +323,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiMerchantDidcommAuthenticateWithMediatorConstMeta =>
       const TaskConstMeta(
         debugName: "authenticate_with_mediator",
-        argNames: ["mediatorUrl", "did"],
+        argNames: ["mediatorUrl", "storagePath", "did"],
       );
 
   @override
@@ -1159,6 +1175,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String mediatorWsUrl,
     required String pushChannel,
     String? fcmToken,
+    String? appMediatorWsUrl,
+    String? appMediatorHttpUrl,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -1170,6 +1188,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(mediatorWsUrl, serializer);
           sse_encode_String(pushChannel, serializer);
           sse_encode_opt_String(fcmToken, serializer);
+          sse_encode_opt_String(appMediatorWsUrl, serializer);
+          sse_encode_opt_String(appMediatorHttpUrl, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -1189,6 +1209,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           mediatorWsUrl,
           pushChannel,
           fcmToken,
+          appMediatorWsUrl,
+          appMediatorHttpUrl,
         ],
         apiImpl: this,
       ),
@@ -1205,6 +1227,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "mediatorWsUrl",
           "pushChannel",
           "fcmToken",
+          "appMediatorWsUrl",
+          "appMediatorHttpUrl",
         ],
       );
 
@@ -1267,6 +1291,78 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "deposit",
           "treeDepth",
         ],
+      );
+
+  @override
+  Future<String> crateApiMerchantDidcommSignNonce({
+    required String storagePath,
+    required String nonce,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(nonce, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 29,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiMerchantDidcommSignNonceConstMeta,
+        argValues: [storagePath, nonce],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMerchantDidcommSignNonceConstMeta =>
+      const TaskConstMeta(
+        debugName: "sign_nonce",
+        argNames: ["storagePath", "nonce"],
+      );
+
+  @override
+  Future<bool> crateApiMerchantDidcommVerifyDidSignature({
+    required String did,
+    required String message,
+    required String signatureB64,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(did, serializer);
+          sse_encode_String(message, serializer);
+          sse_encode_String(signatureB64, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 30,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiMerchantDidcommVerifyDidSignatureConstMeta,
+        argValues: [did, message, signatureB64],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMerchantDidcommVerifyDidSignatureConstMeta =>
+      const TaskConstMeta(
+        debugName: "verify_did_signature",
+        argNames: ["did", "message", "signatureB64"],
       );
 
   @protected

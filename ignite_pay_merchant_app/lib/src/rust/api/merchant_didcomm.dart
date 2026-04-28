@@ -31,12 +31,14 @@ Future<void> disconnectMediator() =>
     RustLib.instance.api.crateApiMerchantDidcommDisconnectMediator();
 
 /// Authenticate with the mediator via challenge-response.
-/// Derives an Ed25519 signing key from the DIDComm DID for signing.
+/// Signs the nonce with the actual Ed25519 signing key from identity storage.
 Future<String> authenticateWithMediator({
   required String mediatorUrl,
+  required String storagePath,
   required String did,
 }) => RustLib.instance.api.crateApiMerchantDidcommAuthenticateWithMediator(
   mediatorUrl: mediatorUrl,
+  storagePath: storagePath,
   did: did,
 );
 
@@ -61,6 +63,28 @@ Future<DecryptedMessage> decryptMessage({
 }) => RustLib.instance.api.crateApiMerchantDidcommDecryptMessage(
   storagePath: storagePath,
   jwe: jwe,
+);
+
+/// Sign a nonce string with the merchant's Ed25519 signing key.
+/// Returns the base64-no-pad encoded signature.
+Future<String> signNonce({
+  required String storagePath,
+  required String nonce,
+}) => RustLib.instance.api.crateApiMerchantDidcommSignNonce(
+  storagePath: storagePath,
+  nonce: nonce,
+);
+
+/// Verify an Ed25519 signature from a DID.
+/// Returns true if the signature is valid for the given message and DID.
+Future<bool> verifyDidSignature({
+  required String did,
+  required String message,
+  required String signatureB64,
+}) => RustLib.instance.api.crateApiMerchantDidcommVerifyDidSignature(
+  did: did,
+  message: message,
+  signatureB64: signatureB64,
 );
 
 /// Register an FCM device token with the mediator.
@@ -88,6 +112,7 @@ Future<OobInvitationData> parseOobInvitation({required String invitationUrl}) =>
     );
 
 /// Send a connection request to the MCP after parsing the QR invitation.
+/// Includes the merchant app's mediator HTTP URL so the MCP can forward messages back.
 Future<void> sendConnectionRequest({
   required String storagePath,
   required String mcpDid,
@@ -95,6 +120,8 @@ Future<void> sendConnectionRequest({
   required String mediatorWsUrl,
   required String pushChannel,
   String? fcmToken,
+  String? appMediatorWsUrl,
+  String? appMediatorHttpUrl,
 }) => RustLib.instance.api.crateApiMerchantDidcommSendConnectionRequest(
   storagePath: storagePath,
   mcpDid: mcpDid,
@@ -102,6 +129,8 @@ Future<void> sendConnectionRequest({
   mediatorWsUrl: mediatorWsUrl,
   pushChannel: pushChannel,
   fcmToken: fcmToken,
+  appMediatorWsUrl: appMediatorWsUrl,
+  appMediatorHttpUrl: appMediatorHttpUrl,
 );
 
 /// Send a create-channel request to the merchant MCP server via DIDComm.

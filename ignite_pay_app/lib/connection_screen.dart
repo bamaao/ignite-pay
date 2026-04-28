@@ -76,22 +76,39 @@ class _ConnectionManagementScreenState
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: kDanger,
-            behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            content: Text('Connection failed: $e',
-                style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
-            duration: const Duration(seconds: 3),
-          ),
-        );
+        _showErrorDialog('Connection Failed', e.toString());
       }
     } finally {
       if (mounted) setState(() => _isConnecting = false);
     }
+  }
+
+  void _showErrorDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: kSurfaceDark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Row(
+          children: [
+            Icon(LucideIcons.alertCircle, size: 20, color: kDanger),
+            const SizedBox(width: 10),
+            Text(title,
+                style: GoogleFonts.inter(
+                    fontSize: 16, fontWeight: FontWeight.w600, color: kTextPrimary)),
+          ],
+        ),
+        content: Text(message,
+            style: GoogleFonts.inter(fontSize: 13, color: kTextSecondary)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text('OK',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: kNeonCyan)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _disconnectMediator() async {
@@ -383,12 +400,8 @@ class _McpListCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<DidcommService>(
       builder: (context, svc, _) {
-        // Show MCP count from messages or empty state
-        final mcps = svc.messages
-            .where((m) => m.merchantDid != null)
-            .map((m) => m.merchantDid!)
-            .toSet()
-            .toList();
+        // Show MCP agents from stored paired MCPs
+        final mcps = svc.pairedMcps;
 
         if (mcps.isEmpty) {
           return Container(
@@ -422,7 +435,11 @@ class _McpListCard extends StatelessWidget {
 
         return Column(
           children: mcps
-              .map((did) => _McpTile(did: did))
+              .map((mcp) => _McpTile(
+                    did: mcp.did,
+                    mediatorUrl: mcp.mediatorHttpUrl,
+                    pairedAt: mcp.pairedAt,
+                  ))
               .toList(),
         );
       },
@@ -432,11 +449,61 @@ class _McpListCard extends StatelessWidget {
 
 class _McpTile extends StatelessWidget {
   final String did;
-  const _McpTile({required this.did});
+  final String mediatorUrl;
+  final DateTime pairedAt;
+  const _McpTile({required this.did, required this.mediatorUrl, required this.pairedAt});
+
+  void _showDetail(BuildContext context) {
+    final short = did.length > 32 ? '${did.substring(0, 32)}...' : did;
+    final dateStr = '${pairedAt.year}-${pairedAt.month.toString().padLeft(2, '0')}-${pairedAt.day.toString().padLeft(2, '0')} '
+        '${pairedAt.hour.toString().padLeft(2, '0')}:${pairedAt.minute.toString().padLeft(2, '0')}';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: kSurfaceDark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Row(
+          children: [
+            Icon(LucideIcons.bot, size: 20, color: kPurple),
+            const SizedBox(width: 10),
+            Text('MCP Agent',
+                style: GoogleFonts.inter(
+                    fontSize: 16, fontWeight: FontWeight.w600, color: kTextPrimary)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('DID', style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600, color: kTextTertiary)),
+            const SizedBox(height: 2),
+            SelectableText(short, style: GoogleFonts.jetBrainsMono(fontSize: 12, color: kTextPrimary)),
+            const SizedBox(height: 12),
+            Text('Mediator', style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600, color: kTextTertiary)),
+            const SizedBox(height: 2),
+            SelectableText(mediatorUrl, style: GoogleFonts.jetBrainsMono(fontSize: 12, color: kTextPrimary)),
+            const SizedBox(height: 12),
+            Text('Paired', style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600, color: kTextTertiary)),
+            const SizedBox(height: 2),
+            Text(dateStr, style: GoogleFonts.inter(fontSize: 12, color: kTextSecondary)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text('Close',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: kNeonCyan)),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final short = did.length > 24 ? '${did.substring(0, 24)}...' : did;
+    final mediatorShort = mediatorUrl.length > 30 ? '${mediatorUrl.substring(0, 30)}...' : mediatorUrl;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -444,9 +511,10 @@ class _McpTile extends StatelessWidget {
         icon: LucideIcons.bot,
         iconColor: kPurple,
         title: 'MCP Agent',
-        subtitle: short,
+        subtitle: '$short\n$mediatorShort',
         trailing: Icon(LucideIcons.chevronRight,
             size: 18, color: kTextTertiary),
+        onTap: () => _showDetail(context),
       ),
     );
   }

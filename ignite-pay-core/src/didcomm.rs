@@ -106,15 +106,106 @@ pub fn build_connection_request(
     .to(vec![to_did.to_string()])
 }
 
+/// Build a connection request with mediator_http_url so the MCP knows where to forward messages.
+pub fn build_connection_request_with_mediator(
+    from_did: &str,
+    to_did: &str,
+    push_channel: &str,
+    fcm_token: Option<&str>,
+    mediator_http_url: &str,
+) -> Message {
+    let mut body = json!({
+        "push_channel": push_channel,
+        "mediator_http_url": mediator_http_url,
+    });
+    if let Some(token) = fcm_token {
+        body["fcm_token"] = json!(token);
+    }
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/connection-request",
+        body,
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
 /// Build a connection response sent by the MCP to acknowledge a pairing request.
+/// When accepted, includes the MCP's DID document, mediator URL, and a signed nonce
+/// so the phone can verify the MCP's identity before completing pairing.
 pub fn build_connection_response(
     from_did: &str,
     to_did: &str,
     accepted: bool,
+    did_doc: Option<&Value>,
+    mediator_http_url: Option<&str>,
+    mcp_nonce: Option<&str>,
+    mcp_signature: Option<&str>,
 ) -> Message {
+    let body = if accepted {
+        let mut b = json!({ "accepted": true });
+        if let Some(doc) = did_doc {
+            b["did_document"] = doc.clone();
+        }
+        if let Some(url) = mediator_http_url {
+            b["mediator_http_url"] = json!(url);
+        }
+        if let Some(nonce) = mcp_nonce {
+            b["mcp_nonce"] = json!(nonce);
+        }
+        if let Some(sig) = mcp_signature {
+            b["mcp_signature"] = json!(sig);
+        }
+        b
+    } else {
+        json!({ "accepted": false })
+    };
     Message::new(
         "https://didcomm.org/ignite-pay/1.0/connection-response",
-        json!({ "accepted": accepted }),
+        body,
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build a connection-confirm message sent by the phone/merchant app after
+/// receiving a connection-response. Contains a random nonce and its Ed25519
+/// signature to prove ownership of the DID's signing key.
+pub fn build_connection_confirm(
+    from_did: &str,
+    to_did: &str,
+    nonce: &str,
+    signature: &str,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/connection-confirm",
+        json!({
+            "phone_nonce": nonce,
+            "phone_signature": signature,
+        }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build a connection-confirm-response message sent by the MCP after
+/// verifying the phone's connection-confirm signature. Contains the MCP's
+/// own nonce and signature, plus an echo of the phone's nonce.
+pub fn build_connection_confirm_response(
+    from_did: &str,
+    to_did: &str,
+    mcp_nonce: &str,
+    mcp_signature: &str,
+    phone_nonce_echo: &str,
+    accepted: bool,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/connection-confirm-response",
+        json!({
+            "mcp_nonce": mcp_nonce,
+            "mcp_signature": mcp_signature,
+            "phone_nonce_echo": phone_nonce_echo,
+            "accepted": accepted,
+        }),
     )
     .from(from_did.to_string())
     .to(vec![to_did.to_string()])
@@ -541,13 +632,16 @@ mod tests {
 
     #[test]
     fn test_build_connection_response() {
-        let msg = build_connection_response(TEST_DID, PHONE_DID, true);
+        let did_doc = json!({"id": TEST_DID});
+        let msg = build_connection_response(TEST_DID, PHONE_DID, true, Some(&did_doc), Some("https://example.com"), Some("nonce123"), Some("sig456"));
 
         assert_eq!(
             msg.typ,
             "https://didcomm.org/ignite-pay/1.0/connection-response"
         );
         assert_eq!(msg.body.get("accepted").unwrap().as_bool(), Some(true));
+        assert_eq!(msg.body.get("mcp_nonce").unwrap().as_str(), Some("nonce123"));
+        assert_eq!(msg.body.get("mcp_signature").unwrap().as_str(), Some("sig456"));
         assert_eq!(msg.from.as_ref().unwrap(), TEST_DID);
         assert_eq!(
             msg.to.as_ref().unwrap().first().unwrap(),
@@ -557,7 +651,7 @@ mod tests {
 
     #[test]
     fn test_build_connection_response_rejected() {
-        let msg = build_connection_response(TEST_DID, PHONE_DID, false);
+        let msg = build_connection_response(TEST_DID, PHONE_DID, false, None, None, None, None);
         assert_eq!(msg.body.get("accepted").unwrap().as_bool(), Some(false));
     }
 
@@ -752,6 +846,57 @@ mod tests {
         assert_eq!(msg.to.as_ref().unwrap().first().unwrap(), TEST_DID);
         assert_eq!(msg.body["nonce"], "nonce-abc-123");
         assert_eq!(msg.body["did_document"]["id"], PHONE_DID);
+    }
+
+    // --- build_connection_confirm ---
+
+    #[test]
+    fn test_build_connection_confirm() {
+        let msg = build_connection_confirm(
+            PHONE_DID,
+            TEST_DID,
+            "nonce-abc-123",
+            "sig-base64-xyz",
+        );
+        assert_eq!(msg.typ, "https://didcomm.org/ignite-pay/1.0/connection-confirm");
+        assert_eq!(msg.from.as_ref().unwrap(), PHONE_DID);
+        assert_eq!(msg.to.as_ref().unwrap().first().unwrap(), TEST_DID);
+        assert_eq!(msg.body["phone_nonce"], "nonce-abc-123");
+        assert_eq!(msg.body["phone_signature"], "sig-base64-xyz");
+    }
+
+    // --- build_connection_confirm_response ---
+
+    #[test]
+    fn test_build_connection_confirm_response_accepted() {
+        let msg = build_connection_confirm_response(
+            TEST_DID,
+            PHONE_DID,
+            "mcp-nonce-456",
+            "mcp-sig-789",
+            "phone-nonce-echo",
+            true,
+        );
+        assert_eq!(msg.typ, "https://didcomm.org/ignite-pay/1.0/connection-confirm-response");
+        assert_eq!(msg.from.as_ref().unwrap(), TEST_DID);
+        assert_eq!(msg.to.as_ref().unwrap().first().unwrap(), PHONE_DID);
+        assert_eq!(msg.body["mcp_nonce"], "mcp-nonce-456");
+        assert_eq!(msg.body["mcp_signature"], "mcp-sig-789");
+        assert_eq!(msg.body["phone_nonce_echo"], "phone-nonce-echo");
+        assert_eq!(msg.body["accepted"], true);
+    }
+
+    #[test]
+    fn test_build_connection_confirm_response_rejected() {
+        let msg = build_connection_confirm_response(
+            TEST_DID,
+            PHONE_DID,
+            "",
+            "",
+            "some-nonce",
+            false,
+        );
+        assert_eq!(msg.body["accepted"], false);
     }
 
     // --- build_status_request ---

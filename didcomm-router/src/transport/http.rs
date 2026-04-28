@@ -25,6 +25,7 @@ pub async fn post_message(
     };
 
     info!("Received HTTP DIDComm message ({} bytes)", text.len());
+    info!("HTTP message content: {}", text);
 
     match crate::protocols::dispatch(&text, &state, None).await {
         Ok(()) => StatusCode::OK.into_response(),

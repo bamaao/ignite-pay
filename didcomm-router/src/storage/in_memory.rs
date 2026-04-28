@@ -169,6 +169,15 @@ impl KeylistStore for InMemoryKeylistStore {
     async fn resolve_session(&self, recipient_did: &str) -> crate::error::Result<Option<String>> {
         Ok(self.reverse.get(recipient_did).map(|v| v.value().clone()))
     }
+
+    async fn resolve_session_prefix(&self, recipient_did_prefix: &str) -> crate::error::Result<Option<String>> {
+        for pair in self.reverse.iter() {
+            if pair.key().starts_with(recipient_did_prefix) {
+                return Ok(Some(pair.value().clone()));
+            }
+        }
+        Ok(None)
+    }
 }
 
 // ── In-memory DeviceTokenStore ─────────────────────────────────────────

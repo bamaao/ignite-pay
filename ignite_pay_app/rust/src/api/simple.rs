@@ -299,8 +299,8 @@ pub fn create_session_key_for_payment(
 }
 
 /// Authenticate with the mediator and get a JWT token.
-/// Uses challenge-response: fetches a nonce, signs it with the DID key, and exchanges for JWT.
-pub async fn authenticate_with_mediator(mediator_url: String, did: String) -> Result<String> {
+/// Uses challenge-response: fetches a nonce, signs it with the DID's Ed25519 signing key, and exchanges for JWT.
+pub async fn authenticate_with_mediator(mediator_url: String, storage_path: String, did: String) -> Result<String> {
     let client = reqwest::Client::new();
 
     // Step 1: Get challenge nonce
@@ -318,17 +318,9 @@ pub async fn authenticate_with_mediator(mediator_url: String, did: String) -> Re
         .ok_or_else(|| anyhow::anyhow!("No nonce in challenge response"))?
         .to_string();
 
-    // Step 2: Sign the nonce with the DID's Ed25519 key
-    // Derive the signing key from the DID (deterministic, same derivation as create_session_key_for_payment)
-    let seed = sha2::Sha256::digest(did.as_bytes());
-    let seed_bytes: &[u8; 32] = seed
-        .as_slice()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid seed length"))?;
-    let signing_key = ed25519_dalek::SigningKey::from_bytes(seed_bytes);
-    use ed25519_dalek::Signer;
-    let signature = signing_key.sign(nonce.as_bytes());
-    let signature_b64 = base64::engine::general_purpose::STANDARD_NO_PAD.encode(signature.to_bytes());
+    // Step 2: Sign the nonce with the DID's actual Ed25519 signing key from identity storage
+    let mgr = IdentityManager::new(&storage_path)?;
+    let signature_b64 = mgr.sign(nonce.as_bytes());
 
     // Step 3: Exchange signed challenge for JWT
     let token_url = format!("{}/v1/auth/token", mediator_url);
@@ -421,15 +413,25 @@ pub fn parse_oob_invitation(invitation_url: String) -> Result<OobInvitationData>
         .cloned();
 
     // Extract mediator WS URL from services
+    // services can contain Map objects or plain URL strings (DIDComm OOB spec)
     let mediator_ws_url = invitation
         .get("body")
         .and_then(|b| b.get("services"))
         .and_then(|s| s.as_array())
         .and_then(|arr| arr.first())
-        .and_then(|svc| svc.get("service_endpoint"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+        .map(|svc| {
+            // If service is a plain string, use it directly
+            if let Some(url) = svc.as_str() {
+                url.to_string()
+            } else {
+                // Otherwise extract service_endpoint from the object
+                svc.get("service_endpoint")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            }
+        })
+        .unwrap_or_default();
 
     // Extract label
     let label = invitation
@@ -507,6 +509,25 @@ pub struct OobInvitationData {
     pub did_doc_json: String,
     pub mediator_ws_url: String,
     pub label: String,
+}
+
+/// Sign a nonce string with the phone's Ed25519 signing key.
+/// Returns the base64-no-pad encoded signature.
+pub fn sign_nonce(storage_path: String, nonce: String) -> Result<String> {
+    let mgr = crate::api::identity::IdentityManager::new(&storage_path)?;
+    Ok(mgr.sign(nonce.as_bytes()))
+}
+
+/// Verify an Ed25519 signature from a DID.
+/// Returns true if the signature is valid for the given message and DID.
+pub fn verify_did_signature(did: String, message: String, signature_b64: String) -> Result<bool> {
+    Ok(ignite_pay_core::verify_did_signature(&did, &message, &signature_b64))
+}
+
+/// Drain all queued mediator messages received via the Rust WS connection.
+/// Called periodically by the Dart layer to process incoming messages.
+pub fn drain_mediator_messages() -> Result<Vec<String>> {
+    Ok(crate::api::ws_client::drain_message_queue())
 }
 
 /// Send a connection request to the MCP via the mediator.

@@ -2,11 +2,19 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
+    #[serde(default)]
+    pub mcp: McpConfig,
     pub merchant: MerchantConfig,
     pub mediator: MediatorConfig,
     pub storage: StorageConfig,
     pub solana: SolanaConfig,
     pub hub: HubConfig,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct McpConfig {
+    #[serde(default)]
+    pub sse_port: u16,
 }
 
 #[derive(Debug, Deserialize)]

@@ -1,7 +1,6 @@
 use anyhow::Result;
 use base64::Engine;
 use once_cell::sync::Lazy;
-use sha2::Digest;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -127,8 +126,8 @@ pub async fn disconnect_mediator() -> Result<()> {
 // ── Authentication ──────────────────────────────────────────────────────
 
 /// Authenticate with the mediator via challenge-response.
-/// Derives an Ed25519 signing key from the DIDComm DID for signing.
-pub async fn authenticate_with_mediator(mediator_url: String, did: String) -> Result<String> {
+/// Signs the nonce with the actual Ed25519 signing key from identity storage.
+pub async fn authenticate_with_mediator(mediator_url: String, storage_path: String, did: String) -> Result<String> {
     let client = reqwest::Client::new();
 
     // Step 1: Get challenge nonce
@@ -146,17 +145,13 @@ pub async fn authenticate_with_mediator(mediator_url: String, did: String) -> Re
         .ok_or_else(|| anyhow::anyhow!("No nonce in challenge response"))?
         .to_string();
 
-    // Step 2: Sign the nonce with the DID's Ed25519 key (derived from DID string)
-    let seed = sha2::Sha256::digest(did.as_bytes());
-    let seed_bytes: &[u8; 32] = seed
-        .as_slice()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid seed length"))?;
-    let signing_key = ed25519_dalek::SigningKey::from_bytes(seed_bytes);
-    use ed25519_dalek::Signer;
-    let signature = signing_key.sign(nonce.as_bytes());
-    let signature_b64 = base64::engine::general_purpose::STANDARD_NO_PAD
-        .encode(signature.to_bytes());
+    // Step 2: Sign the nonce with the DID's actual Ed25519 signing key from identity storage
+    let db = sled::open(&storage_path)?;
+    let identity = ignite_pay_core::identity::load_identity(&db)?
+        .ok_or_else(|| anyhow::anyhow!("DIDComm identity not initialized"))?;
+    let signing_private = identity.signing_private
+        .ok_or_else(|| anyhow::anyhow!("no signing key in identity"))?;
+    let signature_b64 = ignite_pay_core::sign_message(&signing_private, nonce.as_bytes());
 
     // Step 3: Exchange signed challenge for JWT
     let token_url = format!("{}/v1/auth/token", mediator_url);
@@ -283,6 +278,23 @@ pub fn decrypt_message(storage_path: String, jwe: String) -> Result<DecryptedMes
     };
 
     Ok(decrypted)
+}
+
+/// Sign a nonce string with the merchant's Ed25519 signing key.
+/// Returns the base64-no-pad encoded signature.
+pub fn sign_nonce(storage_path: String, nonce: String) -> Result<String> {
+    let db = sled::open(&storage_path)?;
+    let identity = ignite_pay_core::identity::load_identity(&db)?
+        .ok_or_else(|| anyhow::anyhow!("DIDComm identity not initialized"))?;
+    let signing_private = identity.signing_private
+        .ok_or_else(|| anyhow::anyhow!("no signing key in identity"))?;
+    Ok(ignite_pay_core::sign_message(&signing_private, nonce.as_bytes()))
+}
+
+/// Verify an Ed25519 signature from a DID.
+/// Returns true if the signature is valid for the given message and DID.
+pub fn verify_did_signature(did: String, message: String, signature_b64: String) -> Result<bool> {
+    Ok(ignite_pay_core::verify_did_signature(&did, &message, &signature_b64))
 }
 
 // ── FCM token registration ──────────────────────────────────────────────
@@ -436,10 +448,17 @@ pub fn parse_oob_invitation(invitation_url: String) -> Result<OobInvitationData>
         .and_then(|b| b.get("services"))
         .and_then(|s| s.as_array())
         .and_then(|arr| arr.first())
-        .and_then(|svc| svc.get("service_endpoint"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+        .map(|svc| {
+            if let Some(url) = svc.as_str() {
+                url.to_string()
+            } else {
+                svc.get("service_endpoint")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            }
+        })
+        .unwrap_or_default();
 
     let label = invitation
         .get("body")
@@ -459,6 +478,7 @@ pub fn parse_oob_invitation(invitation_url: String) -> Result<OobInvitationData>
 }
 
 /// Send a connection request to the MCP after parsing the QR invitation.
+/// Includes the merchant app's mediator HTTP URL so the MCP can forward messages back.
 pub async fn send_connection_request(
     storage_path: String,
     mcp_did: String,
@@ -466,6 +486,8 @@ pub async fn send_connection_request(
     mediator_ws_url: String,
     push_channel: String,
     fcm_token: Option<String>,
+    app_mediator_ws_url: Option<String>,
+    app_mediator_http_url: Option<String>,
 ) -> Result<()> {
     let db = sled::open(&storage_path)?;
     let identity = ignite_pay_core::identity::load_identity(&db)?
@@ -484,46 +506,63 @@ pub async fn send_connection_request(
         }
     }
 
-    // Build connection request message
-    let msg = ignite_pay_core::didcomm::build_connection_request(
-        &our_did,
-        &mcp_did,
-        &push_channel,
-        fcm_token.as_deref(),
-    );
+    // Build connection request message with mediator_http_url
+    let app_http = app_mediator_http_url.as_deref().unwrap_or("");
+    let msg = if app_http.is_empty() {
+        ignite_pay_core::didcomm::build_connection_request(
+            &our_did, &mcp_did, &push_channel, fcm_token.as_deref(),
+        )
+    } else {
+        ignite_pay_core::didcomm::build_connection_request_with_mediator(
+            &our_did, &mcp_did, &push_channel, fcm_token.as_deref(), app_http,
+        )
+    };
 
     // Encrypt with authcrypt
     let jwe = ignite_pay_core::didcomm::pack_encrypted(&agent, &msg, &our_did, &mcp_did)
         .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
 
-    // Send via HTTP to mediator
+    // Wrap in forward message and send to MCP's mediator via HTTP POST (no auth required)
+    let forward_msg = serde_json::json!({
+        "type": "https://didcomm.org/routing/2.0/forward",
+        "id": format!("fwd-{}", uuid::Uuid::new_v4()),
+        "body": { "next": mcp_did },
+        "attachments": [{
+            "data": { "json": jwe }
+        }]
+    });
+
+    let forward_str = serde_json::to_string(&forward_msg)?;
+
+    // Convert WS URL to HTTP URL: wss://host/ws -> https://host/
+    let http_url = mediator_ws_url
+        .replace("wss://", "https://")
+        .replace("ws://", "http://")
+        .trim_end_matches("/ws")
+        .to_string()
+        + "/";
+
+    tracing::info!("Sending forward-wrapped connection request to MCP mediator: {}", http_url);
+
     let client = reqwest::Client::new();
-    let url = format!(
-        "{}/v1/agents/{}/command",
-        mediator_ws_url
-            .replace("ws://", "http://")
-            .replace("wss://", "https://")
-            .trim_end_matches("/ws"),
-        mcp_did
-    );
-    let response = client
-        .post(&url)
-        .json(&serde_json::json!({
-            "jwe_envelope": jwe
-        }))
+    let resp = client
+        .post(&http_url)
+        .header("Content-Type", "application/json")
+        .body(forward_str)
         .send()
         .await?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
         return Err(anyhow::anyhow!(
-            "Connection request failed: {} - {}",
+            "MCP mediator rejected connection request: {} - {}",
             status,
             body
         ));
     }
-    tracing::info!("Connection request sent to MCP {} via HTTP", mcp_did);
+
+    tracing::info!("Forward-wrapped connection request sent to MCP {} via HTTP to {}", mcp_did, http_url);
 
     Ok(())
 }

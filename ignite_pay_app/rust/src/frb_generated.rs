@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -837816494;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 2136643897;
 
 // Section: executor
 
@@ -69,6 +69,7 @@ fn wire__crate__api__simple__authenticate_with_mediator_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_mediator_url = <String>::sse_decode(&mut deserializer);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
             let api_did = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
@@ -76,6 +77,7 @@ fn wire__crate__api__simple__authenticate_with_mediator_impl(
                     (move || async move {
                         let output_ok = crate::api::simple::authenticate_with_mediator(
                             api_mediator_url,
+                            api_storage_path,
                             api_did,
                         )
                         .await?;
@@ -676,6 +678,40 @@ fn wire__crate__api__simple__disconnect_mediator_impl(
                         Ok(output_ok)
                     })()
                     .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__simple__drain_mediator_messages_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "drain_mediator_messages",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::simple::drain_mediator_messages()?;
+                        Ok(output_ok)
+                    })(),
                 )
             }
         },
@@ -1667,6 +1703,43 @@ fn wire__crate__api__simple__settle_channel_impl(
         },
     )
 }
+fn wire__crate__api__simple__sign_nonce_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "sign_nonce",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_nonce = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok =
+                            crate::api::simple::sign_nonce(api_storage_path, api_nonce)?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__simple__sign_payment_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1700,6 +1773,47 @@ fn wire__crate__api__simple__sign_payment_impl(
                         Ok(output_ok)
                     })()
                     .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__simple__verify_did_signature_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "verify_did_signature",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_did = <String>::sse_decode(&mut deserializer);
+            let api_message = <String>::sse_decode(&mut deserializer);
+            let api_signature_b64 = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::simple::verify_did_signature(
+                            api_did,
+                            api_message,
+                            api_signature_b64,
+                        )?;
+                        Ok(output_ok)
+                    })(),
                 )
             }
         },
@@ -2287,73 +2401,83 @@ fn pde_ffi_dispatcher_primary_impl(
             data_len,
         ),
         15 => wire__crate__api__simple__disconnect_mediator_impl(port, ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__simple__fetch_hub_list_impl(port, ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__session__find_active_session_key_impl(
+        16 => wire__crate__api__simple__drain_mediator_messages_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        18 => wire__crate__api__simple__find_active_session_key_impl(
+        17 => wire__crate__api__simple__fetch_hub_list_impl(port, ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__session__find_active_session_key_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        19 => wire__crate__api__simple__get_channel_state_impl(port, ptr, rust_vec_len, data_len),
-        20 => wire__crate__api__simple__get_did_impl(port, ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__simple__initialize_identity_impl(port, ptr, rust_vec_len, data_len),
-        22 => wire__crate__api__simple__list_channels_impl(port, ptr, rust_vec_len, data_len),
-        23 => wire__crate__api__session__list_session_keys_impl(port, ptr, rust_vec_len, data_len),
-        24 => wire__crate__api__simple__list_session_keys_impl(port, ptr, rust_vec_len, data_len),
-        25 => {
+        19 => wire__crate__api__simple__find_active_session_key_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        20 => wire__crate__api__simple__get_channel_state_impl(port, ptr, rust_vec_len, data_len),
+        21 => wire__crate__api__simple__get_did_impl(port, ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__simple__initialize_identity_impl(port, ptr, rust_vec_len, data_len),
+        23 => wire__crate__api__simple__list_channels_impl(port, ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__session__list_session_keys_impl(port, ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__simple__list_session_keys_impl(port, ptr, rust_vec_len, data_len),
+        26 => {
             wire__crate__api__session__load_merchant_policy_impl(port, ptr, rust_vec_len, data_len)
         }
-        26 => {
+        27 => {
             wire__crate__api__simple__load_merchant_policy_impl(port, ptr, rust_vec_len, data_len)
         }
-        27 => wire__crate__api__simple__open_channel_impl(port, ptr, rust_vec_len, data_len),
-        28 => {
+        28 => wire__crate__api__simple__open_channel_impl(port, ptr, rust_vec_len, data_len),
+        29 => {
             wire__crate__api__simple__parse_oob_invitation_impl(port, ptr, rust_vec_len, data_len)
         }
-        29 => wire__crate__api__simple__parse_payment_qr_impl(port, ptr, rust_vec_len, data_len),
-        30 => wire__crate__api__simple__pull_messages_impl(port, ptr, rust_vec_len, data_len),
-        31 => {
+        30 => wire__crate__api__simple__parse_payment_qr_impl(port, ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__simple__pull_messages_impl(port, ptr, rust_vec_len, data_len),
+        32 => {
             wire__crate__api__simple__register_device_token_impl(port, ptr, rust_vec_len, data_len)
         }
-        32 => wire__crate__api__session__revoke_session_key_onchain_impl(
+        33 => wire__crate__api__session__revoke_session_key_onchain_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        33 => wire__crate__api__simple__revoke_session_key_onchain_impl(
+        34 => wire__crate__api__simple__revoke_session_key_onchain_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        34 => {
+        35 => {
             wire__crate__api__session__save_merchant_policy_impl(port, ptr, rust_vec_len, data_len)
         }
-        35 => {
+        36 => {
             wire__crate__api__simple__save_merchant_policy_impl(port, ptr, rust_vec_len, data_len)
         }
-        36 => wire__crate__api__simple__send_auth_response_impl(port, ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__simple__send_connection_request_impl(
+        37 => wire__crate__api__simple__send_auth_response_impl(port, ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__simple__send_connection_request_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        38 => wire__crate__api__simple__send_create_channel_request_impl(
+        39 => wire__crate__api__simple__send_create_channel_request_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        39 => wire__crate__api__simple__settle_channel_impl(port, ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__simple__sign_payment_impl(port, ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__simple__settle_channel_impl(port, ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__simple__sign_nonce_impl(port, ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__simple__sign_payment_impl(port, ptr, rust_vec_len, data_len),
+        43 => {
+            wire__crate__api__simple__verify_did_signature_impl(port, ptr, rust_vec_len, data_len)
+        }
         _ => unreachable!(),
     }
 }

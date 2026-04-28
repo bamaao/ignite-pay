@@ -10,6 +10,7 @@ import 'package:ignite_pay_app/services/didcomm_service.dart';
 import 'package:ignite_pay_app/transaction_history_screen.dart';
 import 'package:ignite_pay_app/notification_screen.dart';
 import 'package:ignite_pay_app/profile_screen.dart';
+import 'package:ignite_pay_app/log_viewer_screen.dart';
 import 'package:ignite_pay_app/channel_topology_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -258,6 +259,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 trailing: const Icon(LucideIcons.chevronRight,
                     size: 18, color: kTextTertiary),
                 onTap: () => openChannelTopology(context),
+              ),
+              const SizedBox(height: 6),
+              SettingsTile(
+                icon: LucideIcons.fileText,
+                iconColor: kAmber,
+                title: 'View Logs',
+                subtitle: 'DIDComm & connection debug log',
+                trailing: const Icon(LucideIcons.chevronRight,
+                    size: 18, color: kTextTertiary),
+                onTap: () => openLogViewer(context),
               ),
               const SizedBox(height: 24),
 

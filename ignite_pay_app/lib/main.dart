@@ -112,6 +112,8 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     }
   }
 
+  String? _autoConnectError;
+
   Future<void> _checkOnboarding() async {
     final prefs = await SharedPreferences.getInstance();
     final hasDid = prefs.getBool('onboarding_complete') ?? false;
@@ -123,7 +125,11 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       // Auto-reconnect mediator if URL was previously saved
       final wsUrl = svc.mediatorWsUrl;
       if (wsUrl.isNotEmpty) {
-        try { await svc.connectToMediator(wsUrl); } catch (_) {}
+        try {
+          await svc.connectToMediator(wsUrl);
+        } catch (e) {
+          _autoConnectError = e.toString();
+        }
       }
       if (mounted) {
         setState(() {
@@ -144,6 +150,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       final canAuth = await _localAuth.canCheckBiometrics || await _localAuth.isDeviceSupported();
       if (!canAuth) {
         if (mounted) setState(() { _isLocked = false; });
+        _showAutoConnectErrorIfAny();
         return;
       }
       final authenticated = await _localAuth.authenticate(
@@ -153,14 +160,50 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       );
       if (authenticated && mounted) {
         setState(() { _isLocked = false; });
+        _showAutoConnectErrorIfAny();
       }
     } catch (e) {
       debugPrint('Auth error: $e');
       // Fallback: unlock anyway (e.g. emulator with no biometric hardware)
       if (mounted) setState(() { _isLocked = false; });
+      _showAutoConnectErrorIfAny();
     } finally {
       _authenticating = false;
     }
+  }
+
+  void _showAutoConnectErrorIfAny() {
+    final err = _autoConnectError;
+    if (err == null) return;
+    _autoConnectError = null;
+    Future.microtask(() {
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1A2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          title: Row(
+            children: [
+              const Icon(LucideIcons.wifiOff, size: 20, color: Color(0xFFFF5252)),
+              const SizedBox(width: 10),
+              Text('Auto-Reconnect Failed',
+                  style: GoogleFonts.inter(
+                      fontSize: 16, fontWeight: FontWeight.w600, color: Color(0xFFE8E8F0))),
+            ],
+          ),
+          content: Text('Could not connect to mediator:\n$err',
+              style: GoogleFonts.inter(fontSize: 13, color: Color(0xFF8A8AA0))),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text('OK',
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: const Color(0xFFFF5722))),
+            ),
+          ],
+        ),
+      );
+    });
   }
 
   Future<void> _onOnboardingComplete() async {

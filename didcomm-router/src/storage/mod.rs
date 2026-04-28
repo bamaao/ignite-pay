@@ -71,6 +71,8 @@ pub trait KeylistStore: Send + Sync {
     async fn remove_key(&self, session_did: &str, recipient_did: &str) -> crate::error::Result<()>;
     async fn list_keys(&self, session_did: &str) -> crate::error::Result<HashSet<String>>;
     async fn resolve_session(&self, recipient_did: &str) -> crate::error::Result<Option<String>>;
+    /// Resolve session by prefix match (handles DID without fragment vs keylist with #key-1).
+    async fn resolve_session_prefix(&self, recipient_did_prefix: &str) -> crate::error::Result<Option<String>>;
 }
 
 /// Agent-to-user binding: maps an agent DID to the user DID that owns it.

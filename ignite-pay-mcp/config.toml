@@ -1,5 +1,9 @@
+[mcp]
+# SSE/Streamable HTTP port (0 = disabled)
+sse_port = 9001
+
 [mediator]
-ws_url = "ws://127.0.0.1:8080/ws"
+ws_url = "wss://98r2h7s3-8080.jpe1.devtunnels.ms/ws"
 # DID of the phone app to send authorization requests to
 phone_did = ""
 

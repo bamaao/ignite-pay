@@ -31,8 +31,17 @@ pub async fn handle_forward(msg: &Message, state: &RouterState) -> Result<()> {
     // Extract the inner encrypted message from attachments
     let inner_msg = extract_inner_forward(msg)?;
 
-    // Look up which session owns this recipient DID via the keylist
-    let owner_session = state.keylist_store.resolve_session(next_did).await?;
+    // Look up which session owns this recipient DID via the keylist.
+    // Try exact match first, then prefix match (handles DID without fragment vs keylist with #key-1).
+    let owner_session = match state.keylist_store.resolve_session(next_did).await? {
+        Some(session) => Some(session),
+        None => {
+            // Fallback: prefix scan in reverse keylist for DIDs like "did:...#key-1"
+            state.keylist_store.resolve_session_prefix(next_did).await?
+        }
+    };
+
+    info!("Forward resolve: next_did={}, owner_session={:?}", next_did, owner_session);
 
     // Try to deliver online to a registered session (MCP/Skill agents)
     if let Some(ref owner_did) = owner_session {
@@ -51,6 +60,18 @@ pub async fn handle_forward(msg: &Message, state: &RouterState) -> Result<()> {
 
     // Recipient offline or not registered as a session — route based on push channel
     let msg_id = uuid::Uuid::new_v4().to_string();
+
+    // Use the keylist keys for storage so status-request can find the message.
+    // The keylist stores keys like "did:...#key-1" which is what list_keys() returns.
+    let storage_keys = if let Some(ref owner) = owner_session {
+        state.keylist_store.list_keys(owner).await?
+    } else {
+        // No session found — store under the raw next_did as fallback
+        let mut keys = std::collections::HashSet::new();
+        keys.insert(next_did.to_string());
+        keys
+    };
+
     let queued = QueuedMessage {
         id: msg_id.clone(),
         sender_did: msg
@@ -61,6 +82,8 @@ pub async fn handle_forward(msg: &Message, state: &RouterState) -> Result<()> {
         encrypted_envelope: inner_msg.clone(),
         queued_at: chrono::Utc::now(),
     };
+
+    info!("Forward offline: storing for {} keys: {:?}", next_did, storage_keys);
 
     // Determine push channel preference for this recipient
     let channel = state
@@ -93,13 +116,17 @@ pub async fn handle_forward(msg: &Message, state: &RouterState) -> Result<()> {
                     next_did, msg_id
                 );
             }
-            // Always store in queue as fallback
-            state.message_store.store_for_user(next_did, queued).await?;
+            // Always store in queue under all keylist keys as fallback
+            for key in &storage_keys {
+                state.message_store.store_for_user(key, queued.clone()).await?;
+            }
         }
         _ => {
             // FCM mode: store for pull + send FCM signal
-            state.message_store.store_for_user(next_did, queued).await?;
-            info!("Queued message for offline recipient: {}", next_did);
+            for key in &storage_keys {
+                state.message_store.store_for_user(key, queued.clone()).await?;
+            }
+            info!("Queued message for offline recipient: {} (keys: {})", next_did, storage_keys.len());
 
             // Send FCM push notification if device token is registered
             if let Ok(Some(device_token)) =

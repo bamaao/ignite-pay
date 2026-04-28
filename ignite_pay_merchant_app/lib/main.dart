@@ -84,6 +84,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   bool _isLocked = false;
   bool _authenticating = false;
   final _localAuth = LocalAuthentication();
+  bool _errorShown = false;
 
   @override
   void initState() {
@@ -138,6 +139,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       final canAuth = await _localAuth.canCheckBiometrics || await _localAuth.isDeviceSupported();
       if (!canAuth) {
         if (mounted) setState(() { _isLocked = false; });
+        _showAutoConnectErrorIfAny();
         return;
       }
       final authenticated = await _localAuth.authenticate(
@@ -147,13 +149,51 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       );
       if (authenticated && mounted) {
         setState(() { _isLocked = false; });
+        _showAutoConnectErrorIfAny();
       }
     } catch (e) {
       debugPrint('Auth error: $e');
       if (mounted) setState(() { _isLocked = false; });
+      _showAutoConnectErrorIfAny();
     } finally {
       _authenticating = false;
     }
+  }
+
+  void _showAutoConnectErrorIfAny() {
+    if (_errorShown) return;
+    final svc = context.read<MerchantService>();
+    final err = svc.consumeAutoConnectError();
+    if (err == null) return;
+    _errorShown = true;
+    Future.microtask(() {
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: kSurfaceDark,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          title: Row(
+            children: [
+              const Icon(LucideIcons.wifiOff, size: 20, color: kDanger),
+              const SizedBox(width: 10),
+              Text('Auto-Reconnect Failed',
+                  style: GoogleFonts.inter(
+                      fontSize: 16, fontWeight: FontWeight.w600, color: kTextPrimary)),
+            ],
+          ),
+          content: Text('Could not connect to mediator:\n$err',
+              style: GoogleFonts.inter(fontSize: 13, color: kTextSecondary)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text('OK',
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: kNeonCyan)),
+            ),
+          ],
+        ),
+      );
+    });
   }
 
   void _onOnboardingComplete() {

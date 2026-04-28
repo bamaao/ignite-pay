@@ -61,6 +61,7 @@ class _MockRustLibApi extends RustLibApi {
   @override
   Future<String> crateApiSimpleAuthenticateWithMediator({
     required String mediatorUrl,
+    required String storagePath,
     required String did,
   }) async =>
       'mock_token';
@@ -400,6 +401,24 @@ class _MockRustLibApi extends RustLibApi {
     required String hubEndpoint,
   }) async =>
       'Channel $channelId settled.';
+
+  @override
+  Future<String> crateApiSimpleSignNonce({
+    required String storagePath,
+    required String nonce,
+  }) async =>
+      'mock_signature_base64';
+
+  @override
+  Future<bool> crateApiSimpleVerifyDidSignature({
+    required String did,
+    required String message,
+    required String signatureB64,
+  }) async =>
+      true;
+
+  @override
+  Future<List<String>> crateApiSimpleDrainMediatorMessages() async => [];
 }
 
 void main() {

@@ -42,6 +42,7 @@ class MerchantService extends ChangeNotifier {
   List<PaymentOrder> _orders = [];
   String _storagePath = '';
   void Function(PaymentOrder)? _onPaymentConfirmed;
+  String? _autoConnectError;
 
   String get did => _did;
   String get didDocJson => _didDocJson;
@@ -49,6 +50,13 @@ class MerchantService extends ChangeNotifier {
   String get mediatorWsUrl => _mediatorWsUrl;
   String get storagePath => _storagePath;
   List<PaymentOrder> get orders => _orders;
+
+  /// Consume and return the auto-connect error (if any), then clear it.
+  String? consumeAutoConnectError() {
+    final err = _autoConnectError;
+    _autoConnectError = null;
+    return err;
+  }
 
   Future<void> initialize() async {
     await RustLib.init();
@@ -73,7 +81,12 @@ class MerchantService extends ChangeNotifier {
       if (_mediatorWsUrl.isNotEmpty) {
         final pushService = MerchantPushService();
         await pushService.initialize();
-        await pushService.connectToMediator(_mediatorWsUrl);
+        try {
+          await pushService.connectToMediator(_mediatorWsUrl);
+        } catch (e) {
+          // Store error for UI to display after auth
+          _autoConnectError = e.toString();
+        }
 
         // Listen for payment confirmations -> refresh orders + trigger callback
         pushService.confirmations.listen((confirmation) async {

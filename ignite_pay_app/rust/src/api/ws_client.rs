@@ -5,11 +5,29 @@ use affinidi_messaging_didcomm::DIDCommAgent;
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use ignite_pay_core::didcomm::{self, is_jwe};
+use once_cell::sync::Lazy;
 use serde_json::Value;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::connect_async;
+
+/// Global queue for forwarding raw WS messages to the Dart layer.
+/// The Dart layer polls this via `drain_mediator_messages()`.
+static INCOMING_MESSAGE_QUEUE: Lazy<StdMutex<Vec<String>>> =
+    Lazy::new(|| StdMutex::new(Vec::new()));
+
+/// Queue a raw message for Dart consumption.
+fn queue_incoming_message(msg: &str) {
+    INCOMING_MESSAGE_QUEUE.lock().unwrap().push(msg.to_string());
+}
+
+/// Drain all queued messages (called from Dart via simple.rs).
+pub fn drain_message_queue() -> Vec<String> {
+    let mut queue = INCOMING_MESSAGE_QUEUE.lock().unwrap();
+    std::mem::take(&mut *queue)
+}
 
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -45,8 +63,21 @@ impl WsClient {
         *cb = Some(callback);
     }
 
-    /// Connect to the mediator and start the bidirectional loop.
+    /// Connect to the mediator: performs initial handshake synchronously
+    /// (so errors propagate to the caller), then spawns a background task
+    /// for the bidirectional message loop with auto-reconnect.
     pub async fn connect(&self, ws_url: &str) -> Result<()> {
+        // Phase 0+A: connect + authenticate + mediation handshake (inline)
+        let ws = connect_phase(ws_url, &self.agent, &self.our_did, &self.did_doc, &self.signing_private).await?;
+
+        // Set up outgoing channel
+        let (out_tx, out_rx) = mpsc::unbounded_channel::<String>();
+        {
+            let mut guard = self.outgoing.lock().await;
+            *guard = Some(out_tx);
+        }
+
+        // Clone state for the background loop
         let agent = self.agent.clone();
         let our_did = self.our_did.clone();
         let did_doc = self.did_doc.clone();
@@ -55,13 +86,39 @@ impl WsClient {
         let callback = self.pending_auth_callback.clone();
         let ws_url = ws_url.to_string();
 
+        // Phase B: bidirectional loop + auto-reconnect (background)
         tokio::spawn(async move {
+            let mut ws = ws;
+            let mut out_rx = out_rx;
             loop {
-                match run_ws_loop(&ws_url, &agent, &our_did, &did_doc, &signing_private, &outgoing, &callback).await {
-                    Ok(()) => tracing::warn!("Mediator disconnected, reconnecting..."),
-                    Err(e) => tracing::error!("WS error: {}, reconnecting in 3s...", e),
+                loop_phase(&mut ws, &agent, &callback, &mut out_rx).await;
+                // Disconnected — clear outgoing channel
+                {
+                    let mut guard = outgoing.lock().await;
+                    *guard = None;
                 }
-                tokio::time::sleep(Duration::from_secs(3)).await;
+                drop(ws);
+                loop {
+                    tracing::warn!("Mediator disconnected, reconnecting in 3s...");
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    match connect_phase(&ws_url, &agent, &our_did, &did_doc, &signing_private).await {
+                        Ok(new_ws) => {
+                            // Re-create outgoing channel
+                            let (out_tx2, out_rx2) = mpsc::unbounded_channel::<String>();
+                            {
+                                let mut guard = outgoing.lock().await;
+                                *guard = Some(out_tx2);
+                            }
+                            ws = new_ws;
+                            out_rx = out_rx2;
+                            break; // re-enter outer loop
+                        }
+                        Err(e) => {
+                            tracing::error!("Reconnect failed: {}, retrying in 5s...", e);
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                        }
+                    }
+                }
             }
         });
 
@@ -141,17 +198,18 @@ impl WsClient {
     }
 }
 
-async fn run_ws_loop(
+/// Phase 0+A: Connect, authenticate, and complete mediation handshake.
+/// Returns the authenticated WebSocket stream on success.
+/// Errors propagate to the caller so the Dart layer knows if connection failed.
+async fn connect_phase(
     ws_url: &str,
     agent: &Arc<Mutex<DIDCommAgent>>,
     our_did: &str,
     did_doc: &Value,
     signing_private: &[u8; 32],
-    outgoing: &Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
-    callback: &Arc<Mutex<Option<AuthCallback>>>,
-) -> Result<()> {
+) -> Result<WsStream> {
     let (mut ws, _) = connect_async(ws_url).await?;
-    tracing::info!("Connected to mediator: {}", ws_url);
+    tracing::info!("WS connected to mediator: {}", ws_url);
 
     // --- Phase 0: Challenge-Response Authentication ---
 
@@ -213,7 +271,7 @@ async fn run_ws_loop(
         }
     }
 
-    // --- Phase A: Plaintext handshake ---
+    // --- Phase A: Mediation handshake ---
     let req = didcomm::build_mediate_request(our_did);
     send_msg(&mut ws, serde_json::to_string(&req)?).await?;
 
@@ -246,15 +304,18 @@ async fn run_ws_loop(
     send_msg(&mut ws, serde_json::to_string(&intro)?).await?;
 
     tracing::info!("Mediator handshake complete");
+    Ok(ws)
+}
 
-    // Set up outgoing channel
-    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
-    {
-        let mut guard = outgoing.lock().await;
-        *guard = Some(out_tx);
-    }
-
-    // Bidirectional loop
+/// Phase B: Bidirectional message loop.
+/// Reads incoming messages and forwards them; sends outgoing messages from the channel.
+/// Returns when the connection is closed or an error occurs.
+async fn loop_phase(
+    ws: &mut WsStream,
+    agent: &Arc<Mutex<DIDCommAgent>>,
+    callback: &Arc<Mutex<Option<AuthCallback>>>,
+    out_rx: &mut mpsc::UnboundedReceiver<String>,
+) {
     loop {
         tokio::select! {
             msg = ws.next() => {
@@ -263,16 +324,22 @@ async fn run_ws_loop(
                         handle_message(&text, agent, callback).await;
                     }
                     Some(Ok(_)) => {}
-                    Some(Err(e)) => return Err(e.into()),
-                    None => return Ok(()),
+                    Some(Err(e)) => {
+                        tracing::error!("WS read error: {}", e);
+                        return;
+                    }
+                    None => return,
                 }
             }
             jwe = out_rx.recv() => {
                 match jwe {
                     Some(msg) => {
-                        send_msg(&mut ws, msg).await?;
+                        if let Err(e) = send_msg(ws, msg).await {
+                            tracing::error!("WS send error: {}", e);
+                            return;
+                        }
                     }
-                    None => return Ok(()),
+                    None => return,
                 }
             }
         }
@@ -284,6 +351,9 @@ async fn handle_message(
     agent: &Arc<Mutex<DIDCommAgent>>,
     callback: &Arc<Mutex<Option<AuthCallback>>>,
 ) {
+    // Forward ALL raw messages to Dart layer for processing
+    queue_incoming_message(text);
+
     if is_jwe(text) {
         let agent_guard = agent.lock().await;
         match didcomm::unpack_message(&agent_guard, text, None) {

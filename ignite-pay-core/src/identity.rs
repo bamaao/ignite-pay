@@ -18,10 +18,14 @@ struct StoredIdentity {
 /// Creates an Ed25519 keypair, derives the multibase identifier from the
 /// verifying (public) key, and returns the private identity + DID string.
 pub fn generate_ignite_did() -> (PrivateIdentity, String) {
-    let temp = PrivateIdentity::generate("did:ignite:temp");
-    let verifying = temp.verifying_key().expect("signing key must be present");
+    // Generate once with a placeholder DID, then derive the real DID from its key.
+    let mut identity = PrivateIdentity::generate("did:ignite:temp");
+    let verifying = identity.verifying_key().expect("signing key must be present");
     let did = encode_did_ignite(&verifying);
-    let identity = PrivateIdentity::generate(&did);
+    // Patch the identity's DID to match the derived identifier so the keys stay consistent.
+    identity.did = did.clone();
+    identity.key_agreement_kid = format!("{}#key-agreement-1", did);
+    identity.signing_kid = Some(format!("{}#key-signing-1", did));
     (identity, did)
 }
 
