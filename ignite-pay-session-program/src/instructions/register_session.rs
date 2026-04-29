@@ -8,6 +8,7 @@ use crate::error::SessionError;
     expires_at: i64,
     spending_limit: u64,
     scopes: Vec<String>,
+    token_mint: Pubkey,
 )]
 pub struct RegisterSessionKey<'info> {
     #[account(
@@ -39,6 +40,7 @@ pub fn register_session_key(
     expires_at: i64,
     spending_limit: u64,
     scopes: Vec<String>,
+    token_mint: Pubkey,
 ) -> Result<()> {
     let clock = &ctx.accounts.clock;
     let now = clock.unix_timestamp;
@@ -58,6 +60,7 @@ pub fn register_session_key(
     session.owner = ctx.accounts.owner.key();
     session.ephemeral_signer = ctx.accounts.ephemeral_signer.key();
     session.target_program = target_program;
+    session.token_mint = token_mint;
     session.expires_at = expires_at;
     session.spending_limit = spending_limit;
     session.current_spent = 0;

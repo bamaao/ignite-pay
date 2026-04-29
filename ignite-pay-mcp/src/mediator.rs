@@ -1041,6 +1041,9 @@ async fn handle_incoming_message(
                 .and_then(|v| v.as_str())
                 .map(String::from);
             let list_max_amount = body.get("list_max_amount").and_then(|v| v.as_u64());
+            let token_mint = body.get("token_mint")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let response = AuthResponse {
                 authorized,
                 list_action,
@@ -1053,6 +1056,7 @@ async fn handle_incoming_message(
                 scopes,
                 list_label,
                 list_max_amount,
+                token_mint,
             };
             if pending.resolve(payment_id, response) {
                 tracing::info!("Resolved pending auth: {} -> {}", payment_id, authorized);
@@ -1282,6 +1286,9 @@ async fn process_inner_message(
                 .and_then(|v| v.as_str())
                 .map(String::from);
             let list_max_amount = msg.body.get("list_max_amount").and_then(|v| v.as_u64());
+            let token_mint = msg.body.get("token_mint")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let response = AuthResponse {
                 authorized,
                 list_action,
@@ -1294,6 +1301,7 @@ async fn process_inner_message(
                 scopes,
                 list_label,
                 list_max_amount,
+                token_mint,
             };
             if pending.resolve(payment_id, response) {
                 tracing::info!(

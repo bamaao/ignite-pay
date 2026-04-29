@@ -56,6 +56,9 @@ pub struct CreateSessionInput {
     /// Owner keypair (base58 64-byte) for on-chain registration. Required if register_on_chain=true.
     #[serde(default)]
     pub owner_keypair_b58: Option<String>,
+    /// SPL Token mint address (base58). If provided, creates an SPL session with "spl:transfer" scope.
+    #[serde(default)]
+    pub token_mint: Option<String>,
 }
 
 fn default_duration() -> i64 {

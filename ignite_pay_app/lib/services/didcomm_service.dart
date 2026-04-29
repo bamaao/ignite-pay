@@ -246,6 +246,7 @@ class DidcommService extends ChangeNotifier {
         listMaxAmount: response.listMaxAmount != null
             ? BigInt.from(response.listMaxAmount!)
             : null,
+        tokenMint: null,
       );
 
       debugPrint(
@@ -271,6 +272,7 @@ class DidcommService extends ChangeNotifier {
     int? listMaxAmount,
     int? dailyTxCountLimit,
     int? perTxLimit,
+    String? tokenMint,
   }) async {
     try {
       // Reuse existing session key if one is already active (avoids double creation)
@@ -281,6 +283,7 @@ class DidcommService extends ChangeNotifier {
               storagePath: _storagePath,
               spendingLimit: BigInt.from(spendingLimit),
               durationSecs: durationSecs,
+              tokenMint: tokenMint,
             );
       await rust.sendAuthResponse(
         storagePath: _storagePath,
@@ -293,6 +296,7 @@ class DidcommService extends ChangeNotifier {
         listMaxAmount: listMaxAmount != null ? BigInt.from(listMaxAmount) : null,
         dailyTxCountLimit: dailyTxCountLimit,
         perTxLimit: perTxLimit != null ? BigInt.from(perTxLimit) : null,
+        tokenMint: tokenMint,
       );
 
       debugPrint(

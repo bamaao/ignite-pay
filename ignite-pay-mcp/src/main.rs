@@ -156,6 +156,35 @@ fn load_config() -> Result<Config, anyhow::Error> {
 
 // ── Payment Execution ──────────────────────────────────────────────────────
 
+/// Resolve a token identifier to an on-chain mint Pubkey.
+fn resolve_mint(token: &str, network: &str) -> Option<Pubkey> {
+    match (token.to_uppercase().as_str(), network) {
+        // USDC
+        ("USDC", "solana:mainnet") => Some(
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+                .parse()
+                .unwrap(),
+        ),
+        ("USDC", "solana:devnet") | ("USDC", "devnet") => Some(
+            "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+                .parse()
+                .unwrap(),
+        ),
+        // USDT
+        ("USDT" | "USD₮", "solana:mainnet") => Some(
+            "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+                .parse()
+                .unwrap(),
+        ),
+        ("USDT" | "USD₮", "solana:devnet") | ("USDT" | "USD₮", "devnet") => Some(
+            "2tWC4JAdL4AxEFJySziYJfsBcwAmKMaQRKj1sM8BPipW"
+                .parse()
+                .unwrap(),
+        ),
+        _ => None,
+    }
+}
+
 /// Execute a payment using a session key on Solana, state channel, or fall back to mock.
 ///
 /// V3.0 flow:
@@ -169,12 +198,14 @@ async fn execute_payment(
     payment: &PaymentRequest,
     session: &Option<SessionKeypair>,
     channel_client: &Option<Arc<ChannelClient>>,
+    spl_params: Option<&SplPaymentParams>,
 ) -> Result<String, String> {
     match (solana_client, session) {
         (Some(client), Some(sess)) => {
             tracing::info!(
-                "Executing on-chain payment: {} lamports to {} via session {}",
+                "Executing on-chain payment: {} {} to {} via session {}",
                 payment.amount,
+                payment.token,
                 payment.recipient,
                 sess.keypair.pubkey(),
             );
@@ -185,7 +216,7 @@ async fn execute_payment(
                     &payment.token,
                     &payment.network,
                     sess,
-                    None,
+                    spl_params,
                 )
                 .await
             {
@@ -336,6 +367,26 @@ impl IgnitePayMcpServer {
             .map(|s| s.to_string())
             .unwrap_or(recipient);
 
+        // Resolve SPL params if this is not a SOL payment
+        let spl_params = if token != "SOL" && token != "sol" && token != "unknown" {
+            match resolve_mint(&token, &network) {
+                Some(mint) => {
+                    tracing::info!("Resolved {} on {} to mint {}", token, network, mint);
+                    Some(SplPaymentParams {
+                        mint,
+                        source_ata_override: None,
+                        dest_ata_override: None,
+                    })
+                }
+                None => {
+                    tracing::warn!("Could not resolve mint for {} on {}", token, network);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let payment_id = uuid::Uuid::new_v4().to_string();
         let description = format!(
             "{} SOL transfer on {} to {}",
@@ -468,7 +519,7 @@ impl IgnitePayMcpServer {
             }
             Ok(RiskControlDecision::AutoApproved { max_amount, label }) => {
                 let session = self.get_active_session();
-                return match execute_payment(&self.solana_client, &payment, &session, &self.channel_client).await {
+                return match execute_payment(&self.solana_client, &payment, &session, &self.channel_client, spl_params.as_ref()).await {
                     Ok(tx_sig) => {
                         let _ = self
                             .payments
@@ -505,7 +556,7 @@ impl IgnitePayMcpServer {
         // 4. Check auto-approve (global threshold)
         if self.auto_approve_max > 0 && amount <= self.auto_approve_max {
             let session = self.get_active_session();
-            match execute_payment(&self.solana_client, &payment, &session, &self.channel_client).await {
+            match execute_payment(&self.solana_client, &payment, &session, &self.channel_client, spl_params.as_ref()).await {
                 Ok(tx_sig) => {
                     if let Err(e) = self
                         .payments
@@ -567,6 +618,7 @@ impl IgnitePayMcpServer {
                         scopes: None,
                         list_label: None,
                         list_max_amount: None,
+                        token_mint: None,
                     },
                 );
                 return format!("Error: Failed to send auth request: {}", e);
@@ -581,7 +633,7 @@ impl IgnitePayMcpServer {
                 let session = self
                     .get_session_from_auth_response(&resp)
                     .or_else(|| self.get_active_session());
-                match execute_payment(&self.solana_client, &payment, &session, &self.channel_client).await {
+                match execute_payment(&self.solana_client, &payment, &session, &self.channel_client, spl_params.as_ref()).await {
                     Ok(tx_sig) => {
                         let _ = self
                             .payments
@@ -647,6 +699,7 @@ impl IgnitePayMcpServer {
                         scopes: None,
                         list_label: None,
                         list_max_amount: None,
+                        token_mint: None,
                     },
                 );
                 let _ = self
@@ -763,8 +816,22 @@ impl IgnitePayMcpServer {
             Err(e) => return format!("Error: Invalid owner pubkey: {}", e),
         };
 
-        let target_program = ignite_pay_solana::solana_sdk::system_program::id();
-        let scopes = vec!["sol:transfer".to_string()];
+        // Determine if this is a SOL or SPL session
+        let token_program_id: Pubkey = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            .parse()
+            .unwrap();
+        let (target_program, scopes, token_mint) = match &input.token_mint {
+            Some(mint_str) => {
+                let mint = match mint_str.parse::<Pubkey>() {
+                    Ok(p) => p,
+                    Err(e) => return format!("Error: Invalid token_mint: {}", e),
+                };
+                (token_program_id, vec!["spl:transfer".to_string()], mint)
+            }
+            None => {
+                (ignite_pay_solana::solana_sdk::system_program::id(), vec!["sol:transfer".to_string()], Pubkey::default())
+            }
+        };
 
         match client.session_manager().create_session(
             &owner_pubkey,
@@ -773,14 +840,18 @@ impl IgnitePayMcpServer {
             input.spending_limit,
             input.duration_secs,
         ) {
-            Ok(session) => {
+            Ok(mut session) => {
+                // Set token_mint on the session data
+                session.session_data.token_mint = token_mint;
+
                 let expires_at = session.session_data.expires_at;
                 let mut result = format!(
-                    "Session created.\nPubkey: {}\nSpending limit: {} lamports\nExpires at: {} (Unix)\nScopes: {:?}",
+                    "Session created.\nPubkey: {}\nSpending limit: {} lamports\nExpires at: {} (Unix)\nScopes: {:?}\nToken mint: {}",
                     session.keypair.pubkey(),
                     input.spending_limit,
                     expires_at,
                     scopes,
+                    if token_mint == Pubkey::default() { "SOL".to_string() } else { token_mint.to_string() },
                 );
 
                 // Optional on-chain registration
@@ -798,6 +869,7 @@ impl IgnitePayMcpServer {
                                                     owner: owner_pubkey,
                                                     ephemeral_signer: owner_pubkey,
                                                     target_program,
+                                                    token_mint,
                                                     expires_at: 0,
                                                     spending_limit: 0,
                                                     current_spent: 0,
@@ -811,6 +883,7 @@ impl IgnitePayMcpServer {
                                                 expires_at,
                                                 input.spending_limit,
                                                 scopes.clone(),
+                                                &token_mint,
                                             ).await {
                                                 Ok((pda, sig)) => {
                                                     result.push_str(&format!(
@@ -1379,6 +1452,10 @@ impl IgnitePayMcpServer {
             owner: self.default_owner,
             ephemeral_signer: keypair.pubkey(),
             target_program: ignite_pay_solana::solana_sdk::system_program::id(),
+            token_mint: resp.token_mint
+                .as_deref()
+                .and_then(|s| s.parse::<Pubkey>().ok())
+                .unwrap_or_default(),
             expires_at,
             spending_limit,
             current_spent: 0,

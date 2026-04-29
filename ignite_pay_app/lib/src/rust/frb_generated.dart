@@ -155,6 +155,7 @@ abstract class RustLibApi extends BaseApi {
     required String storagePath,
     required BigInt spendingLimit,
     required PlatformInt64 durationSecs,
+    String? tokenMint,
   });
 
   Future<DecryptedMessage> crateApiSimpleDecryptMessage({
@@ -288,6 +289,7 @@ abstract class RustLibApi extends BaseApi {
     BigInt? listMaxAmount,
     int? dailyTxCountLimit,
     BigInt? perTxLimit,
+    String? tokenMint,
   });
 
   Future<void> crateApiSimpleSendConnectionRequest({
@@ -787,6 +789,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String storagePath,
     required BigInt spendingLimit,
     required PlatformInt64 durationSecs,
+    String? tokenMint,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -795,6 +798,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(storagePath, serializer);
           sse_encode_u_64(spendingLimit, serializer);
           sse_encode_i_64(durationSecs, serializer);
+          sse_encode_opt_String(tokenMint, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -1714,6 +1718,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     BigInt? listMaxAmount,
     int? dailyTxCountLimit,
     BigInt? perTxLimit,
+    String? tokenMint,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -1732,6 +1737,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_opt_box_autoadd_u_64(listMaxAmount, serializer);
           sse_encode_opt_box_autoadd_u_32(dailyTxCountLimit, serializer);
           sse_encode_opt_box_autoadd_u_64(perTxLimit, serializer);
+          sse_encode_opt_String(tokenMint, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,

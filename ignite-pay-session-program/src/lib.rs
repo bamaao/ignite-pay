@@ -2,6 +2,8 @@ pub mod state;
 pub mod error;
 
 use anchor_lang::prelude::*;
+use anchor_spl::token;
+use anchor_spl::token::Token;
 use crate::state::SessionKeyAccount;
 use crate::error::SessionError;
 
@@ -20,6 +22,7 @@ pub mod ignite_pay_session_program {
         expires_at: i64,
         spending_limit: u64,
         scopes: Vec<String>,
+        token_mint: Pubkey,
     )]
     pub struct RegisterSessionKey<'info> {
         #[account(
@@ -45,6 +48,7 @@ pub mod ignite_pay_session_program {
         expires_at: i64,
         spending_limit: u64,
         scopes: Vec<String>,
+        token_mint: Pubkey,
     ) -> Result<()> {
         let now = ctx.accounts.clock.unix_timestamp;
         require!(expires_at > now, SessionError::SessionExpired);
@@ -56,6 +60,7 @@ pub mod ignite_pay_session_program {
         session.owner = ctx.accounts.owner.key();
         session.ephemeral_signer = ctx.accounts.ephemeral_signer.key();
         session.target_program = target_program;
+        session.token_mint = token_mint;
         session.expires_at = expires_at;
         session.spending_limit = spending_limit;
         session.current_spent = 0;
@@ -112,6 +117,89 @@ pub mod ignite_pay_session_program {
             ],
         )?;
         session.current_spent = new_spent;
+        Ok(())
+    }
+
+    // ─── Execute SPL Payment ───
+
+    #[derive(Accounts)]
+    pub struct ExecuteSplPayment<'info> {
+        #[account(
+            mut,
+            constraint = !session.revoked @ SessionError::SessionRevoked,
+            constraint = session.ephemeral_signer == ephemeral_signer.key() @ SessionError::Unauthorized,
+        )]
+        pub session: Account<'info, SessionKeyAccount>,
+        #[account(mut)]
+        pub ephemeral_signer: Signer<'info>,
+        /// CHECK: Source Associated Token Account (ephemeral's ATA for the mint).
+        #[account(mut)]
+        pub source_ata: UncheckedAccount<'info>,
+        /// CHECK: Destination Associated Token Account (recipient's ATA for the mint).
+        #[account(mut)]
+        pub dest_ata: UncheckedAccount<'info>,
+        /// CHECK: Token mint — validated against session.token_mint.
+        pub token_mint: AccountInfo<'info>,
+        /// SPL Token program.
+        pub token_program: Program<'info, token::Token>,
+        pub clock: Sysvar<'info, Clock>,
+    }
+
+    pub fn execute_spl_payment(
+        ctx: Context<ExecuteSplPayment>,
+        amount: u64,
+        scope: String,
+    ) -> Result<()> {
+        let session = &mut ctx.accounts.session;
+        let now = ctx.accounts.clock.unix_timestamp;
+
+        // Validate session not expired
+        require!(now < session.expires_at, SessionError::SessionExpired);
+
+        // Validate not revoked
+        require!(!session.revoked, SessionError::SessionRevoked);
+
+        // Validate scope is permitted
+        require!(
+            session.scopes.contains(&scope),
+            SessionError::ScopeNotPermitted
+        );
+
+        // Validate mint matches session
+        require!(
+            session.token_mint == ctx.accounts.token_mint.key(),
+            SessionError::InvalidMint
+        );
+
+        // Validate this is not a SOL-only session
+        require!(
+            session.token_mint != Pubkey::default(),
+            SessionError::SolSessionOnly
+        );
+
+        // Validate spending limit
+        let new_spent = session
+            .current_spent
+            .checked_add(amount)
+            .ok_or(SessionError::ArithmeticOverflow)?;
+        require!(
+            new_spent <= session.spending_limit,
+            SessionError::SpendingLimitExceeded
+        );
+
+        // Execute SPL token transfer via CPI using anchor_spl
+        let cpi_accounts = token::Transfer {
+            from: ctx.accounts.source_ata.to_account_info(),
+            to: ctx.accounts.dest_ata.to_account_info(),
+            authority: ctx.accounts.ephemeral_signer.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.key();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        token::transfer(cpi_ctx, amount)?;
+
+        // Update spent amount
+        session.current_spent = new_spent;
+
         Ok(())
     }
 

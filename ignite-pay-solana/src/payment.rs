@@ -1,6 +1,6 @@
 use crate::error::{Result, SolanaError};
 use crate::session::{SessionKeypair, SessionManager};
-use crate::session_program::{self as session_prog, build_execute_payment_ix, derive_session_pda};
+use crate::session_program::{self as session_prog, build_execute_payment_ix, build_execute_spl_payment_ix, derive_session_pda};
 use crate::types::{PayMode, PaymentResult, SplPaymentParams};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
@@ -126,14 +126,14 @@ impl IgnitePayClient {
         })
     }
 
-    /// Execute an SPL Token transfer using a session key.
+    /// Execute an SPL Token transfer using a session key via the on-chain session program.
     pub async fn execute_spl_transfer(
         &self,
         session: &SessionKeypair,
         source_ata: &Pubkey,
         dest_ata: &Pubkey,
         amount: u64,
-        _mint: &Pubkey,
+        mint: &Pubkey,
     ) -> Result<PaymentResult> {
         if self.session_manager.is_expired(&session.session_data) {
             return Err(SolanaError::SessionExpired);
@@ -148,23 +148,30 @@ impl IgnitePayClient {
             });
         }
 
+        let program_id = session_prog::session_program_id();
+        let (session_pda, _) = derive_session_pda(
+            &session.session_data.owner,
+            &session.keypair.pubkey(),
+            &program_id,
+        );
+
+        let ix = build_execute_spl_payment_ix(
+            &program_id,
+            &session_pda,
+            &session.keypair.pubkey(),
+            source_ata,
+            dest_ata,
+            mint,
+            amount,
+            "spl:transfer",
+        );
+
         let recent_blockhash = self
             .rpc_client
             .get_latest_blockhash()
             .map_err(|e| SolanaError::RpcError(e.to_string()))?;
 
-        let token_program_id = spl_token::id();
-        let ix = spl_token::instruction::transfer(
-            &token_program_id,
-            source_ata,
-            dest_ata,
-            &session.keypair.pubkey(),
-            &[&session.keypair.pubkey()],
-            amount,
-        )
-        .map_err(|e| SolanaError::TransactionFailed(format!("SPL transfer ix error: {}", e)))?;
-
-        let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
+        let tx = Transaction::new_signed_with_payer(
             &[ix],
             Some(&session.keypair.pubkey()),
             &[&session.keypair],
@@ -277,6 +284,7 @@ impl IgnitePayClient {
         expires_at: i64,
         spending_limit: u64,
         scopes: Vec<String>,
+        token_mint: &Pubkey,
     ) -> Result<(Pubkey, String)> {
         let program_id = session_prog::session_program_id();
         let (session_pda, _) = derive_session_pda(
@@ -294,6 +302,7 @@ impl IgnitePayClient {
             expires_at,
             spending_limit,
             scopes,
+            token_mint,
         );
 
         let recent_blockhash = self

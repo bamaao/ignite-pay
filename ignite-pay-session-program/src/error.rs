@@ -25,4 +25,10 @@ pub enum SessionError {
 
     #[msg("Invalid scope format")]
     InvalidScope,
+
+    #[msg("Invalid mint: session token_mint mismatch")]
+    InvalidMint,
+
+    #[msg("Session is for SOL, not SPL tokens")]
+    SolSessionOnly,
 }

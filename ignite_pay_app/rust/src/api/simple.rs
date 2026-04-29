@@ -103,6 +103,7 @@ pub async fn send_auth_response(
     list_max_amount: Option<u64>,
     daily_tx_count_limit: Option<u32>,
     per_tx_limit: Option<u64>,
+    token_mint: Option<String>,
 ) -> Result<()> {
     let global = GLOBAL_WS_CLIENT.lock().await;
     let client = global
@@ -123,6 +124,7 @@ pub async fn send_auth_response(
         list_max_amount,
         daily_tx_count_limit,
         per_tx_limit,
+        token_mint: None,
     };
 
     if let Some(info) = &session_key_info {
@@ -132,6 +134,7 @@ pub async fn send_auth_response(
         response.session_expires_at = Some(info.expires_at);
         response.spending_limit = Some(info.spending_limit);
         response.scopes = Some(info.scopes.clone());
+        response.token_mint = token_mint;
     }
 
     client.send_auth_response(&response, &mcp_did).await?;
@@ -270,6 +273,7 @@ pub fn create_session_key_for_payment(
     storage_path: String,
     spending_limit: u64,
     duration_secs: i64,
+    token_mint: Option<String>,
 ) -> Result<SessionKeyInfo> {
     let identity_mgr = crate::api::identity::IdentityManager::new(&storage_path)?;
     let did = identity_mgr.did();
@@ -282,15 +286,25 @@ pub fn create_session_key_for_payment(
     let owner_pubkey = owner_keypair.verifying_key();
     let owner_pubkey_str = bs58::encode(owner_pubkey.to_bytes()).into_string();
 
-    // System program ID as base58 string
-    let target_program_str = "11111111111111111111111111111111".to_string(); // System Program
+    let (target_program_str, scopes) = match &token_mint {
+        Some(_) => {
+            // SPL token session: target = Token program, scope = spl:transfer
+            ("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".to_string(),
+             vec!["spl:transfer".to_string()])
+        }
+        None => {
+            // SOL session: target = System program, scope = sol:transfer
+            ("11111111111111111111111111111111".to_string(),
+             vec!["sol:transfer".to_string()])
+        }
+    };
 
     // Use session module to create the local session
     let session_info = crate::api::session::create_session_key(
         storage_path,
         owner_pubkey_str,
         target_program_str,
-        vec!["sol:transfer".to_string()],
+        scopes,
         spending_limit,
         duration_secs,
     )?;

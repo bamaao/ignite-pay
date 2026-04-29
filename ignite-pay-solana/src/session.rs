@@ -50,6 +50,7 @@ impl SessionManager {
             owner: *owner,
             ephemeral_signer: ephemeral.pubkey(),
             target_program: *target_program,
+            token_mint: Pubkey::default(),
             expires_at: now + duration_secs,
             spending_limit,
             current_spent: 0,

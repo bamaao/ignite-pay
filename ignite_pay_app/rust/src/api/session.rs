@@ -141,7 +141,7 @@ pub async fn create_and_register_session_key(
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid target program ID"))?;
 
-    let ix_data = build_register_ix_data(&program_id_bytes, expires_at, spending_limit, &scopes);
+    let ix_data = build_register_ix_data(&program_id_bytes, expires_at, spending_limit, &scopes, &[0u8; 32]);
 
     // 5. Build raw transaction via JSON-RPC
     let client = reqwest::Client::new();
@@ -229,12 +229,13 @@ fn get_session_program_id_bytes() -> [u8; 32] {
 }
 
 /// Build the Anchor instruction data for register_session_key.
-/// sighash(8) + target_program(32) + expires_at(8) + spending_limit(8) + scopes(borsh Vec<String>)
+/// sighash(8) + target_program(32) + expires_at(8) + spending_limit(8) + scopes(borsh Vec<String>) + token_mint(32)
 fn build_register_ix_data(
     target_program: &[u8; 32],
     expires_at: i64,
     spending_limit: u64,
     scopes: &[String],
+    token_mint: &[u8; 32],
 ) -> Vec<u8> {
     use sha2::{Digest, Sha256};
 
@@ -259,6 +260,9 @@ fn build_register_ix_data(
         data.extend_from_slice(&scope_len.to_le_bytes());
         data.extend_from_slice(scope_bytes);
     }
+
+    // token_mint: 32 bytes (Pubkey::default() for SOL sessions)
+    data.extend_from_slice(token_mint);
 
     data
 }
@@ -537,6 +541,7 @@ pub async fn build_unsigned_register_tx(
         expires_at,
         spending_limit,
         &["sol:transfer".to_string()],
+        &[0u8; 32], // SOL session: default Pubkey
     );
 
     // Fetch blockhash
@@ -682,6 +687,7 @@ pub async fn complete_register_with_signature(
         expires_at,
         spending_limit,
         &["sol:transfer".to_string()],
+        &[0u8; 32], // SOL session: default Pubkey
     );
 
     // Fetch fresh blockhash

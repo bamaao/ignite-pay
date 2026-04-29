@@ -37,6 +37,7 @@ pub fn build_register_session_ix(
     expires_at: i64,
     spending_limit: u64,
     scopes: Vec<String>,
+    token_mint: &Pubkey,
 ) -> Instruction {
     let sighash = anchor_sighash("register_session_key");
 
@@ -55,6 +56,8 @@ pub fn build_register_session_ix(
         data.extend_from_slice(&scope_len.to_le_bytes());
         data.extend_from_slice(scope_bytes);
     }
+    // token_mint: 32 bytes (Pubkey)
+    data.extend_from_slice(token_mint.as_ref());
 
     Instruction {
         program_id: *program_id,
@@ -97,6 +100,43 @@ pub fn build_execute_payment_ix(
             AccountMeta::new(*ephemeral_signer, true),
             AccountMeta::new(*recipient, false),
             AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::clock::id(), false),
+        ],
+        data,
+    }
+}
+
+/// Build an `execute_spl_payment` instruction.
+pub fn build_execute_spl_payment_ix(
+    program_id: &Pubkey,
+    session_pda: &Pubkey,
+    ephemeral_signer: &Pubkey,
+    source_ata: &Pubkey,
+    dest_ata: &Pubkey,
+    token_mint: &Pubkey,
+    amount: u64,
+    scope: &str,
+) -> Instruction {
+    let sighash = anchor_sighash("execute_spl_payment");
+
+    let mut data = Vec::new();
+    data.extend_from_slice(&sighash);
+    data.extend_from_slice(&amount.to_le_bytes());
+    // Borsh String: u32 len + bytes
+    let scope_bytes = scope.as_bytes();
+    let scope_len = scope_bytes.len() as u32;
+    data.extend_from_slice(&scope_len.to_le_bytes());
+    data.extend_from_slice(scope_bytes);
+
+    Instruction {
+        program_id: *program_id,
+        accounts: vec![
+            AccountMeta::new(*session_pda, false),
+            AccountMeta::new(*ephemeral_signer, true),
+            AccountMeta::new(*source_ata, false),
+            AccountMeta::new(*dest_ata, false),
+            AccountMeta::new_readonly(*token_mint, false),
+            AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(solana_sdk::sysvar::clock::id(), false),
         ],
         data,
@@ -177,6 +217,7 @@ mod tests {
             1700000000,
             1_000_000,
             vec!["sol:transfer".to_string()],
+            &Pubkey::default(), // SOL session
         );
 
         assert_eq!(ix.program_id, program_id);

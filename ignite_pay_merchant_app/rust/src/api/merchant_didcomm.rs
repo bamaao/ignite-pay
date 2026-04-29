@@ -34,6 +34,8 @@ pub struct DecryptedMessage {
     pub leaf_index: Option<u32>,
     pub sequence: Option<u64>,
     pub raw_body: String,
+    /// SPL Token mint for this session (if SPL payment).
+    pub token_mint: Option<String>,
 }
 
 // ── Identity management (DIDComm DID, separate from state channel DID) ──
@@ -275,6 +277,11 @@ pub fn decrypt_message(storage_path: String, jwe: String) -> Result<DecryptedMes
         leaf_index: msg.body.get("leaf_index").and_then(|v| v.as_u64()).map(|v| v as u32),
         sequence: msg.body.get("sequence").and_then(|v| v.as_u64()),
         raw_body,
+        token_mint: msg
+            .body
+            .get("token_mint")
+            .and_then(|v| v.as_str())
+            .map(String::from),
     };
 
     Ok(decrypted)

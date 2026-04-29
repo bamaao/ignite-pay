@@ -296,6 +296,8 @@ pub struct SessionKeyResponseData {
     pub daily_tx_count_limit: u32,
     /// Per-transaction spending limit in lamports (application-layer, for MCP self-enforcement).
     pub per_tx_limit: u64,
+    /// SPL Token mint address (base58). None for SOL sessions.
+    pub token_mint: Option<String>,
 }
 
 /// Build a V1.0 payment authorization response with optional session key data.
@@ -369,6 +371,9 @@ fn build_authorization_response_v1_inner(
         body["scopes"] = json!(sk.scopes);
         body["daily_tx_count_limit"] = json!(sk.daily_tx_count_limit);
         body["per_tx_limit"] = json!(sk.per_tx_limit);
+        if let Some(ref mint) = sk.token_mint {
+            body["token_mint"] = json!(mint);
+        }
     }
 
     // V1.1: list metadata
@@ -755,6 +760,7 @@ mod tests {
             scopes: vec!["sol:transfer".to_string(), "spl:transfer".to_string()],
             daily_tx_count_limit: 50,
             per_tx_limit: 10_000,
+            token_mint: None,
         };
         let msg = build_authorization_response_v1(
             PHONE_DID,

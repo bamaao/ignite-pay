@@ -46,6 +46,7 @@ Future<void> sendAuthResponse({
   BigInt? listMaxAmount,
   int? dailyTxCountLimit,
   BigInt? perTxLimit,
+  String? tokenMint,
 }) => RustLib.instance.api.crateApiSimpleSendAuthResponse(
   storagePath: storagePath,
   paymentId: paymentId,
@@ -57,6 +58,7 @@ Future<void> sendAuthResponse({
   listMaxAmount: listMaxAmount,
   dailyTxCountLimit: dailyTxCountLimit,
   perTxLimit: perTxLimit,
+  tokenMint: tokenMint,
 );
 
 /// Poll for messages via HTTPS (for FCM wake-up path).
@@ -97,10 +99,12 @@ Future<SessionKeyInfo> createSessionKeyForPayment({
   required String storagePath,
   required BigInt spendingLimit,
   required PlatformInt64 durationSecs,
+  String? tokenMint,
 }) => RustLib.instance.api.crateApiSimpleCreateSessionKeyForPayment(
   storagePath: storagePath,
   spendingLimit: spendingLimit,
   durationSecs: durationSecs,
+  tokenMint: tokenMint,
 );
 
 /// Authenticate with the mediator and get a JWT token.

@@ -11,6 +11,8 @@ pub struct SessionKeyAccount {
     pub ephemeral_signer: Pubkey,
     /// Target program that this session is authorized to interact with.
     pub target_program: Pubkey,
+    /// SPL Token mint for this session. Pubkey::default() means SOL session.
+    pub token_mint: Pubkey,
     /// Unix timestamp when this session expires.
     pub expires_at: i64,
     /// Maximum cumulative spending limit in lamports.
@@ -35,6 +37,7 @@ impl SessionKeyAccount {
         32 + // owner
         32 + // ephemeral_signer
         32 + // target_program
+        32 + // token_mint
         8 + // expires_at
         8 + // spending_limit
         8 + // current_spent

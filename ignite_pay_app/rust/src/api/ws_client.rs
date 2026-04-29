@@ -143,6 +143,7 @@ impl WsClient {
                 scopes: response.scopes.clone().unwrap_or_default(),
                 daily_tx_count_limit: response.daily_tx_count_limit.unwrap_or(0),
                 per_tx_limit: response.per_tx_limit.unwrap_or(0),
+                token_mint: response.token_mint.clone(),
             })
         } else {
             None

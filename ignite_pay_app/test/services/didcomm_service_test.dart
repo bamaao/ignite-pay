@@ -40,6 +40,7 @@ class _MockRustLibApi extends RustLibApi {
     BigInt? listMaxAmount,
     int? dailyTxCountLimit,
     BigInt? perTxLimit,
+    String? tokenMint,
   }) async {}
 
   @override
@@ -47,6 +48,7 @@ class _MockRustLibApi extends RustLibApi {
     required String storagePath,
     required BigInt spendingLimit,
     required PlatformInt64 durationSecs,
+    String? tokenMint,
   }) async =>
       SessionKeyInfo(
         ephemeralPubkey: 'mockPubkey',

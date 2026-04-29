@@ -1326,6 +1326,7 @@ impl SseDecode for crate::api::merchant_didcomm::DecryptedMessage {
         let mut var_leafIndex = <Option<u32>>::sse_decode(deserializer);
         let mut var_sequence = <Option<u64>>::sse_decode(deserializer);
         let mut var_rawBody = <String>::sse_decode(deserializer);
+        let mut var_tokenMint = <Option<String>>::sse_decode(deserializer);
         return crate::api::merchant_didcomm::DecryptedMessage {
             msg_type: var_msgType,
             payment_id: var_paymentId,
@@ -1337,6 +1338,7 @@ impl SseDecode for crate::api::merchant_didcomm::DecryptedMessage {
             leaf_index: var_leafIndex,
             sequence: var_sequence,
             raw_body: var_rawBody,
+            token_mint: var_tokenMint,
         };
     }
 }
@@ -1854,6 +1856,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::merchant_didcomm::DecryptedMe
             self.leaf_index.into_into_dart().into_dart(),
             self.sequence.into_into_dart().into_dart(),
             self.raw_body.into_into_dart().into_dart(),
+            self.token_mint.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -2052,6 +2055,7 @@ impl SseEncode for crate::api::merchant_didcomm::DecryptedMessage {
         <Option<u32>>::sse_encode(self.leaf_index, serializer);
         <Option<u64>>::sse_encode(self.sequence, serializer);
         <String>::sse_encode(self.raw_body, serializer);
+        <Option<String>>::sse_encode(self.token_mint, serializer);
     }
 }
 

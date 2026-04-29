@@ -28,6 +28,8 @@ pub struct AuthResponse {
     // V1.2: merchant policy fields for MCP
     pub daily_tx_count_limit: Option<u32>,
     pub per_tx_limit: Option<u64>,
+    // V1.3: SPL token mint for this session
+    pub token_mint: Option<String>,
 }
 
 /// List action choices for the phone user.

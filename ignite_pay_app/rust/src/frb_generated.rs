@@ -517,6 +517,7 @@ fn wire__crate__api__simple__create_session_key_for_payment_impl(
             let api_storage_path = <String>::sse_decode(&mut deserializer);
             let api_spending_limit = <u64>::sse_decode(&mut deserializer);
             let api_duration_secs = <i64>::sse_decode(&mut deserializer);
+            let api_token_mint = <Option<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
@@ -525,6 +526,7 @@ fn wire__crate__api__simple__create_session_key_for_payment_impl(
                             api_storage_path,
                             api_spending_limit,
                             api_duration_secs,
+                            api_token_mint,
                         )?;
                         Ok(output_ok)
                     })(),
@@ -1535,6 +1537,7 @@ fn wire__crate__api__simple__send_auth_response_impl(
             let api_list_max_amount = <Option<u64>>::sse_decode(&mut deserializer);
             let api_daily_tx_count_limit = <Option<u32>>::sse_decode(&mut deserializer);
             let api_per_tx_limit = <Option<u64>>::sse_decode(&mut deserializer);
+            let api_token_mint = <Option<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
@@ -1550,6 +1553,7 @@ fn wire__crate__api__simple__send_auth_response_impl(
                             api_list_max_amount,
                             api_daily_tx_count_limit,
                             api_per_tx_limit,
+                            api_token_mint,
                         )
                         .await?;
                         Ok(output_ok)

@@ -135,6 +135,8 @@ pub struct AuthResponse {
     // V1.1: list metadata
     pub list_label: Option<String>,
     pub list_max_amount: Option<u64>,
+    // V1.2: SPL token mint for this session
+    pub token_mint: Option<String>,
 }
 
 /// In-memory store for pending authorization requests with oneshot channels.
@@ -242,6 +244,7 @@ mod tests {
             scopes: None,
             list_label: None,
             list_max_amount: None,
+            token_mint: None,
         }));
         let resp = rx.blocking_recv().unwrap();
         assert!(resp.authorized);
@@ -264,6 +267,7 @@ mod tests {
             scopes: None,
             list_label: None,
             list_max_amount: None,
+            token_mint: None,
         }));
         // Second resolve returns false (already consumed)
         assert!(!store.resolve("pay-1", AuthResponse {
@@ -278,6 +282,7 @@ mod tests {
             scopes: None,
             list_label: None,
             list_max_amount: None,
+            token_mint: None,
         }));
     }
 
@@ -296,6 +301,7 @@ mod tests {
             scopes: None,
             list_label: None,
             list_max_amount: None,
+            token_mint: None,
         }));
     }
 
@@ -319,6 +325,7 @@ mod tests {
             scopes: None,
             list_label: None,
             list_max_amount: None,
+            token_mint: None,
         }));
         assert!(store.resolve("pay-1", AuthResponse {
             authorized: false,
@@ -332,6 +339,7 @@ mod tests {
             scopes: None,
             list_label: None,
             list_max_amount: None,
+            token_mint: None,
         }));
 
         assert!(!rx1.blocking_recv().unwrap().authorized);
@@ -428,6 +436,7 @@ mod tests {
             scopes: Some(vec!["sol:transfer".to_string()]),
             list_label: Some("trusted".to_string()),
             list_max_amount: Some(50_000),
+            token_mint: None,
         }));
 
         let resp = rx.blocking_recv().unwrap();

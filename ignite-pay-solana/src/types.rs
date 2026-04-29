@@ -29,6 +29,8 @@ pub struct SessionTokenData {
     pub ephemeral_signer: Pubkey,
     /// Target program (e.g., System Program or Token Program)
     pub target_program: Pubkey,
+    /// SPL Token mint. Pubkey::default() for SOL sessions.
+    pub token_mint: Pubkey,
     /// Unix timestamp when session expires
     pub expires_at: i64,
     /// Maximum spending limit in lamports
