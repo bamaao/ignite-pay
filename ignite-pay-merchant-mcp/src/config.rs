@@ -9,6 +9,8 @@ pub struct Config {
     pub storage: StorageConfig,
     pub solana: SolanaConfig,
     pub hub: HubConfig,
+    #[serde(default)]
+    pub magicblock: MagicBlockConfig,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -49,6 +51,18 @@ pub struct HubConfig {
     pub token_mint: String,
     #[serde(default)]
     pub provider_pubkey: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct MagicBlockConfig {
+    #[serde(default = "default_rpc_url")]
+    pub rpc_url: String,
+    #[serde(default = "default_mb_program_id")]
+    pub program_id: String,
+}
+
+fn default_mb_program_id() -> String {
+    "6pFXAg1oiV61wVvaJvMHqYdGMe2fscDwmN9UBUSvNuU3".to_string()
 }
 
 fn default_rpc_url() -> String {

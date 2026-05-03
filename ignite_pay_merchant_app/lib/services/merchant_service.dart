@@ -39,6 +39,7 @@ class MerchantService extends ChangeNotifier {
   String _didDocJson = '';
   String _hubEndpoint = '';
   String _mediatorWsUrl = '';
+  String _mbMerchantPubkey = '';
   List<PaymentOrder> _orders = [];
   String _storagePath = '';
   void Function(PaymentOrder)? _onPaymentConfirmed;
@@ -48,6 +49,7 @@ class MerchantService extends ChangeNotifier {
   String get didDocJson => _didDocJson;
   String get hubEndpoint => _hubEndpoint;
   String get mediatorWsUrl => _mediatorWsUrl;
+  String get mbMerchantPubkey => _mbMerchantPubkey;
   String get storagePath => _storagePath;
   List<PaymentOrder> get orders => _orders;
 
@@ -75,6 +77,14 @@ class MerchantService extends ChangeNotifier {
       } catch (_) {
         // Identity not yet created
       }
+
+      // Initialize MB merchant keypair
+      try {
+        _mbMerchantPubkey = await rust.initializeMbMerchant(storagePath: _storagePath);
+      } catch (_) {
+        // MB keypair not initialized yet
+      }
+
       await refreshOrders();
 
       // Initialize push service instead of polling
@@ -113,11 +123,19 @@ class MerchantService extends ChangeNotifier {
   }
 
   Future<String> generatePaymentQr(BigInt amount, String description) async {
+    // Ensure MB keypair exists
+    if (_mbMerchantPubkey.isEmpty) {
+      try {
+        _mbMerchantPubkey = await rust.initializeMbMerchant(storagePath: _storagePath);
+      } catch (_) {}
+    }
+
     final qrText = await rust.generatePaymentQr(
       merchantDid: _did,
       amount: amount,
       description: description,
       hubEndpoint: _hubEndpoint,
+      merchantMbPubkey: _mbMerchantPubkey,
     );
     await refreshOrders();
     return qrText;

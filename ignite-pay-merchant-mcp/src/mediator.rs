@@ -24,6 +24,17 @@ pub struct CreateChannelCommand {
     pub tree_depth: u32,
 }
 
+/// Command sent when an mb-voucher is received from a buyer.
+pub struct MbVoucherCommand {
+    pub buyer_did: String,
+    pub buyer_pubkey: String,
+    pub order_id: String,
+    pub channel_id: String,
+    pub seq: u64,
+    pub amount: u64,
+    pub buyer_sig: String,
+}
+
 /// DIDComm mediator connection for the merchant MCP.
 /// Simplified version — focuses on sending payment confirmations.
 pub struct MerchantMediator {
@@ -41,6 +52,8 @@ pub struct MerchantMediator {
     phone_mediator_http_url: Arc<tokio::sync::Mutex<Option<String>>>,
     signing_private: [u8; 32],
     db: sled::Db,
+    /// Channel for forwarding received MB vouchers to the MCP server for processing.
+    mb_voucher_tx: Arc<tokio::sync::Mutex<Option<mpsc::UnboundedSender<MbVoucherCommand>>>>,
 }
 
 fn save_paired_phone(db: &sled::Db, did: &str) {
@@ -110,6 +123,7 @@ impl MerchantMediator {
             phone_mediator_http_url: Arc::new(tokio::sync::Mutex::new(load_phone_mediator_http_url(db))),
             signing_private,
             db: db.clone(),
+            mb_voucher_tx: Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
 
@@ -201,6 +215,7 @@ impl MerchantMediator {
         let phone_mediator_http_url = self.phone_mediator_http_url.clone();
         let signing_private = self.signing_private;
         let db = self.db.clone();
+        let mb_voucher_tx = self.mb_voucher_tx.clone();
 
         let (outgoing_tx, _outgoing_rx) = mpsc::unbounded_channel();
         {
@@ -227,6 +242,7 @@ impl MerchantMediator {
                     &phone_mediator_http_url,
                     &signing_private,
                     &db,
+                    &mb_voucher_tx,
                 )
                 .await
                 {
@@ -384,6 +400,12 @@ impl MerchantMediator {
             tracing::info!("Registered peer from DID document: {}", did);
         }
     }
+
+    /// Set the MB voucher channel for forwarding received vouchers.
+    pub async fn set_mb_voucher_channel(&self, tx: mpsc::UnboundedSender<MbVoucherCommand>) {
+        let mut guard = self.mb_voucher_tx.lock().await;
+        *guard = Some(tx);
+    }
 }
 
 /// Forward a message to a phone's mediator via HTTP POST.
@@ -469,6 +491,7 @@ async fn connect_and_run(
     phone_mediator_http_url: &Arc<tokio::sync::Mutex<Option<String>>>,
     signing_private: &[u8; 32],
     db: &sled::Db,
+    mb_voucher_tx: &Arc<tokio::sync::Mutex<Option<mpsc::UnboundedSender<MbVoucherCommand>>>>,
 ) -> Result<()> {
     let (mut ws, _) = connect_async(ws_url).await?;
     tracing::info!("Merchant connected to mediator: {}", ws_url);
@@ -496,7 +519,7 @@ async fn connect_and_run(
             msg = ws.next() => {
                 match msg {
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
-                        handle_incoming_message(&text, agent, create_channel_tx, paired_phone, pending_phone, phone_mediator_http_url, signing_private, db, our_did, did_doc, ws_url).await;
+                        handle_incoming_message(&text, agent, create_channel_tx, paired_phone, pending_phone, phone_mediator_http_url, signing_private, db, our_did, did_doc, ws_url, mb_voucher_tx).await;
                     }
                     Some(Ok(_)) => {}
                     Some(Err(e)) => return Err(e.into()),
@@ -527,6 +550,7 @@ async fn handle_incoming_message(
     our_did: &str,
     did_doc: &Value,
     mcp_ws_url: &str,
+    mb_voucher_tx: &Arc<tokio::sync::Mutex<Option<mpsc::UnboundedSender<MbVoucherCommand>>>>,
 ) {
     // Try encrypted unpack first
     if is_jwe(text) {
@@ -534,7 +558,7 @@ async fn handle_incoming_message(
         match didcomm::unpack_message(&agent_guard, text, None) {
             Ok(msg) => {
                 drop(agent_guard);
-                process_inner_message(&msg, agent, create_channel_tx, paired_phone, pending_phone, phone_mediator_http_url, signing_private, db, our_did, did_doc, mcp_ws_url).await;
+                process_inner_message(&msg, agent, create_channel_tx, paired_phone, pending_phone, phone_mediator_http_url, signing_private, db, our_did, did_doc, mcp_ws_url, mb_voucher_tx).await;
                 return;
             }
             Err(e) => {
@@ -706,6 +730,7 @@ async fn process_inner_message(
     our_did: &str,
     did_doc: &Value,
     mcp_ws_url: &str,
+    mb_voucher_tx: &Arc<tokio::sync::Mutex<Option<mpsc::UnboundedSender<MbVoucherCommand>>>>,
 ) {
     // Check for connection-request type (pairing from merchant app)
     if msg.typ.contains("connection-request") {
@@ -831,6 +856,66 @@ async fn process_inner_message(
         save_paired_phone(db, &phone_did);
 
         tracing::info!("App {} fully paired", phone_did);
+        return;
+    }
+
+    // Handle MB voucher messages from buyers
+    if msg.typ.contains("mb-voucher") {
+        let buyer_did = msg.from.clone().unwrap_or_default();
+        let buyer_pubkey = msg
+            .body
+            .get("buyer_pubkey")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let order_id = msg
+            .body
+            .get("order_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let channel_id = msg
+            .body
+            .get("channel_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let seq = msg.body.get("seq").and_then(|v| v.as_u64()).unwrap_or(0);
+        let amount = msg.body.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
+        let buyer_sig = msg
+            .body
+            .get("buyer_sig")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        tracing::info!(
+            "Received mb-voucher from buyer {} (order: {}, seq: {}, amount: {})",
+            buyer_did,
+            order_id,
+            seq,
+            amount
+        );
+
+        // Forward to MCP server for processing
+        let tx_guard = mb_voucher_tx.lock().await;
+        if let Some(tx) = tx_guard.as_ref() {
+            let cmd = MbVoucherCommand {
+                buyer_did,
+                buyer_pubkey,
+                order_id,
+                channel_id,
+                seq,
+                amount,
+                buyer_sig,
+            };
+            if let Err(e) = tx.send(cmd) {
+                tracing::error!("Failed to forward MB voucher command: {}", e);
+            }
+        } else {
+            tracing::warn!("No MB voucher handler registered, ignoring mb-voucher");
+        }
+
         return;
     }
 

@@ -393,6 +393,7 @@ fn wire__crate__api__merchant__generate_payment_qr_impl(
             let api_amount = <u64>::sse_decode(&mut deserializer);
             let api_description = <String>::sse_decode(&mut deserializer);
             let api_hub_endpoint = <String>::sse_decode(&mut deserializer);
+            let api_merchant_mb_pubkey = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
@@ -402,6 +403,7 @@ fn wire__crate__api__merchant__generate_payment_qr_impl(
                             api_amount,
                             api_description,
                             api_hub_endpoint,
+                            api_merchant_mb_pubkey,
                         )?;
                         Ok(output_ok)
                     })(),
@@ -1024,6 +1026,79 @@ fn wire__crate__api__merchant__recent_audit_impl(
         },
     )
 }
+
+fn wire__crate__api__merchant__initialize_mb_merchant_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "initialize_mb_merchant",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::merchant::initialize_mb_merchant(api_storage_path)?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
+
+fn wire__crate__api__merchant__get_mb_merchant_pubkey_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "get_mb_merchant_pubkey",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::merchant::get_mb_merchant_pubkey(api_storage_path)?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
+
 fn wire__crate__api__merchant_didcomm__register_device_token_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1748,6 +1823,8 @@ fn pde_ffi_dispatcher_primary_impl(
             data_len,
         ),
         25 => wire__crate__api__merchant__recent_audit_impl(port, ptr, rust_vec_len, data_len),
+        26 => wire__crate__api__merchant__initialize_mb_merchant_impl(port, ptr, rust_vec_len, data_len),
+        27 => wire__crate__api__merchant__get_mb_merchant_pubkey_impl(port, ptr, rust_vec_len, data_len),
         26 => wire__crate__api__merchant_didcomm__register_device_token_impl(
             port,
             ptr,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:ignite_pay_app/src/rust/api/simple.dart' as bridge;
 import 'services/channel_service.dart';
 import 'theme.dart';
 
@@ -119,7 +120,9 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
                     border: Border.all(color: kSuccess.withValues(alpha: 0.3)),
                   ),
                   child: Text(
-                    '支付成功! Sequence: ${_result!.sequence}, Leaf: ${_result!.leafIndex}',
+                    widget.paymentData.merchantMbPubkey.isNotEmpty
+                        ? 'MB Payment Success! Seq: ${_result!.sequence}'
+                        : 'Payment Success! Sequence: ${_result!.sequence}, Leaf: ${_result!.leafIndex}',
                     style: GoogleFonts.inter(fontSize: 12, color: kSuccess),
                   ),
                 ),
@@ -251,6 +254,7 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
   }
 
   Widget _buildChannelCard() {
+    final isMb = widget.paymentData.merchantMbPubkey.isNotEmpty;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: glassDecoration(),
@@ -270,14 +274,16 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
           Row(
             children: [
               Icon(
-                Icons.hub,
+                isMb ? Icons.bolt : Icons.hub,
                 size: 14,
                 color: kNeonCyanDim,
               ),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  'Hub: ${widget.paymentData.hubEndpoint.replaceAll(RegExp(r'https?://'), '')}',
+                  isMb
+                      ? 'MB: ${_shortenDid(widget.paymentData.merchantMbPubkey)}'
+                      : 'Hub: ${widget.paymentData.hubEndpoint.replaceAll(RegExp(r'https?://'), '')}',
                   style: GoogleFonts.inter(
                     fontSize: 12,
                     color: kTextSecondary,
@@ -304,7 +310,13 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
     });
 
     try {
-      // Find an open channel for this payment
+      // MB payment path: sign voucher and send via DIDComm
+      if (widget.paymentData.merchantMbPubkey.isNotEmpty) {
+        await _onConfirmMbPayment();
+        return;
+      }
+
+      // Legacy Hub payment path
       final channelSvc = ChannelService();
       await channelSvc.refreshChannels(widget.storagePath);
       final openCh = channelSvc.firstOpenChannel;
@@ -331,6 +343,56 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
           _isProcessing = false;
           _isSuccess = true;
           _result = result;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _errorMessage = e.toString();
+        });
+      }
+    }
+  }
+
+  Future<void> _onConfirmMbPayment() async {
+    const mbProgramId = String.fromEnvironment('MB_PROGRAM_ID', defaultValue: '');
+
+    try {
+      // Ensure buyer MB keypair exists
+      await bridge.mbGetBuyerPubkey(storagePath: widget.storagePath);
+
+      // Sign the voucher
+      final voucher = await bridge.mbSignVoucher(
+        storagePath: widget.storagePath,
+        programId: mbProgramId,
+        merchantMbPubkey: widget.paymentData.merchantMbPubkey,
+        seq: BigInt.from(1),
+        amount: BigInt.from(widget.paymentData.amount),
+      );
+
+      // Send the voucher via DIDComm
+      await bridge.mbSendVoucher(
+        storagePath: widget.storagePath,
+        merchantDid: widget.paymentData.merchantDid,
+        orderId: widget.paymentData.orderId,
+        channelId: voucher.channelId,
+        seq: voucher.seq,
+        amount: voucher.amount,
+        buyerPubkey: voucher.buyerPubkey,
+        buyerSig: voucher.buyerSig,
+      );
+
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _isSuccess = true;
+          _result = ChannelPaymentResult(
+            channelId: voucher.channelId,
+            sequence: voucher.seq.toInt(),
+            leafIndex: 0,
+            newRoot: '',
+          );
         });
       }
     } catch (e) {

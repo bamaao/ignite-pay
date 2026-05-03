@@ -204,7 +204,7 @@ impl WsClient {
 /// Errors propagate to the caller so the Dart layer knows if connection failed.
 async fn connect_phase(
     ws_url: &str,
-    agent: &Arc<Mutex<DIDCommAgent>>,
+    _agent: &Arc<Mutex<DIDCommAgent>>,
     our_did: &str,
     did_doc: &Value,
     signing_private: &[u8; 32],

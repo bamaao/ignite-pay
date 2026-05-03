@@ -14,6 +14,8 @@ pub struct PaymentQrData {
     pub order_id: String,
     pub hub_endpoint: String,
     pub timestamp: i64,
+    #[serde(default)]
+    pub merchant_mb_pubkey: String,
 }
 
 /// Parsed result of scanning a payment QR code.
@@ -25,6 +27,7 @@ pub struct ParsedPaymentQr {
     pub order_id: String,
     pub hub_endpoint: String,
     pub timestamp: i64,
+    pub merchant_mb_pubkey: String,
 }
 
 /// Generate a payment QR string from payment data.
@@ -97,6 +100,7 @@ pub fn parse_payment_qr(qr_data: &str) -> Result<ParsedPaymentQr, anyhow::Error>
         order_id: data.order_id,
         hub_endpoint: data.hub_endpoint,
         timestamp: data.timestamp,
+        merchant_mb_pubkey: data.merchant_mb_pubkey,
     })
 }
 
@@ -115,6 +119,7 @@ mod tests {
             order_id: "order-123".to_string(),
             hub_endpoint: "https://hub.example.com".to_string(),
             timestamp: 1700000000,
+            merchant_mb_pubkey: "MBPubkey123".to_string(),
         };
 
         let text = generate_payment_qr_text(&data);
@@ -127,6 +132,7 @@ mod tests {
         assert_eq!(parsed.order_id, "order-123");
         assert_eq!(parsed.hub_endpoint, "https://hub.example.com");
         assert_eq!(parsed.timestamp, 1700000000);
+        assert_eq!(parsed.merchant_mb_pubkey, "MBPubkey123");
     }
 
     #[test]
@@ -140,6 +146,7 @@ mod tests {
             order_id: "ord-1".to_string(),
             hub_endpoint: "http://localhost:3003".to_string(),
             timestamp: 1000,
+            merchant_mb_pubkey: String::new(),
         };
 
         let ascii = generate_qr_ascii(&data).unwrap();

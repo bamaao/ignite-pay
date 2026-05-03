@@ -803,7 +803,7 @@ pub async fn revoke_session_key_onchain(
     let owner_seed_bytes: &[u8; 32] = owner_seed.as_slice().try_into().unwrap();
     let owner_signing = ed25519_dalek::SigningKey::from_bytes(owner_seed_bytes);
     let owner_pubkey_bytes = owner_signing.verifying_key().to_bytes();
-    let owner_keypair_bytes = owner_signing.to_bytes();
+    let _owner_keypair_bytes = owner_signing.to_bytes();
 
     // Derive PDA
     let session_pda = derive_session_pda_simple(&owner_pubkey_bytes, &ephemeral_pubkey_bytes);

@@ -135,60 +135,107 @@ pub struct VerifyMerchantInput {
     pub expected_address: String,
 }
 
-// State channel tools
+// MagicBlock payment channel tools
 
-/// Input for the `open_channel` tool.
-fn default_tree_depth() -> u32 {
-    8
-}
-
+/// Input for the `mb_deposit` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct OpenChannelInput {
-    /// Hub HTTP endpoint URL (e.g., "http://localhost:3003").
-    pub hub_endpoint: String,
-    /// Amount to deposit into the channel (in smallest token units).
-    pub deposit: u64,
-    /// Merkle tree depth (default 8, max 12).
-    #[serde(default = "default_tree_depth")]
-    pub tree_depth: u32,
-    /// Provider (Hub) Solana public key (base58).
-    pub provider_pubkey: String,
-    /// SPL token mint address (base58). Defaults to native SOL.
-    #[serde(default)]
-    pub token_mint: Option<String>,
-}
-
-/// Input for the `channel_pay` tool.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ChannelPayInput {
-    /// Channel ID (hex string).
-    pub channel_id: String,
-    /// Amount to pay (in smallest token units).
+pub struct MbDepositInput {
+    /// Amount to deposit in lamports.
     pub amount: u64,
-    /// Recipient Solana public key (base58).
-    pub recipient: String,
 }
 
-/// Input for the `get_channel_status` tool.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetChannelStatusInput {
-    /// Channel ID (hex string). If empty, returns all open channels.
-    #[serde(default)]
-    pub channel_id: Option<String>,
+/// Input for the `mb_create_channel` tool.
+fn default_challenge_period() -> i64 {
+    21600
 }
 
-/// Input for the `close_channel` tool.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CloseChannelInput {
-    /// Channel ID (hex string).
-    pub channel_id: String,
+fn default_dispute_period() -> i64 {
+    172800
 }
 
-/// Input for the `settle_channel` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct SettleChannelInput {
-    /// Channel ID (hex string).
-    pub channel_id: String,
+pub struct MbCreateChannelInput {
+    /// Merchant pubkey (base58).
+    pub merchant_pubkey: String,
+    /// Maximum spending cap in lamports.
+    pub spending_cap: u64,
+    /// Challenge period in slots (default 21600 ~ 1 day).
+    #[serde(default = "default_challenge_period")]
+    pub challenge_period: i64,
+    /// Dispute period in slots (default 172800 ~ 8 days).
+    #[serde(default = "default_dispute_period")]
+    pub dispute_period: i64,
+}
+
+/// Input for the `mb_update_spending_cap` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MbUpdateSpendingCapInput {
+    /// Merchant pubkey (base58).
+    pub merchant_pubkey: String,
+    /// New spending cap in lamports.
+    pub new_spending_cap: u64,
+}
+
+/// Input for the `mb_sign_voucher` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MbSignVoucherInput {
+    /// Merchant pubkey (base58).
+    pub merchant_pubkey: String,
+    /// Voucher sequence number.
+    pub seq: u64,
+    /// Payment amount in lamports.
+    pub amount: u64,
+}
+
+/// Input for the `mb_sign_settlement` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MbSignSettlementInput {
+    /// Merchant pubkey (base58).
+    pub merchant_pubkey: String,
+    /// Merkle root hash (base58).
+    pub merkle_root: String,
+    /// Total amount to settle in lamports.
+    pub total_amount: u64,
+    /// Batch nonce (must match channel nonce).
+    pub batch_nonce: u64,
+}
+
+/// Input for the `mb_get_channel` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MbGetChannelInput {
+    /// Merchant pubkey (base58).
+    pub merchant_pubkey: String,
+}
+
+/// Input for the `mb_get_global_state` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MbGetGlobalStateInput {}
+
+/// Input for the `mb_dispute` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MbDisputeInput {
+    /// Merchant pubkey (base58).
+    pub merchant_pubkey: String,
+    /// Batch nonce of the settlement to dispute.
+    pub batch_nonce: u64,
+}
+
+/// Input for the `mb_resolve_dispute` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MbResolveDisputeInput {
+    /// Merchant pubkey (base58).
+    pub merchant_pubkey: String,
+    /// Batch nonce of the disputed settlement.
+    pub batch_nonce: u64,
+    /// Sequence number of the voucher to use as fraud proof.
+    pub voucher_seq: u64,
+}
+
+/// Input for the `mb_withdraw` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MbWithdrawInput {
+    /// Amount to withdraw in lamports.
+    pub amount: u64,
 }
 
 #[cfg(test)]

@@ -10,22 +10,24 @@ Ignite Pay 是一套基于 Solana 的去中心化支付系统，由三个核心�
 │ (Sentinel)  │   加密消息    │  中继服务 │   加密消息    │  (Merchant)  │
 └──────┬──────┘               └──────────┘               └──────┬───────┘
        │                                                        │
-       │  State Channel API            State Channel API        │
+       │  MB Voucher Signing          MB Voucher Collection      │
        ▼                                                        ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        Hub (支付通道服务)                            │
-│   /v1/channels/open · pay · close · settle · claim · finalize      │
+│                  MagicBlock 支付通道 (链上)                          │
+│  init_global · deposit · create_channel · settle_batch · release    │
+│  optimistic_settle · dispute · resolve_dispute · withdraw           │
+│  off-chain: sign_voucher · receive_voucher · merkle proof           │
 └─────────────────────────────────────────────────────────────────────┘
        │
        ▼
-┌─────────────────┐
-│  Solana 区块链   │
-│  状态通道合约     │
-│  Session Key 合约 │
-└─────────────────┘
+┌─────────────────────────────────┐
+│  Solana 区块链                    │
+│  MagicBlock 支付通道合约           │
+│  Session Key 合约                 │
+└─────────────────────────────────┘
 ```
 
-**核心理念：** 用户通过手机 App 掌控自己的 DID 身份和资金，对 AI 代理发起的支付进行实时授权；商户通过手机 App 生成收款码并接收即时支付确认。两端通过 DIDComm 端到端加密通信，经 Mediator 中继。
+**核心理念：** 用户通过手机 App 掌控自己的 DID 身份和资金，对 AI 代理发起的支付进行实时授权；商户通过手机 App 生成收款码并接收即时支付确认。两端通过 DIDComm 端到端加密通信，经 Mediator 中继。支付基于 MagicBlock 支付通道实现：链上锁定资金 + 链下签名 Voucher + Merkle Sum Tree 批量结算。
 
 ---
 
@@ -44,7 +46,7 @@ Ignite Pay 是一套基于 Solana 的去中心化支付系统，由三个核心�
 | 本地数据库 | sled (身份、Session Key、策略、通道) + SQLite (审计日志) |
 | 消息传输 | DIDComm v2 (JWE authcrypt 加密) |
 | 推送通道 | FCM (海外) / WebSocket 长连接 (国内) |
-| 区块链 | Solana (State Channel 合约 + Session Key 合约) |
+| 区块链 | Solana (MagicBlock 支付通道合约 + Session Key 合约) |
 
 ### 2.3 核心身份
 
@@ -67,7 +69,7 @@ Ignite Pay 是一套基于 Solana 的去中心化支付系统，由三个核心�
 - 通知铃铛：未读消息数徽章，点击进入通知中心
 - 快捷入口：Vault（密钥库）、Policies（策略管理）、Channels（通道拓扑）
 - "Scan MCP QR Code" 按钮：扫描商户二维码建立配对（支持 PaymentQrData 和 didcomm:// 配对）
-- "Create Channel" 按钮：读取 Hub Registry URL 和 MCP DID，创建通道
+- "Create Channel" 按钮：基于 MagicBlock 支付通道，指定商户公钥和消费上限创建通道
 - 信任额度仪表盘：当日消费/限额
 - 最近活动列表：实时数据，从 `DidcommService.messages` 获取
 - 支付授权横幅：收到 `payment-auth-request` 时弹出
@@ -113,8 +115,8 @@ Ignite Pay 是一套基于 Solana 的去中心化支付系统，由三个核心�
 
 扫描商户收款码 `ignite://pay?d=<base64>` 后的确认页：
 - 展示商户信息、金额、描述
-- Confirm → 调用 Hub API 执行状态通道支付
-- 显示支付结果（sequence, leaf_index）
+- Confirm → 签名 Voucher（Ed25519 签名 `SHA256(channel_id || seq || amount)`）→ 发送给商户
+- 显示支付结果（sequence, voucher signature）
 
 #### 2.4.9 消息列表 (MessagesScreen)
 
@@ -133,7 +135,7 @@ DIDComm 消息收件箱：
 
 - Solana 网络：Devnet / Mainnet 切换、RPC URL、DAS Endpoint
 - SPL 账户压缩参数：Tree Address、Tree Authority
-- 程序 ID：State Channel、DID、Session Key（只读）
+- 程序 ID：MagicBlock 支付通道、DID、Session Key（只读）
 - 支付模式：自费 / 赞助
 - 存储管理：清除缓存
 
@@ -148,11 +150,11 @@ DIDComm 消息收件箱：
 
 #### 2.4.13 通道拓扑 (ChannelTopologyScreen)
 
-状态通道网络可视化与管理：
-- 总余额卡片：显示所有通道余额总和（SOL）+ 开启/关闭通道数
-- 本节点卡片：显示用户 DID + 连接状态脉冲动画
-- 通道卡片列表：Hub 端点、状态徽章、余额、存入金额、序列号、树深度
-- 操作：关闭通道（`closeChannel`）、结算通道（`settleChannel`）
+MagicBlock 支付通道网络可视化与管理：
+- 总余额卡片：显示全局 Vault 余额（SOL）+ 存入总额 + 已分配额度
+- 本节点卡片：显示用户 DID + MB Buyer Pubkey + 连接状态脉冲动画
+- 通道卡片列表：商户公钥、消费上限 (spending_cap)、已结算金额 (settled_amount)、当前 batch nonce、挑战期/争议期
+- 操作：调整消费上限 (`update_spending_cap`)、争议 (`dispute`)、解决争议 (`resolve_dispute`)
 - 下拉刷新
 - 空状态/错误状态/加载中状态
 
@@ -176,13 +178,14 @@ DIDComm 消息收件箱：
 - 统计卡片：通道数 / 余额 (SOL) / 商户数
 - 导出 DID Document（复制到剪贴板）
 
-#### 2.4.16 Hub 列表 (HubListScreen)
+#### 2.4.16 MB 支付通道管理 (MbChannelScreen)
 
-Hub 注册发现与通道创建：
-- 从 Hub Registry API (`GET /v1/hubs`) 获取可用 Hub 列表
-- Hub 卡片：名称、描述、状态、费率、流动性、延迟、在线率、成功率
-- 选择 Hub 后配置通道参数（存入金额、Token Mint、树深度）
-- 创建通道按钮 → 调用 `sendCreateChannelRequest` DIDComm 消息
+MagicBlock 支付通道配置：
+- 配置 MB RPC URL 和 Program ID
+- 全局状态初始化 (`init_global`)：创建 GlobalState + GlobalVault PDA
+- 充值 (`deposit`)：SOL 转入 GlobalVault
+- 创建通道：指定商户公钥、消费上限 (spending_cap)、挑战期 (challenge_period)、争议期 (dispute_period)
+- 提取未分配资金 (`withdraw`)
 - 从 Dashboard 的 "Create Channel" 按钮进入
 
 ### 2.5 核心服务
@@ -191,7 +194,7 @@ Hub 注册发现与通道创建：
 |------|------|
 | `DidcommService` | DID 身份管理、Mediator 连接、消息收发、认证、推送编排 |
 | `SessionKeyService` | Session Key 创建/注册/撤销/查询，支持内置密钥和外接钱包 |
-| `ChannelService` | 状态通道操作（解析 QR、支付、列表） |
+| `ChannelService` | MagicBlock 支付通道操作（初始化全局状态、充值、创建通道、签名 Voucher、争议/解决争议、提取） |
 | `FcmService` | Firebase 推送通知 |
 | `MediatorApi` | Mediator REST API HTTP 客户端 |
 | `WalletDeepLinkService` | Phantom / Solflare 钱包深度链接构建 |
@@ -217,8 +220,15 @@ Hub 注册发现与通道创建：
 | `revoke_session_key_onchain` | 链上撤销 Session Key |
 | `save_merchant_policy` / `load_merchant_policy` | 商户策略持久化 |
 | `parse_payment_qr` | 解析收款二维码 |
-| `list_channels` | 列出用户所有状态通道 |
-| `open_channel` / `channel_pay` / `close_channel` / `settle_channel` | 状态通道操作 |
+| `mb_init_global` | 初始化全局状态（创建 GlobalState + GlobalVault PDA） |
+| `mb_deposit` | 向 GlobalVault 充值 SOL |
+| `mb_create_channel` | 创建支付通道（指定商户、消费上限、挑战期、争议期） |
+| `mb_update_spending_cap` | 调整通道消费上限 |
+| `mb_get_channel` / `mb_get_global_state` | 查询通道/全局状态 |
+| `mb_sign_voucher` | 签名 Voucher（Ed25519 签名 `SHA256(channel_id \|\| seq \|\| amount)`） |
+| `mb_sign_settlement` | 签名结算消息（验证 Merkle Root 后签名） |
+| `mb_dispute` / `mb_resolve_dispute` | 争议/解决争议（提交 Merkle Proof 欺诈证明） |
+| `mb_withdraw` | 提取未分配资金 |
 
 ### 2.7 支付授权完整流程
 
@@ -242,7 +252,7 @@ Hub 注册发现与通道创建：
 
 ### 3.1 产品定位
 
-商户的收款工具。生成收款二维码、接收即时支付确认、管理状态通道、语音播报到账。
+商户的收款工具。生成收款二维码、接收即时支付确认、管理 MagicBlock 支付通道、语音播报到账。
 
 ### 3.2 技术栈
 
@@ -261,7 +271,7 @@ Hub 注册发现与通道创建：
 
 | 身份 | DID 格式 | 用途 | 存储位置 |
 |------|----------|------|----------|
-| 状态通道 DID | `did:ignite:<raw_base58>` | QR 码生成、通道操作、链上签名 | sled `keypairs` tree |
+| MagicBlock 通道 DID | `did:ignite:<raw_base58>` | QR 码生成、Voucher 收集、链上结算签名 | sled `mb_keys` tree |
 | DIDComm 通信 DID | `did:ignite:z<multicodec_base58>` | JWE 加解密、Mediator 消息收发 | sled `didcomm_identity` tree |
 
 两者密钥体系完全独立，互不干扰。
@@ -270,9 +280,9 @@ Hub 注册发现与通道创建：
 
 #### 3.4.1 引导流程 (OnboardingScreen)
 
-1. 填写 Hub Endpoint URL
+1. 填写 MagicBlock RPC URL 和 Program ID
 2. 填写 Mediator WebSocket URL（可选）
-3. 生成商户身份（Ed25519 密钥对 → 状态通道 DID）
+3. 生成商户身份（Ed25519 密钥对 → MB Merchant Keypair）
 4. 初始化推送服务（连接 Mediator）
 
 #### 3.4.2 仪表盘 (DashboardScreen)
@@ -280,7 +290,7 @@ Hub 注册发现与通道创建：
 - "Ignite Merchant" 头部 + 在线状态指示灯（"在线"）
 - 通知铃铛：未读订单数徽章，点击进入通知中心
 - 今日汇总卡片：已收款总额 (USDC) + 笔数（仅计 confirmed）
-- 快捷操作：生成收款码 / 通道管理 / Hub 选择
+- 快捷操作：生成收款码 / 通道管理 / MB 配置
 - 最近订单列表：点击进入订单详情
 
 #### 3.4.3 生成收款码 (QrGenerateScreen)
@@ -301,10 +311,10 @@ Hub 注册发现与通道创建：
   "type": "ignite-pay-request",
   "version": 1,
   "merchant_did": "did:ignite:...",
+  "merchant_pubkey": "MB merchant Ed25519 base58 pubkey",
   "amount": 1000000000,
   "description": "咖啡",
   "order_id": "uuid-v4",
-  "hub_endpoint": "https://hub.example.com",
   "timestamp": 1713700000
 }
 ```
@@ -319,26 +329,27 @@ Hub 注册发现与通道创建：
 
 - 金额展示（大字体 USDC）
 - 状态徽章：confirmed=绿 / pending=琥珀 / failed=红 / expired=灰
-- 订单信息：订单号（可复制）、描述、Hub、创建时间、确认时间
-- 通道信息（仅 confirmed）：Channel ID（可复制）、Leaf Index、Sequence
+- 订单信息：订单号（可复制）、描述、创建时间、确认时间
+- 通道信息（仅 confirmed）：Channel ID（可复制）、Voucher Seq、Buyer Signature
 
 #### 3.4.6 通道管理 (ChannelScreen)
 
-- 汇总：通道总数 + 总余额 (USDC)
-- 通道卡片列表（Channel ID、状态、Sequence、余额）
+- 汇总：通道总数 + 累计收款 (USDC)
+- 通道卡片列表（Buyer Pubkey、Spending Cap、Settled Amount、Nonce）
 - 下拉刷新
 
 #### 3.4.7 通道详情 (ChannelDetailScreen)
 
-- 通道信息展示：ID、状态、Sequence、Leaf 数、余额、总存入
+- 通道信息展示：Buyer Pubkey、Spending Cap、Settled Amount、Nonce、Challenge Period、Dispute Period
 - 操作按钮：
-  - **关闭通道**：确认对话框 → Hub API `/v1/channels/{id}/close`
-  - **结算**：Claim Leaf → Finalize
+  - **批量结算**：`settle_batch`（构建 Merkle Sum Tree + 双签名）或 `optimistic_settle`（仅商户签名）
+  - **释放结算**：`release_settlement`（挑战期后）
+  - **强制释放**：`force_release`（争议期后）
 
 #### 3.4.8 设置 (SettingsScreen)
 
-- 商户身份：状态通道 DID（可复制）、Provider Pubkey（可复制）
-- 连接配置：Hub Endpoint（可编辑）、Mediator WS（状态指示灯）
+- 商户身份：MB Merchant Pubkey（可复制）、MB Program ID（只读）
+- 连接配置：MB RPC URL（可编辑）、Mediator WS（状态指示灯）
 - 推送服务：DIDComm DID（可复制）、Mediator 连接状态、推送通道类型
 - 语音播报：开关、语言切换（中/英）、音量滑块、测试按钮
 - 关于：版本 1.0.0
@@ -359,16 +370,15 @@ Hub 注册发现与通道创建：
 - DID 显示（可复制）+ DID 文档导出
 - 编辑商户名称（SharedPreferences 持久化）
 - 网络信息：Devnet / Mainnet 显示
-- 连接状态：推送服务连接指示灯 + Hub Endpoint 显示
+- 连接状态：推送服务连接指示灯 + MB RPC URL 显示
 - 统计卡片：通道数 / 余额 (SOL) / 已确认订单数
 - 从 Dashboard 个人资料入口进入
 
-#### 3.4.11 Hub 选择 (HubSelectionScreen)
+#### 3.4.11 MB 配置 (MbConfigScreen)
 
-Hub 配置与选择：
-- 从 SharedPreferences 读取 Hub Registry URL
-- 获取可用 Hub 列表
-- 选择 Hub 后保存配置
+MagicBlock 支付通道配置：
+- MB RPC URL 和 Program ID 配置
+- 查看商户 MB Keypair
 - 从 Dashboard 快捷操作进入
 
 ### 3.5 核心服务
@@ -377,33 +387,36 @@ Hub 配置与选择：
 |------|------|
 | `MerchantService` | 商户身份、订单管理、QR 生成、配置持久化 |
 | `MerchantPushService` | 双通道推送编排（WS/FCM）、消息解密、订单确认 |
-| `ChannelService` | 状态通道列表、关闭、结算 |
+| `ChannelService` | MagicBlock 支付通道：Voucher 收集、批量结算、乐观结算、释放 |
 | `VoiceService` | 支付到账语音播报（中英双语） |
 | `FcmService` | Firebase 推送通知 |
 | `MediatorApi` | Mediator REST API HTTP 客户端 |
 
 ### 3.6 Rust Bridge 函数清单
 
-**merchant.rs — 状态通道与订单：**
+**merchant.rs — MagicBlock 支付通道与订单：**
 
 | 函数 | 用途 |
 |------|------|
-| `initialize_merchant` | 生成/加载商户密钥对和 DID |
+| `initialize_merchant` | 生成/加载商户 MB 密钥对 |
 | `generate_merchant_keypair` | 生成 Ed25519 密钥对 |
 | `get_merchant_pubkey` | 获取 base58 公钥 |
 | `generate_payment_qr` | 创建订单 + 生成 QR 字符串 |
 | `list_orders` / `get_order` / `get_pending_orders` | 订单查询 |
 | `confirm_order` | 订单状态 pending → confirmed |
-| `merchant_list_channels` | 列出通道 ID |
-| `merchant_get_channel_status` | 查询通道状态和余额 |
-| `merchant_close_channel` | 关闭通道（Hub API） |
-| `merchant_claim_leaf` / `merchant_finalize` | 结算流程 |
+| `mb_get_channel` | 查询通道状态（Buyer/merchant 通道 PDA） |
+| `mb_receive_voucher` | 验证买家 Voucher 签名并存储 |
+| `mb_settle_batch` | 构建 Merkle Sum Tree，双签名批量结算 |
+| `mb_optimistic_settle` | 仅商户签名的乐观结算 |
+| `mb_get_settlement` | 查询结算 Escrow 账户 |
+| `mb_release_settlement` | 释放结算资金到商户 |
+| `mb_force_release` | 争议期后强制释放 |
 
 **merchant_didcomm.rs — DIDComm 通信：**
 
 | 函数 | 用途 |
 |------|------|
-| `initialize_merchant_comm` | 生成/加载 DIDComm 身份（独立于状态通道 DID） |
+| `initialize_merchant_comm` | 生成/加载 DIDComm 身份（独立于 MB 通道 Keypair） |
 | `connect_mediator` | 连接 Mediator |
 | `disconnect_mediator` | 断开连接 |
 | `authenticate_with_mediator` | 挑战-响应认证获取 JWT |
@@ -417,18 +430,22 @@ Hub 配置与选择：
 1. 商户在 QR Generate 页面输入金额 + 描述
 2. App 调用 Rust generate_payment_qr()
    → 创建 UUID 订单 (status=pending)
-   → 返回 ignite://pay?d=... 二维码字符串
+   → 返回 ignite://pay?d=... 二维码字符串（含商户 MB Pubkey）
 3. 用户 App 扫码 → 解析 PaymentQrData
-4. 用户确认支付 → 用户 App 调用 Hub API 执行状态通道支付
-5. Hub 处理支付 → 通过 DIDComm 发送 channel-payment-confirm 到 Mediator
-6. Mediator 推送到商户 App（WS 或 FCM）
-7. 商户 App 拉取 JWE → 解密 → 提取 order_id, channel_id, leaf_index, sequence
-8. Rust confirm_order() 更新订单状态为 confirmed
-9. 触发：
+4. 用户确认支付 → 用户 App 签名 Voucher（Ed25519 签名 SHA256(channel_id || seq || amount)）
+5. Voucher 通过 DIDComm 发送给商户 → Mediator 推送到商户 App
+6. 商户 App 调用 mb_receive_voucher() 验证买家签名并存储
+7. 商户 App confirm_order() 更新订单状态为 confirmed
+8. 触发：
    - QR 页面绿色对勾
    - 触觉反馈
    - 语音播报（"收到收款 X.XX USDC"）
    - Dashboard 今日汇总刷新
+9. 后续结算流程（商户主动触发）：
+   a. mb_settle_batch()：构建 Merkle Sum Tree，商户签名，提交链上结算
+   b. 或 mb_optimistic_settle()：仅商户签名（需买家配合提供结算签名时用 settle_batch）
+   c. 挑战期过后 mb_release_settlement()：资金释放到商户
+   d. 如有争议：买家可 mb_dispute()，商户可 mb_force_release() 或买家 mb_resolve_dispute() 提交欺诈证明
 ```
 
 ---
@@ -450,22 +467,40 @@ Hub 配置与选择：
 | `audit_merkle` | SHA-256 Merkle 树审计日志 |
 | `log_crypto` / `log_chunk` / `log_sync` | E2EE 审计日志（加密 → Zstd 压缩 → IPFS 同步） |
 
-### 4.2 ignite-pay-state-channel
+### 4.2 ignite-pay-mb-sdk
 
-状态通道协议库，提供：
+MagicBlock 支付通道 SDK，提供：
 
 | 模块 | 功能 |
 |------|------|
-| `types` | UTXOLeaf (Standard/HTLC/Compliance), LeafUpdate, SignedState, ChannelMetadata |
-| `merkle` | 二叉 Merkle 树（sorted-pair hashing，匹配链上 compression.rs） |
-| `channel` | ChannelManager：开通道、应用更新、批量更新、联合签名、争议/结算 |
-| `pipeline` | 原子批量操作构建器：转账、部分转账、创建 HTLC、解锁、退款 |
-| `htlc` | HTLC 生命周期管理（创建/揭示/过期/退款） |
-| `signing` | Ed25519 签名和验证（叶更新、状态根、Claim） |
-| `hub` | Hub 注册和指标管理 |
-| `routing` | 多跳路由发现和评分 |
-| `multihop` | 多跳支付执行（递减 timelock） |
-| `compliance` | 合规标记（滑动窗口消费阈值、Travel Rule 数据） |
+| `pda` | PDA 派生：`derive_global_state_pda`、`derive_global_vault_pda`、`derive_channel_pda`、`derive_settlement_pda` |
+| `merkle` | Sum-Merkle Tree（每个节点存储 hash + sum）：`build_sum_merkle_tree`、`MerkleProof`（兄弟 hashes + sums） |
+| `signing` | Voucher 签名：`sign_voucher(channel_id, seq, amount, sk)` → `(msg_hash, sig)`；结算签名：`sign_settlement`、`build_settlement_message`；签名验证：`verify_signature` |
+| `transaction` | 11 个交易构建器：`build_initialize_global_tx`、`build_deposit_tx`、`build_initialize_channel_tx`、`build_update_spending_cap_tx`、`build_settle_batch_tx`、`build_optimistic_settle_tx`、`build_dispute_tx`、`build_resolve_dispute_tx`、`build_release_settlement_tx`、`build_force_release_tx`、`build_withdraw_tx` |
+
+**链上账户结构：**
+
+| 账户 | 大小 | 字段 |
+|------|------|------|
+| GlobalState | 57 bytes | `buyer`, `total_deposited`, `total_allocated`, `bump` |
+| Channel | 113 bytes | `buyer`, `merchant`, `spending_cap`, `settled_amount`, `nonce`, `challenge_period`, `dispute_period`, `bump` |
+| SettlementEscrow | 132 bytes | `channel`, `merchant`, `amount`, `merkle_root`, `nonce`, `created_at`, `claimed`, `disputed`, `optimistic`, `bump` |
+
+**链上指令：**
+
+| 指令 | 签名者 | 说明 |
+|------|--------|------|
+| `initialize_global` | buyer | 创建 GlobalState + GlobalVault PDA |
+| `deposit` | buyer | SOL 转入 GlobalVault |
+| `initialize_channel` | buyer | 创建支付通道，锁定 spending_cap |
+| `update_spending_cap` | buyer | 调整通道消费上限 |
+| `settle_batch` | merchant | 双签名批量结算（Ed25519 指令内省） |
+| `optimistic_settle` | merchant | 仅商户签名乐观结算（需 challenge_period > 0） |
+| `release_settlement` | merchant | 挑战期后释放资金 |
+| `dispute` | buyer | 冻结 Escrow（挑战窗口内） |
+| `force_release` | merchant | 争议期后强制释放 |
+| `resolve_dispute` | buyer | 欺诈证明（Sum-Merkle Proof） |
+| `withdraw` | buyer | 提取未分配资金 |
 
 ### 4.3 DIDComm 消息类型
 
@@ -476,8 +511,8 @@ Hub 配置与选择：
 | `ignite-pay/1.0/connection-response` | MCP → 用户 | 连接确认 |
 | `ignite-pay/1.0/payment-auth-request` | MCP → 用户 | 请求支付授权 |
 | `ignite-pay/1.0/payment-auth-response` | 用户 → MCP | 授权响应（含 Session Key） |
-| `ignite-pay/1.0/channel-payment-request` | — | 状态通道支付请求 |
-| `ignite-pay/1.0/channel-payment-confirm` | — | 状态通道支付确认 → 推送给商户 |
+| `ignite-pay/1.0/channel-payment-request` | — | MagicBlock Voucher 支付请求 |
+| `ignite-pay/1.0/channel-payment-confirm` | — | Voucher 支付确认（含签名）→ 推送给商户 |
 | `ignite-pay/1.0/list-sync-notification` | MCP → 用户 | 白名单/黑名单更新 |
 | `coordinate-mediation/2.0/*` | 双向 | Mediator 协议（mediate-request, keylist-update） |
 | `ignite-pay/1.0/ws-challenge-response` | 双向 | WS 认证挑战 |
@@ -495,16 +530,25 @@ Hub 配置与选择：
 | `/v1/agents/bind` | POST | 绑定 Agent DID |
 | `/v1/devices/register-token` | POST | 注册推送通道（FCM token 或 websocket） |
 
-### 4.5 Hub REST API
+### 4.5 MagicBlock 支付通道架构
 
-| 端点 | 方法 | 用途 |
-|------|------|------|
-| `/v1/channels/open` | POST | 开通状态通道 |
-| `/v1/channels/{id}/pay` | POST | 通道支付 |
-| `/v1/channels/{id}/close` | POST | 协作关闭 |
-| `/v1/channels/{id}/settle` | POST | 发起结算 |
-| `/v1/channels/{id}/claim` | POST | 认领叶子 |
-| `/v1/channels/{id}/finalize` | POST | 完成结算 |
+**三层架构：**
+
+| 层级 | 说明 |
+|------|------|
+| L1 (Solana) | 通道创建、资金锁定、签名验证、最终结算 |
+| ER (MagicBlock) | 高速状态转换（<50ms 延迟、免 Gas），记录每笔 Voucher |
+| Off-chain 欺诈层 | 挑战窗口争议解决，基于 Merkle Proof |
+
+**安全模型（三重防护）：**
+
+| 防护 | 说明 |
+|------|------|
+| 消费上限 | `settled_amount + total_amount <= spending_cap`（链上检查） |
+| 余额检查 | `total_amount <= vault.lamports`（实际余额） |
+| 双签名 | Ed25519 指令内省验证买家 + 商户签名 |
+
+**Global Vault 设计：** 每个 Buyer 一个全局 Vault（`GlobalVault PDA`），`total_allocated` 追踪所有通道消费上限之和，防止超额分配。
 
 ---
 
@@ -513,15 +557,15 @@ Hub 配置与选择：
 | 维度 | 用户端 (Sentinel) | 商户端 (Merchant) |
 |------|-------------------|-------------------|
 | **核心角色** | 支付授权守卫 | 收款工具 |
-| **DID 数量** | 1 个（通信 + 交易共用） | 2 个（状态通道 DID + DIDComm DID） |
+| **DID 数量** | 1 个（通信 + 交易共用） | 2 个（MB 通道 Keypair + DIDComm DID） |
 | **消息方向** | 收 auth-request → 发 auth-response | 收 payment-confirm → 确认订单 |
 | **QR 交互** | 扫码（配对 MCP / 支付） | 生成码（收款） |
-| **链上操作** | Session Key 注册/撤销 | 无直接链上操作 |
+| **链上操作** | Session Key 注册/撤销、MB 通道管理 | MB 结算/释放/争议处理 |
 | **推送触发** | MCP 支付请求 | 支付确认通知 |
 | **特色功能** | 白名单/黑名单策略、外接钱包签名 | 语音播报、订单管理 |
 | **UI 语言** | 英文 | 中文 |
 | **屏幕数** | 16 | 11 |
-| **Rust 模块** | simple + identity + auth + session + ws_client + channel + channel_store + log_store (8) | merchant + merchant_didcomm (2) |
+| **Rust 模块** | simple + identity + auth + session + ws_client + voucher_store + log_store (7) | merchant + merchant_didcomm + voucher_store + settlement_store (4) |
 | **Bridge 函数** | 30+ | 24 |
 
 ---
@@ -560,37 +604,62 @@ Hub 配置与选择：
   merchantDid    String      did:ignite:...
   amount         BigInt      lamports (1 USDC = 1_000_000_000)
   description    String      可选描述
-  hubEndpoint    String      Hub API URL
+  merchantPubkey String      商户 MB Ed25519 公钥 (base58)
   status         String      "pending" | "confirmed" | "failed" | "expired"
   createdAt      int         Unix 秒
   confirmedAt    int?        Unix 秒（仅 confirmed）
-  channelId      String?     通道 ID（仅 confirmed）
-  leafIndex      int?        Merkle 树叶索引（仅 confirmed）
-  sequence       BigInt?     通道序列号（仅 confirmed）
+  channelId      String?     通道 PDA（仅 confirmed）
+  voucherSeq     BigInt?     Voucher 序列号（仅 confirmed）
+  buyerSig       String?     买家 Voucher 签名（仅 confirmed）
 ```
 
-### 7.2 通道 (ChannelInfo)
+### 7.2 通道 (ChannelAccount)
 
 ```
 字段：
-  channelId        String
-  status           String      "Open" | "Closed" | "Settling" | "Unknown"
-  sequence         BigInt
-  leafCount        int
-  providerBalance  BigInt      lamports（商户余额）
-  totalDeposited   BigInt      lamports
+  buyer            Pubkey      买家公钥
+  merchant         Pubkey      商户公钥
+  spending_cap     u64         消费上限 (lamports)
+  settled_amount   u64         已结算金额 (lamports)
+  nonce            u64         当前 batch nonce
+  challenge_period i64         挑战期（秒）
+  dispute_period   i64         争议期（秒）
 ```
 
-### 7.3 DIDComm 消息 (DecryptedMessage)
+### 7.3 全局状态 (GlobalStateAccount)
+
+```
+字段：
+  buyer            Pubkey      买家公钥
+  total_deposited  u64         总充值金额 (lamports)
+  total_allocated  u64         总分配额度（所有通道 spending_cap 之和）
+```
+
+### 7.4 结算 Escrow (SettlementEscrowAccount)
+
+```
+字段：
+  channel          Pubkey      通道 PDA
+  merchant         Pubkey      商户公钥
+  amount           u64         结算金额
+  merkle_root      [u8; 32]    Merkle Sum Tree 根哈希
+  nonce            u64         Batch nonce
+  created_at       i64         创建时间戳
+  claimed          bool        是否已释放
+  disputed         bool        是否有争议
+  optimistic       bool        是否乐观结算
+```
+
+### 7.5 DIDComm 消息 (DecryptedMessage)
 
 ```
 商户端解密后字段：
   msgType      String      消息类型 URI
   orderId      String?     关联订单 ID
-  channelId    String?     通道 ID
-  leafIndex    int?        叶索引
-  sequence     BigInt?     序列号
+  channelId    String?     通道 PDA
+  voucherSeq   BigInt?     Voucher 序列号
   amount       BigInt?     确认金额
+  buyerSig     String?     买家 Voucher 签名 (base58)
   authorized   bool?       授权状态
   rawBody      String      原始 JSON
 ```
@@ -640,4 +709,7 @@ Hub 配置与选择：
 | Session Key | 临时密钥链上注册，有效期和额度限制，可撤销 |
 | 白名单/黑名单 | IPFS 同步的商户名单，风控决策 (Blocked/AutoApproved/NeedsAuth) |
 | 审计日志 | Merkle 树 + E2EE 加密 + IPFS 同步，防篡改 |
-| 双 DID 隔离 | 状态通道 DID 和通信 DID 分离，互不影响 |
+| 双 DID 隔离 | MB 通道 Keypair 和通信 DID 分离，互不影响 |
+| MagicBlock 安全 | 三重防护：消费上限检查 + Vault 余额检查 + Ed25519 双签名内省 |
+| 欺诈证明 | Sum-Merkle Tree 欺诈证明，单 Voucher + O(log N) 兄弟节点即可证明 |
+| 挑战窗口 | 结算后进入 challenge_period，买家可 dispute 冻结资金，提交 Merkle Proof 解决争议 |

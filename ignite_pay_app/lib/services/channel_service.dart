@@ -9,6 +9,7 @@ class PaymentQrData {
   final String orderId;
   final String hubEndpoint;
   final int timestamp;
+  final String merchantMbPubkey;
 
   PaymentQrData({
     required this.merchantDid,
@@ -17,6 +18,7 @@ class PaymentQrData {
     required this.orderId,
     required this.hubEndpoint,
     required this.timestamp,
+    this.merchantMbPubkey = '',
   });
 }
 
@@ -83,6 +85,7 @@ class ChannelService extends ChangeNotifier {
       orderId: result.orderId,
       hubEndpoint: result.hubEndpoint,
       timestamp: result.timestamp,
+      merchantMbPubkey: result.merchantMbPubkey,
     );
     setPendingPayment(data);
     return data;

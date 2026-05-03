@@ -3,6 +3,7 @@ pub mod channel;
 pub mod channel_store;
 pub mod identity;
 pub mod log_store;
+pub mod mb_voucher;
 pub mod notification;
 pub mod session;
 pub mod simple;

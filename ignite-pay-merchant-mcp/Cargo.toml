@@ -10,8 +10,12 @@ path = "src/main.rs"
 [dependencies]
 # Shared libraries
 ignite-pay-core = { path = "../ignite-pay-core", features = ["solana"] }
-ignite-pay-state-channel = { path = "../ignite-pay-state-channel" }
 ignite-pay-solana = { path = "../ignite-pay-solana" }
+ignite-pay-mb-sdk = { path = "../ignite-pay-mb/sdk" }
+
+# MagicBlock payment channels
+solana-sdk = "2.1"
+solana-client = "2.1"
 
 # MCP SDK
 rmcp = { version = "1.5", features = ["transport-io", "transport-streamable-http-server"] }
@@ -33,9 +37,7 @@ borsh = "0.10"
 # Encoding
 bs58 = "0.5"
 base64 = "0.22"
-
-# ed25519-dalek v1 for state channel Keypair operations
-ed25519-dalek-v1 = { package = "ed25519-dalek", version = "1" }
+sha2 = "0.10"
 
 # DIDComm
 affinidi-messaging-didcomm = "=0.13.0"

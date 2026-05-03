@@ -80,6 +80,7 @@ class PaymentQrData {
   final String orderId;
   final String hubEndpoint;
   final PlatformInt64 timestamp;
+  final String merchantMbPubkey;
 
   const PaymentQrData({
     required this.merchantDid,
@@ -88,6 +89,7 @@ class PaymentQrData {
     required this.orderId,
     required this.hubEndpoint,
     required this.timestamp,
+    required this.merchantMbPubkey,
   });
 
   @override
@@ -97,7 +99,8 @@ class PaymentQrData {
       description.hashCode ^
       orderId.hashCode ^
       hubEndpoint.hashCode ^
-      timestamp.hashCode;
+      timestamp.hashCode ^
+      merchantMbPubkey.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -109,7 +112,8 @@ class PaymentQrData {
           description == other.description &&
           orderId == other.orderId &&
           hubEndpoint == other.hubEndpoint &&
-          timestamp == other.timestamp;
+          timestamp == other.timestamp &&
+          merchantMbPubkey == other.merchantMbPubkey;
 }
 
 /// Result of a channel payment.

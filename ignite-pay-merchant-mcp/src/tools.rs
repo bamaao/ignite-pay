@@ -33,45 +33,70 @@ pub struct GetPaymentHistoryInput {
     pub limit: usize,
 }
 
-/// Input for the `get_channel_status` tool.
+// MagicBlock payment channel tools
+
+/// Input for the `mb_get_channel` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetChannelStatusInput {
-    /// Channel ID (hex string). If empty, lists all channels.
+pub struct MbGetChannelInput {
+    /// Buyer pubkey (base58).
+    pub buyer_pubkey: String,
+}
+
+/// Input for the `mb_receive_voucher` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MbReceiveVoucherInput {
+    /// Buyer pubkey (base58).
+    pub buyer_pubkey: String,
+    /// Voucher sequence number.
+    pub seq: u64,
+    /// Payment amount in lamports.
+    pub amount: u64,
+    /// Buyer's Ed25519 signature on the voucher (base58).
+    pub buyer_sig: String,
+    /// Optional order ID. If provided, the corresponding order will be confirmed automatically.
     #[serde(default)]
-    pub channel_id: Option<String>,
+    pub order_id: Option<String>,
 }
 
-/// Input for the `open_channel_with_hub` tool.
-fn default_tree_depth() -> u32 {
-    8
-}
-
-fn default_deposit() -> u64 {
-    0
-}
-
+/// Input for the `mb_settle_batch` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct OpenChannelWithHubInput {
-    /// Hub HTTP endpoint URL.
-    pub hub_endpoint: String,
-    /// Amount to deposit as provider collateral.
-    #[serde(default = "default_deposit")]
-    pub deposit: u64,
-    /// Merkle tree depth (default 8).
-    #[serde(default = "default_tree_depth")]
-    pub tree_depth: u32,
+pub struct MbSettleBatchInput {
+    /// Buyer pubkey (base58).
+    pub buyer_pubkey: String,
+    /// Buyer's batch settlement signature (base58).
+    pub buyer_batch_sig: String,
 }
 
-/// Input for the `close_channel` tool.
+/// Input for the `mb_optimistic_settle` tool (merchant-only, no buyer signature needed).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CloseChannelInput {
-    /// Channel ID (hex string).
-    pub channel_id: String,
+pub struct MbOptimisticSettleInput {
+    /// Buyer pubkey (base58).
+    pub buyer_pubkey: String,
 }
 
-/// Input for the `settle_channel` tool.
+/// Input for the `mb_get_settlement` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct SettleChannelInput {
-    /// Channel ID (hex string).
-    pub channel_id: String,
+pub struct MbGetSettlementInput {
+    /// Buyer pubkey (base58).
+    pub buyer_pubkey: String,
+    /// Batch nonce.
+    pub batch_nonce: u64,
+}
+
+/// Input for the `mb_release_settlement` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MbReleaseSettlementInput {
+    /// Buyer pubkey (base58).
+    pub buyer_pubkey: String,
+    /// Batch nonce.
+    pub batch_nonce: u64,
+}
+
+/// Input for the `mb_force_release` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MbForceReleaseInput {
+    /// Buyer pubkey (base58).
+    pub buyer_pubkey: String,
+    /// Batch nonce.
+    pub batch_nonce: u64,
 }

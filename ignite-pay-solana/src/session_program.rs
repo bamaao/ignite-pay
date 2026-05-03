@@ -1,5 +1,6 @@
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::pubkey::Pubkey;
+#[allow(deprecated)]
 use solana_sdk::system_program;
 
 /// Program ID for the session key program.

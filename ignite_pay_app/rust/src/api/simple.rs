@@ -557,7 +557,7 @@ pub async fn send_connection_request(
     // Get our identity
     let mgr = IdentityManager::new(&storage_path)?;
     let our_did = mgr.did().to_string();
-    let our_did_doc = mgr.did_doc().clone();
+    let _our_did_doc = mgr.did_doc().clone();
     let agent = mgr.agent();
 
     // Register MCP as a peer using its DID document
@@ -823,6 +823,61 @@ pub async fn send_create_channel_request(
     let jwe = ignite_pay_core::didcomm::pack_encrypted(&agent_guard, &msg, &from_did, &mcp_did)
         .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
     drop(agent_guard);
+
+    let ws = GLOBAL_WS_CLIENT.lock().await;
+    let ws_client = ws
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("WebSocket not connected"))?;
+    ws_client.send_raw(&jwe).await?;
+
+    Ok(())
+}
+
+// ── MB Voucher Bridge Wrappers ──────────────────────────────────────────
+
+/// Get or generate the buyer MB keypair, return base58 pubkey.
+pub fn mb_get_buyer_pubkey(storage_path: String) -> Result<String> {
+    crate::api::mb_voucher::get_mb_buyer_pubkey(storage_path)
+}
+
+/// Sign an MB voucher for payment.
+pub fn mb_sign_voucher(
+    storage_path: String,
+    program_id: String,
+    merchant_mb_pubkey: String,
+    seq: u64,
+    amount: u64,
+) -> Result<crate::api::mb_voucher::MbVoucherResult> {
+    crate::api::mb_voucher::sign_mb_voucher(
+        storage_path,
+        program_id,
+        merchant_mb_pubkey,
+        seq,
+        amount,
+    )
+}
+
+/// Send a signed MB voucher to the merchant via DIDComm.
+pub async fn mb_send_voucher(
+    storage_path: String,
+    merchant_did: String,
+    order_id: String,
+    channel_id: String,
+    seq: u64,
+    amount: u64,
+    buyer_pubkey: String,
+    buyer_sig: String,
+) -> Result<()> {
+    let jwe = crate::api::mb_voucher::build_mb_voucher_jwe(
+        storage_path,
+        merchant_did,
+        order_id,
+        channel_id,
+        seq,
+        amount,
+        buyer_pubkey,
+        buyer_sig,
+    ).await?;
 
     let ws = GLOBAL_WS_CLIENT.lock().await;
     let ws_client = ws

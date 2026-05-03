@@ -15,6 +15,7 @@ pub struct PaymentQrData {
     pub order_id: String,
     pub hub_endpoint: String,
     pub timestamp: i64,
+    pub merchant_mb_pubkey: String,
 }
 
 /// Result of a channel payment.
@@ -61,6 +62,8 @@ pub fn parse_payment_qr(qr_data: String) -> Result<PaymentQrData> {
         order_id: String,
         hub_endpoint: String,
         timestamp: i64,
+        #[serde(default)]
+        merchant_mb_pubkey: String,
     }
 
     let json_str = if qr_data.starts_with("ignite://pay?d=") {
@@ -90,6 +93,7 @@ pub fn parse_payment_qr(qr_data: String) -> Result<PaymentQrData> {
         order_id: data.order_id,
         hub_endpoint: data.hub_endpoint,
         timestamp: data.timestamp,
+        merchant_mb_pubkey: data.merchant_mb_pubkey,
     })
 }
 

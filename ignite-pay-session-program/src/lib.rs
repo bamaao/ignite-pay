@@ -1,9 +1,10 @@
+#![allow(unexpected_cfgs)]
+#![allow(deprecated)]
 pub mod state;
 pub mod error;
 
 use anchor_lang::prelude::*;
 use anchor_spl::token;
-use anchor_spl::token::Token;
 use crate::state::SessionKeyAccount;
 use crate::error::SessionError;
 

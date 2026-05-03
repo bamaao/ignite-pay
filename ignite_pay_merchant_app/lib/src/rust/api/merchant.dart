@@ -41,11 +41,13 @@ Future<String> generatePaymentQr({
   required BigInt amount,
   required String description,
   required String hubEndpoint,
+  required String merchantMbPubkey,
 }) => RustLib.instance.api.crateApiMerchantGeneratePaymentQr(
   merchantDid: merchantDid,
   amount: amount,
   description: description,
   hubEndpoint: hubEndpoint,
+  merchantMbPubkey: merchantMbPubkey,
 );
 
 /// Generate an ASCII QR code for debugging.
@@ -259,6 +261,18 @@ class DidInfo {
           did == other.did &&
           didDocJson == other.didDocJson;
 }
+
+/// Initialize or load MB merchant keypair, return base58 pubkey.
+Future<String> initializeMbMerchant({required String storagePath}) => RustLib
+    .instance
+    .api
+    .crateApiMerchantInitializeMbMerchant(storagePath: storagePath);
+
+/// Get the MB merchant pubkey from storage.
+Future<String> getMbMerchantPubkey({required String storagePath}) => RustLib
+    .instance
+    .api
+    .crateApiMerchantGetMbMerchantPubkey(storagePath: storagePath);
 
 class PaymentOrderBridge {
   final String orderId;

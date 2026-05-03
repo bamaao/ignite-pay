@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 pub mod state;
 pub mod error;
 pub mod utils;

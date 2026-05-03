@@ -127,6 +127,8 @@ struct PaymentQrData {
     order_id: String,
     hub_endpoint: String,
     timestamp: i64,
+    #[serde(default)]
+    merchant_mb_pubkey: String,
 }
 
 // ── Helper: open sled trees ─────────────────────────────────────────────
@@ -276,6 +278,7 @@ pub fn generate_payment_qr(
     amount: u64,
     description: String,
     hub_endpoint: String,
+    merchant_mb_pubkey: String,
 ) -> Result<String> {
     let order_id = uuid::Uuid::new_v4().to_string();
     let timestamp = Utc::now().timestamp();
@@ -289,6 +292,7 @@ pub fn generate_payment_qr(
         order_id: order_id.clone(),
         hub_endpoint: hub_endpoint.clone(),
         timestamp,
+        merchant_mb_pubkey,
     };
 
     let json = serde_json::to_string(&qr_data)?;
@@ -606,6 +610,16 @@ pub fn recent_audit(storage_path: String, limit: u32) -> Result<Vec<AuditEntryBr
         });
     }
     Ok(entries)
+}
+
+/// Initialize or load MB merchant keypair from sled, return base58 pubkey.
+pub fn initialize_mb_merchant(storage_path: String) -> Result<String> {
+    crate::api::merchant_mb::initialize_mb_merchant(storage_path)
+}
+
+/// Get the MB merchant pubkey from storage.
+pub fn get_mb_merchant_pubkey(storage_path: String) -> Result<String> {
+    crate::api::merchant_mb::get_mb_merchant_pubkey(storage_path)
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────

@@ -124,6 +124,7 @@ abstract class RustLibApi extends BaseApi {
     required BigInt amount,
     required String description,
     required String hubEndpoint,
+    required String merchantMbPubkey,
   });
 
   Future<String> crateApiMerchantGenerateQrAscii({required String qrText});
@@ -144,6 +145,14 @@ abstract class RustLibApi extends BaseApi {
   });
 
   Future<DidInfo> crateApiMerchantInitializeMerchant({
+    required String storagePath,
+  });
+
+  Future<String> crateApiMerchantInitializeMbMerchant({
+    required String storagePath,
+  });
+
+  Future<String> crateApiMerchantGetMbMerchantPubkey({
     required String storagePath,
   });
 
@@ -542,6 +551,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required BigInt amount,
     required String description,
     required String hubEndpoint,
+    required String merchantMbPubkey,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -551,6 +561,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_u_64(amount, serializer);
           sse_encode_String(description, serializer);
           sse_encode_String(hubEndpoint, serializer);
+          sse_encode_String(merchantMbPubkey, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -563,7 +574,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiMerchantGeneratePaymentQrConstMeta,
-        argValues: [merchantDid, amount, description, hubEndpoint],
+        argValues: [merchantDid, amount, description, hubEndpoint, merchantMbPubkey],
         apiImpl: this,
       ),
     );
@@ -764,6 +775,72 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiMerchantInitializeMerchantConstMeta =>
       const TaskConstMeta(
         debugName: "initialize_merchant",
+        argNames: ["storagePath"],
+      );
+
+  @override
+  Future<String> crateApiMerchantInitializeMbMerchant({
+    required String storagePath,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 26,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiMerchantInitializeMbMerchantConstMeta,
+        argValues: [storagePath],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMerchantInitializeMbMerchantConstMeta =>
+      const TaskConstMeta(
+        debugName: "initialize_mb_merchant",
+        argNames: ["storagePath"],
+      );
+
+  @override
+  Future<String> crateApiMerchantGetMbMerchantPubkey({
+    required String storagePath,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 27,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiMerchantGetMbMerchantPubkeyConstMeta,
+        argValues: [storagePath],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMerchantGetMbMerchantPubkeyConstMeta =>
+      const TaskConstMeta(
+        debugName: "get_mb_merchant_pubkey",
         argNames: ["storagePath"],
       );
 

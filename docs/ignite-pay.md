@@ -1,18 +1,33 @@
-**AI Agent + 分布式身份 (DID) + 零知识压缩 (ZK Compression)** 的支付网关设计方案。通过将支付流程与身份认证（DID）深度耦合，并利用 ZK Compression 降低链上数据成本，构建高效、隐私且具备精细化权限管理的系统。
+**AI Agent + 分布式身份 (DID) + MagicBlock 支付通道** 的支付网关设计方案。通过将支付流程与身份认证（DID）深度耦合，结合 MagicBlock 支付通道实现高频低延迟微支付，构建高效、隐私且具备精细化权限管理的系统。
 
 ---
 
 ## 1. 核心流程架构图
 
 ```
-Agent → 外部服务商 (402) → MCP Server → Mediator → 手机 App
-                                 ↑                        ↓
-                          支付决策引擎                用户授权/拒绝
-                    (VC验证+链上DID验证+名单+额度)        ↓
-                                 ↑              DIDComm Auth Response
-                          IPFS 名单同步 ←—————————————┘
-                                 ↓
-                    Session Key 链上支付 (SOL/SPL Token)
+Agent → 外部服务商 (402) → Buyer MCP Server → Mediator → 手机 App
+                                    ↑                        ↓
+                              支付决策引擎                用户授权/拒绝
+                        (VC验证+链上DID验证+名单+额度)        ↓
+                                    ↑              DIDComm Auth Response
+                             IPFS 名单同步 ←—————————————┘
+                                    ↓
+                       Session Key 链上支付 (SOL/SPL Token)
+
+                ┌───────────────────────────────────────────────┐
+                │          MagicBlock 支付通道 (独立流程)         │
+                │                                               │
+                │  Buyer MCP                    Merchant MCP    │
+                │  mb_deposit                   mb_receive_voucher
+                │  mb_create_channel            mb_settle_batch / optimistic_settle
+                │  mb_sign_voucher ───────────► mb_release_settlement
+                │  mb_sign_settlement           mb_force_release
+                │  mb_dispute / resolve_dispute                  │
+                │  mb_withdraw                                   │
+                └───────────────────────────────────────────────┘
+                                    ↓
+                           Solana 链上结算
+                    (GlobalVault → Escrow → Merchant)
 ```
 
 ---
@@ -28,29 +43,36 @@ X402 协议在此处扮演了"价值交换握手"的角色。
   * `accepts[].amount/token/network`：支付金额、代币类型、网络
 * **VC 附加**：402 响应可附带平台签发的 Verifiable Credential，用于商家身份背书验证。
 
-### B. 基于 SPL Account Compression 的 DID 管理（V2.0）
+### B. 基于 ZK Compression (Light Protocol) 的 DID 管理
 
-V2.0 使用 Solana 链上的 **SPL Account Compression (Concurrent Merkle Tree)** 存储 DID 文档哈希，实现链上可验证的商家身份管理。
+使用 Solana 链上的 **ZK Compression (Light Protocol)** 存储商家 DID 账户，实现链上可验证的商家身份管理。压缩账户数据以哈希形式存储在 Light Protocol 状态 Merkle 树中，无需 rent-exemption。
 
 * **架构**：
-  * **链上数据**：`MerchantLeaf` 叶子节点存储在 Concurrent Merkle Tree 中（maxDepth=14, maxBufferSize=64，支持 ~16K 商家）
-  * **叶子字段**：`merchant_did` (SHA-256), `active_pubkey` (收款公钥), `platform_vc_hash`, `slot_updated`
-  * **信任链**：商家 → 平台 VC 背书 → 链上 Merkle Proof 验证
-* **两层验证**：
-  1. **链下快速过滤**：通过 Helius DAS API 获取 Merkle Proof，本地 `verify_proof_locally()` 验证
-  2. **链上强制验证**：提交 `verify_leaf` 指令到 Solana，由链上程序验证 proof
+  * **链上程序**：`ignite-pay-did-program`（Anchor），通过 Light System Program CPI 管理压缩 DID 账户
+  * **压缩账户**：`MerchantCompressedDid`，数据以哈希形式存储在 Light 状态树中
+  * **账户字段**：`original_pk` (初始公钥), `controller_pk` (当前控制器), `recovery_pk` (恢复密钥), `vc_hash` (平台 VC 哈希), `last_updated`, `nonce` (防重放计数器)
+  * **信任链**：平台 Ed25519 签名 `sign(credential_subject_pk || vc_hash)` → 链上 `PlatformConfig` PDA 存储平台公钥 → on-chain 验证
+* **VC 撤销注册表**：
+  * `RevokedVc` PDA：`seeds = [b"revoked-vc", vc_hash]`，验证者检查 PDA 存在性判断撤销状态
+  * 仅平台 authority 可调用 `revoke_vc`
 * **操作**：
-  * 商家入驻：平台调用 `append` 指令添加叶子
-  * 密钥轮换：平台调用 `replace_leaf` 更新叶子
-  * 验证：通过 IndexerClient 获取 proof + CompressionService 本地验证
+  * 平台初始化：`init_platform` → 存储平台 Ed25519 公钥到 `[b"platform-config"]` PDA（一次性）
+  * 商家入驻：`initialize_did` → 创建压缩 DID（需平台签名 + ZK validity proof）
+  * VC 更新：`update_did_with_vc` → 更新 `vc_hash`（需平台签名 + controller 授权 + nonce）
+  * 密钥轮换：`set_recovery_key` + `recover_controller` → 通过恢复密钥接管控制器
+  * VC 撤销：`revoke_vc` → 创建 `RevokedVc` PDA（仅平台 authority）
+* **验证模型**：
+  * 链下：通过 Light RPC (Photon) 获取 ZK validity proof + `DidService` 客户端验证
+  * 链上：平台签名验证 + subject binding 检查 + nonce 防重放
+* **注册服务**：`did-registry` 提供 REST API（`/v1/merchants/register`、`/v1/merchants/verify/{did}`、`/v1/vc/issue`、`/v1/vc/revoke` 等），支持 `Sponsored`（平台代付）和 `SelfOnchain`（商家自付）两种模式
 
-### C. Session Keys（V2.0）
+### C. Session Keys
 
 临时密钥系统，用于安全执行链上支付：
 
 * **自付模式 (SelfFunded)**：用户预充值 SOL 到临时密钥，临时密钥直接支付
   * 流程：创建 Session → 预充值 SOL → 构建 SOL/SPL 转账 → 签名发送 → 记录花费
-* **代付模式 (Sponsored)**：项目方 Relayer 代付 gas（V2.x 后续版本）
+* **代付模式 (Sponsored)**：项目方 Relayer 代付 gas（后续版本）
   * 流程：构建交易 → 临时密钥部分签名 → 发送到 Relayer → Relayer 追加签名广播
 * **风控**：
   * 过期时间检查（`expires_at`）
@@ -58,18 +80,75 @@ V2.0 使用 Solana 链上的 **SPL Account Compression (Concurrent Merkle Tree)*
   * 权限范围限定（`scopes`: `["sol:transfer", "spl:transfer"]`）
 * **持久化**：Session 数据通过 borsh 序列化存储在 sled 数据库
 
-### D. 支付决策流程
+### D. MagicBlock 支付通道
+
+基于 Solana 链上支付通道的高频微支付系统，支持链下签名 Voucher + Merkle Sum Tree 批量结算。
+
+**三层架构：**
+
+| 层级 | 说明 |
+|------|------|
+| L1 (Solana) | 通道创建、资金锁定、签名验证、最终结算 |
+| ER (MagicBlock) | 高速状态转换（<50ms 延迟、免 Gas），记录每笔 Voucher |
+| Off-chain 欺诈层 | 挑战窗口争议解决，基于 Sum-Merkle Proof |
+
+**核心数据结构：**
+
+| 账户 | 大小 | 字段 |
+|------|------|------|
+| GlobalState | 57 bytes | `buyer`, `total_deposited`, `total_allocated`, `bump` |
+| Channel | 113 bytes | `buyer`, `merchant`, `spending_cap`, `settled_amount`, `nonce`, `challenge_period`, `dispute_period`, `bump` |
+| SettlementEscrow | 132 bytes | `channel`, `merchant`, `amount`, `merkle_root`, `nonce`, `created_at`, `claimed`, `disputed`, `optimistic`, `bump` |
+
+**完整支付流程：**
+
+```
+1. SETUP (买家)
+   mb_init_global    → 创建 GlobalState + GlobalVault PDA
+   mb_deposit        → SOL 转入 GlobalVault
+
+2. 开通道 (买家)
+   mb_create_channel → 创建 Channel PDA (buyer, merchant)，锁定 spending_cap
+
+3. 链下微支付 (买家 → 商户)
+   买家: mb_sign_voucher(seq, amount)           → Ed25519 签名，本地存储
+   商户: mb_receive_voucher(buyer_sig)           → 验证签名，本地存储
+
+4a. 协作结算 (商户)
+   商户: mb_settle_batch(buyer_batch_sig)        → 构建 Merkle Sum Tree，双签名结算
+   商户: mb_release_settlement                   → 挑战期后释放资金
+   争议路径: 买家 mb_dispute → 买家 mb_resolve_dispute (欺诈证明)
+             或: 商户 mb_force_release (争议期后)
+
+4b. 乐观结算 (商户，当买家不配合)
+   商户: mb_optimistic_settle                    → 仅商户签名
+   后续: 同样的挑战/争议路径
+```
+
+**安全模型（三重防护）：**
+
+| 防护 | 说明 |
+|------|------|
+| 消费上限 | `settled_amount + total_amount <= spending_cap`（链上检查） |
+| 余额检查 | `total_amount <= vault.lamports`（实际余额） |
+| 双签名 | Ed25519 指令内省验证买家 + 商户签名 |
+
+**欺诈证明：** Sum-Merkle Tree 设计，买家只需单 Voucher + O(log N) 兄弟节点。128 个 Voucher 的 Proof 仅 280 bytes，远低于 Solana 1232 字节交易限制。
+
+**Global Vault 设计：** 每个 Buyer 一个全局 Vault（GlobalVault PDA），`total_allocated` 追踪所有通道消费上限之和，防止超额分配。Vault 始终由 System Program 拥有，买家通过 `system_instruction::transfer` 存入，程序通过 `invoke_signed` 提取。
+
+### E. 支付决策流程
 
 | 优先级 | 场景 | 判断条件 | 处理动作 |
 | :--- | :--- | :--- | :--- |
 | 1 | **VC 验证失败** | 附带 VC 签名无效/过期/签发者不匹配 | 拒绝支付，返回验证失败原因 |
-| 2 | **链上 DID 验证失败** (V2.0) | 商家 DID 未在 Merkle Tree 注册 | 拒绝支付，返回"merchant not found on-chain" |
+| 2 | **链上 DID 验证失败** | 商家 DID 未在链上注册为压缩账户 | 拒绝支付，返回"merchant not found on-chain" |
 | 3 | **黑名单阻断** | `provider_did` 在黑名单 | 立即中断，返回 `Security Risk: Provider Blocked` |
 | 4 | **白名单自动批准** | `provider_did` 在白名单 && 金额 ≤ `max_amount` | 直接执行链上支付 |
 | 5 | **全局阈值自动批准** | 金额 ≤ `auto_approve_max` | 自动执行链上支付，无需手机授权 |
 | 6 | **交互式授权** | 以上均不满足 | 触发 DIDComm V2 协议，推送授权请求至用户手机端 |
 
-**支付执行 (V2.0)**：
+**支付执行：**
 * 若 Solana 已配置：通过 Session Key 执行真实 SOL/SPL Token 转账
 * 若 Solana 未配置：使用 mock payment 生成模拟签名（开发模式）
 
@@ -118,49 +197,196 @@ V2.0 使用 Solana 链上的 **SPL Account Compression (Concurrent Merkle Tree)*
 
 ---
 
-## 6. V2.0 Crate 结构
+## 6. Crate 结构
 
 ```
-ignite-pay-solana/          # 新增：Solana 链上交互 crate
+ignite-pay-core/                    # 核心协议库
 ├── src/
-│   ├── lib.rs              # 模块声明 + re-export solana_sdk
-│   ├── types.rs            # MerchantLeaf, SessionTokenData, PayMode, PaymentResult
-│   ├── error.rs            # SolanaError 统一错误类型
-│   ├── compression.rs      # CompressionService: Merkle Tree 操作
-│   ├── indexer.rs          # IndexerClient: Helius DAS API 查询
-│   ├── session.rs          # SessionManager: 临时密钥创建/持久化/验证
-│   └── payment.rs          # IgnitePayClient: SOL/SPL Token 真实转账
+│   ├── identity.rs                 # DID 生成、DID Document 构建、身份持久化
+│   ├── didcomm.rs                  # DIDComm 消息构造器（15 种消息类型）、JWE 加解密
+│   ├── solana_did.rs               # SolanaDidBridge: DID 链上验证桥接层
+│   ├── types.rs                    # 共享类型：PaymentRequest, MerchantListEntry 等
+│   ├── list_store.rs               # 白名单/黑名单管理 (sled + IPFS 同步)
+│   ├── vc.rs                       # Verifiable Credential 签发与验证
+│   ├── ipfs.rs                     # IPFS 上传/下载抽象层
+│   ├── audit_merkle.rs             # SHA-256 Merkle 树审计日志
+│   └── log_*.rs                    # E2EE 审计日志（加密 → Zstd 压缩 → IPFS 同步）
 
-ignite-pay-core/            # 修改：添加 solana feature gate
+ignite-pay-solana/                  # Solana 链上交互
 ├── src/
-│   ├── solana_did.rs       # [新增] SolanaDidBridge: DID 链上验证桥接层
-│   └── ...                 # (其他模块不变)
+│   ├── lib.rs                      # 模块声明 + re-export solana_sdk
+│   ├── types.rs                    # MerchantDidAccount, SessionTokenData, PayMode, PaymentResult
+│   ├── error.rs                    # SolanaError 统一错误类型
+│   ├── compression.rs              # DidService: ZK Compression DID 操作（initialize_did, update_did_with_vc 等）
+│   ├── session.rs                  # SessionManager: 临时密钥创建/持久化/验证
+│   ├── session_program.rs          # Session Program 指令构建
+│   ├── channel.rs                  # 支付通道交互
+│   └── payment.rs                  # IgnitePayClient: SOL/SPL Token 真实转账
 
-ignite-pay-mcp/             # 修改：集成 Solana 模块
-├── config.toml             # [新增] [solana] 配置节
+ignite-pay-did-program/             # 链上 DID 程序 (Anchor + Light SDK)
+├── src/
+│   ├── lib.rs                      # 6 个指令: init_platform, initialize_did, update_did_with_vc, set_recovery_key, recover_controller, revoke_vc
+│   ├── state.rs                    # MerchantCompressedDid, PlatformConfig, RevokedVc
+│   └── error.rs                    # DidError 错误码
+
+did-registry/                       # DID 注册服务 (REST API)
+├── src/
+│   ├── server.rs                   # Axum 路由: /v1/merchants/*, /v1/did/*, /v1/vc/*, /v1/proof
+│   ├── state.rs                    # RegistryState: DidService + LightClient + 平台签名
+│   ├── config.rs                   # 服务器、Solana、Light (Photon)、认证、费率配置
+│   ├── handlers/                   # register, confirm, verify, status, rotate_key, update_vc, issue_vc, revoke_vc, proof, nonce, fees
+│   ├── did/                        # resolver (DID 哈希/签名验证), ignite_store (DID 文档缓存)
+│   └── storage/                    # sled_store (MerchantStore: 商家记录、VC、费率、撤销状态)
+
+ignite-pay-mb/sdk/                  # MagicBlock 支付通道 SDK
+├── src/
+│   ├── lib.rs                      # 模块声明
+│   ├── pda.rs                      # PDA 派生: derive_global_state_pda, derive_channel_pda, derive_settlement_pda
+│   ├── merkle.rs                   # Sum-Merkle Tree: build_sum_merkle_tree, MerkleProof
+│   ├── signing.rs                  # sign_voucher, sign_settlement, verify_signature
+│   └── transaction.rs              # 11 个交易构建器
+
+ignite-pay-mcp/                     # Buyer MCP Server (23 tools)
+├── config.toml                     # [solana] + [magicblock] 配置
 └── src/
-    └── main.rs             # [修改] 添加 Solana 客户端 + 链上验证
+    ├── main.rs                     # IgnitePayMcpServer: X402 + Session Key + MB 通道
+    ├── lib.rs                      # audit, mediator, payment, tools, voucher_store
+    ├── tools.rs                    # 工具输入结构体
+    ├── voucher_store.rs            # StoredVoucher + VoucherStore (sled)
+    ├── mediator.rs                 # MediatorConnection (DIDComm)
+    ├── payment.rs                  # PaymentStore (sled)
+    └── audit.rs                    # AuditLogStore (sled)
+
+ignite-pay-merchant-mcp/            # Merchant MCP Server (11 tools)
+├── config.toml                     # [solana] + [magicblock] + [merchant] 配置
+└── src/
+    ├── main.rs                     # MerchantMcpServer: QR + Voucher 收集 + 结算
+    ├── lib.rs                      # audit, config, mediator, payment, qr, settlement_store, tools, voucher_store
+    ├── tools.rs                    # 工具输入结构体
+    ├── config.rs                   # Config, MagicBlockConfig
+    ├── voucher_store.rs            # CollectedVoucher + MerchantVoucherStore (sled)
+    ├── settlement_store.rs         # SettlementRecord + SettlementStore (sled)
+    ├── mediator.rs                 # MerchantMediator (DIDComm)
+    ├── payment.rs                  # PaymentOrderStore (sled)
+    ├── qr.rs                       # PaymentQrData, generate_payment_qr_text
+    └── audit.rs                    # AuditLogStore (sled)
 ```
 
 ---
 
-## 7. Solana 配置
+## 7. 配置
+
+### Buyer MCP 配置
 
 ```toml
-# config.toml [solana] 节
 [solana]
 rpc_url = "https://api.devnet.solana.com"
-tree_address = ""          # Concurrent Merkle Tree 地址
-tree_authority = ""        # 树管理者公钥
-das_endpoint = ""          # Helius DAS API endpoint
 pay_mode = "self_funded"   # "self_funded" 或 "sponsored"
+
+[magicblock]
+rpc_url = "https://api.devnet.solana.com"
+program_id = "6pFXAg1oiV61wVvaJvMHqYdGMe2fscDwmN9UBUSvNuU3"
 ```
 
-当 `tree_address` 和 `tree_authority` 为空时，系统回退到 mock payment 模式。
+### Merchant MCP 配置
+
+```toml
+[merchant]
+did = ""
+hub_endpoint = ""
+
+[magicblock]
+rpc_url = "https://api.devnet.solana.com"
+program_id = "6pFXAg1oiV61wVvaJvMHqYdGMe2fscDwmN9UBUSvNuU3"
+```
+
+### 环境变量
+
+| 变量 | 用途 |
+|------|------|
+| `IGNITE_PAY_CONFIG` | Buyer MCP 配置文件路径（默认 `config.toml`） |
+| `IGNITE_MERCHANT_CONFIG` | Merchant MCP 配置文件路径（默认 `config.toml`） |
 
 ---
 
-## 8. 优化建议与潜在挑战
+## 8. MCP 工具清单
+
+### Buyer MCP (23 tools)
+
+**X402 支付工具：**
+
+| 工具 | 用途 |
+|------|------|
+| `process_x402_challenge` | 处理 HTTP 402 支付挑战：解析 x402、验证商家、风控、授权、执行支付 |
+| `check_authorization` | 查询支付授权状态 |
+| `get_payment_history` | 获取支付历史 |
+
+**身份与配对：**
+
+| 工具 | 用途 |
+|------|------|
+| `get_identity` | 获取买家 DID、Mediator 状态、Solana 状态、MB Buyer Pubkey/Program ID |
+| `generate_pairing_invitation` | 生成 DIDComm 配对 QR 码 |
+
+**Session Key 管理：**
+
+| 工具 | 用途 |
+|------|------|
+| `create_session` | 创建 Session Key（SOL 或 SPL Token），可选链上注册 |
+| `get_session_status` | 查询 Session Key 状态（余额、有效期） |
+| `close_session` | 关闭 Session Key，可选退还 SOL |
+| `execute_spl_payment` | 使用 Session Key 执行 SPL Token 转账 |
+
+**链上 DID 管理：**
+
+| 工具 | 用途 |
+|------|------|
+| `add_merchant` | 添加商家 ZK 压缩 DID 账户 |
+| `update_merchant` | 更新商家 ZK 压缩 DID 数据 |
+| `verify_merchant` | 验证商家链上身份 |
+
+**MagicBlock 支付通道（11 tools）：**
+
+| 工具 | 用途 |
+|------|------|
+| `mb_init_global` | 初始化全局状态（创建 GlobalState + GlobalVault PDA） |
+| `mb_deposit` | 向 GlobalVault 充值 SOL |
+| `mb_create_channel` | 创建支付通道（指定商户、消费上限、挑战期、争议期） |
+| `mb_update_spending_cap` | 调整通道消费上限 |
+| `mb_get_channel` | 查询通道状态 |
+| `mb_get_global_state` | 查询全局状态 |
+| `mb_sign_voucher` | 签名 Voucher（Ed25519 签名 `SHA256(channel_id \|\| seq \|\| amount)`） |
+| `mb_sign_settlement` | 签名结算消息（重建 Merkle Tree，验证后签名） |
+| `mb_dispute` | 争议结算（冻结 Escrow） |
+| `mb_resolve_dispute` | 解决争议（提交 Sum-Merkle Proof 欺诈证明） |
+| `mb_withdraw` | 提取未分配资金 |
+
+### Merchant MCP (11 tools)
+
+**订单管理：**
+
+| 工具 | 用途 |
+|------|------|
+| `generate_payment_qr` | 生成收款二维码（含商户 MB Pubkey） |
+| `check_payment` | 查询订单状态 |
+| `get_payment_history` | 获取订单历史 |
+| `get_identity` | 获取商户 DID、MB Merchant Pubkey、Program ID |
+
+**MagicBlock 支付通道（7 tools）：**
+
+| 工具 | 用途 |
+|------|------|
+| `mb_get_channel` | 查询与买家的通道状态 |
+| `mb_receive_voucher` | 接收买家 Voucher：验证签名、存储 |
+| `mb_settle_batch` | 批量结算：构建 Merkle Sum Tree、商户签名、双签名提交 |
+| `mb_optimistic_settle` | 乐观结算：仅商户签名（需 challenge_period > 0） |
+| `mb_get_settlement` | 查询结算 Escrow 状态 |
+| `mb_release_settlement` | 释放结算（挑战期后，资金转入商户） |
+| `mb_force_release` | 强制释放（争议期后） |
+
+---
+
+## 9. 优化建议与潜在挑战
 
 ### 1. 状态同步问题
 * **挑战**：IPFS 上的黑白名单更新可能有延迟。
@@ -174,24 +400,27 @@ pay_mode = "self_funded"   # "self_funded" 或 "sponsored"
 * **容错**：如果支付成功但服务商未返回资源，系统需要基于 `provider_did` 的仲裁或申诉机制。
 
 ### 4. 性能考量
-* **链下验证**：Merkle Proof 本地验证为毫秒级，不消耗链上资源
-* **链上验证**：仅在争议场景使用 `verify_leaf` 指令
+* **ZK Compression DID**：压缩账户无需 rent-exemption，通过 Light RPC 获取 validity proof，链下验证为毫秒级
+* **链上 DID 操作**：平台签名验证 + nonce 防重放，交易大小可控
 * **Session 管理**：sled 持久化，重启后自动恢复活跃 Session
+* **MB 支付通道**：链下签名 Voucher 为毫秒级，批量结算将多笔支付合并为一次链上交易
+* **MB Keypair 持久化**：sled 存储，重启后自动恢复
 
 ---
 
-## 9. 阶段规划
+## 10. 阶段规划
 
 | 阶段 | 功能 | 状态 |
 | :--- | :--- | :--- |
 | **V0.1** | 基础 MCP + DIDComm 加密 + Mediator + Mock 支付 | ✅ 已完成 |
 | **V1.0** | 手机端授权闭环（Flutter Rust Bridge + WS 双向通信） | ✅ 已完成 |
 | **V1.1** | VC 验证 + IPFS 黑白名单 + 名单同步 | ✅ 已完成 |
-| **V2.0** | SPL Account Compression + Session Keys + 链上支付 | 🚧 进行中 |
-| **V2.1** | 代付模式 (Sponsored) + Relayer 服务 | 📋 计划中 |
+| **V2.0** | ZK Compression (Light Protocol) DID + Session Keys + 链上支付 | ✅ 已完成 |
+| **V2.1** | MagicBlock 支付通道（链下 Voucher + Merkle 结算 + 争议机制） | ✅ 已完成 |
+| **V2.2** | 代付模式 (Sponsored) + Relayer 服务 | 📋 计划中 |
 
 ---
 
 ## 总结
 
-该方案完美契合了 **"Agent Economy" (智能体经济)** 的需求。通过 X402 实现按需付费，通过 VC 验证和 IPFS 名单管理实现信任体系，通过 DIDComm V2 保证用户的最终控制权（Self-Sovereignty）。V1.x 已实现完整的授权闭环，V2.0 通过 SPL Account Compression 实现链上商家 DID 验证，通过 Session Keys 实现安全便捷的链上支付执行。
+该系统为 **"Agent Economy" (智能体经济)** 提供完整支付基础设施。通过 X402 实现按需付费，通过 VC 验证和 IPFS 名单管理实现信任体系，通过 DIDComm V2 保证用户的最终控制权（Self-Sovereignty）。链上支付通过 Session Keys 实现安全便捷的 SOL/SPL Token 转账，MagicBlock 支付通道实现高频微支付场景（链下签名 Voucher + Sum-Merkle Tree 批量结算 + 欺诈证明争议机制）。

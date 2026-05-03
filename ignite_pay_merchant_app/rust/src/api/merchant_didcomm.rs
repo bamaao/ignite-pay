@@ -493,7 +493,7 @@ pub async fn send_connection_request(
     mediator_ws_url: String,
     push_channel: String,
     fcm_token: Option<String>,
-    app_mediator_ws_url: Option<String>,
+    _app_mediator_ws_url: Option<String>,
     app_mediator_http_url: Option<String>,
 ) -> Result<()> {
     let db = sled::open(&storage_path)?;

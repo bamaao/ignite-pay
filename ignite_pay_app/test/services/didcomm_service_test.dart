@@ -394,6 +394,7 @@ class _MockRustLibApi extends RustLibApi {
         orderId: 'mock_order',
         hubEndpoint: 'http://localhost:3003',
         timestamp: 0,
+        merchantMbPubkey: '',
       );
 
   @override
@@ -418,6 +419,40 @@ class _MockRustLibApi extends RustLibApi {
     required String signatureB64,
   }) async =>
       true;
+
+  @override
+  Future<String> crateApiSimpleMbGetBuyerPubkey({
+    required String storagePath,
+  }) async =>
+      'MockBuyerMbPubkey';
+
+  @override
+  Future<MbVoucherResult> crateApiSimpleMbSignVoucher({
+    required String storagePath,
+    required String programId,
+    required String merchantMbPubkey,
+    required BigInt seq,
+    required BigInt amount,
+  }) async =>
+      MbVoucherResult(
+        channelId: 'mock_channel_id',
+        seq: seq,
+        amount: amount,
+        buyerPubkey: 'MockBuyerMbPubkey',
+        buyerSig: 'mock_sig',
+      );
+
+  @override
+  Future<void> crateApiSimpleMbSendVoucher({
+    required String storagePath,
+    required String merchantDid,
+    required String orderId,
+    required String channelId,
+    required BigInt seq,
+    required BigInt amount,
+    required String buyerPubkey,
+    required String buyerSig,
+  }) async {}
 
   @override
   Future<List<String>> crateApiSimpleDrainMediatorMessages() async => [];

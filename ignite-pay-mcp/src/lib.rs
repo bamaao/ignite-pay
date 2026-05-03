@@ -1,5 +1,5 @@
 pub mod audit;
-pub mod channel;
 pub mod mediator;
 pub mod payment;
 pub mod tools;
+pub mod voucher_store;

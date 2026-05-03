@@ -11,18 +11,17 @@ path = "src/main.rs"
 # Shared library
 ignite-pay-core = { path = "../ignite-pay-core", features = ["solana"] }
 ignite-pay-solana = { path = "../ignite-pay-solana" }
-ignite-pay-state-channel = { path = "../ignite-pay-state-channel" }
+ignite-pay-mb-sdk = { path = "../ignite-pay-mb/sdk" }
+
+# MagicBlock payment channels
+solana-sdk = "2.1"
+solana-client = "2.1"
 
 # HTTP client for Hub communication
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
 # Hex encoding for channel IDs
 hex = "0.4"
-
-# ed25519-dalek v1 — used by ignite-pay-state-channel for Keypair operations.
-# We need this alongside v2 (pulled in by ignite-pay-core) to reconstruct keypairs
-# for signing leaf updates in the state channel.
-ed25519-dalek-v1 = { package = "ed25519-dalek", version = "1" }
 
 # MCP SDK
 rmcp = { version = "1.5", features = ["transport-io", "transport-streamable-http-server"] }

@@ -332,6 +332,29 @@ abstract class RustLibApi extends BaseApi {
     required String message,
     required String signatureB64,
   });
+
+  Future<String> crateApiSimpleMbGetBuyerPubkey({
+    required String storagePath,
+  });
+
+  Future<MbVoucherResult> crateApiSimpleMbSignVoucher({
+    required String storagePath,
+    required String programId,
+    required String merchantMbPubkey,
+    required BigInt seq,
+    required BigInt amount,
+  });
+
+  Future<void> crateApiSimpleMbSendVoucher({
+    required String storagePath,
+    required String merchantDid,
+    required String orderId,
+    required String channelId,
+    required BigInt seq,
+    required BigInt amount,
+    required String buyerPubkey,
+    required String buyerSig,
+  });
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -2044,6 +2067,127 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         argNames: ["did", "message", "signatureB64"],
       );
 
+  @override
+  Future<String> crateApiSimpleMbGetBuyerPubkey({
+    required String storagePath,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 44,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleMbGetBuyerPubkeyConstMeta,
+        argValues: [storagePath],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleMbGetBuyerPubkeyConstMeta =>
+      const TaskConstMeta(
+        debugName: "mb_get_buyer_pubkey",
+        argNames: ["storagePath"],
+      );
+
+  @override
+  Future<MbVoucherResult> crateApiSimpleMbSignVoucher({
+    required String storagePath,
+    required String programId,
+    required String merchantMbPubkey,
+    required BigInt seq,
+    required BigInt amount,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(programId, serializer);
+          sse_encode_String(merchantMbPubkey, serializer);
+          sse_encode_u_64(seq, serializer);
+          sse_encode_u_64(amount, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 45,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_mb_voucher_result,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleMbSignVoucherConstMeta,
+        argValues: [storagePath, programId, merchantMbPubkey, seq, amount],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleMbSignVoucherConstMeta =>
+      const TaskConstMeta(
+        debugName: "mb_sign_voucher",
+        argNames: ["storagePath", "programId", "merchantMbPubkey", "seq", "amount"],
+      );
+
+  @override
+  Future<void> crateApiSimpleMbSendVoucher({
+    required String storagePath,
+    required String merchantDid,
+    required String orderId,
+    required String channelId,
+    required BigInt seq,
+    required BigInt amount,
+    required String buyerPubkey,
+    required String buyerSig,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(merchantDid, serializer);
+          sse_encode_String(orderId, serializer);
+          sse_encode_String(channelId, serializer);
+          sse_encode_u_64(seq, serializer);
+          sse_encode_u_64(amount, serializer);
+          sse_encode_String(buyerPubkey, serializer);
+          sse_encode_String(buyerSig, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 46,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleMbSendVoucherConstMeta,
+        argValues: [storagePath, merchantDid, orderId, channelId, seq, amount, buyerPubkey, buyerSig],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleMbSendVoucherConstMeta =>
+      const TaskConstMeta(
+        debugName: "mb_send_voucher",
+        argNames: ["storagePath", "merchantDid", "orderId", "channelId", "seq", "amount", "buyerPubkey", "buyerSig"],
+      );
+
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -2333,8 +2477,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   PaymentQrData dco_decode_payment_qr_data(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
     return PaymentQrData(
       merchantDid: dco_decode_String(arr[0]),
       amount: dco_decode_u_64(arr[1]),
@@ -2342,6 +2486,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       orderId: dco_decode_String(arr[3]),
       hubEndpoint: dco_decode_String(arr[4]),
       timestamp: dco_decode_i_64(arr[5]),
+      merchantMbPubkey: dco_decode_String(arr[6]),
     );
   }
 
@@ -2830,6 +2975,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MbVoucherResult sse_decode_mb_voucher_result(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_channelId = sse_decode_String(deserializer);
+    var var_seq = sse_decode_u_64(deserializer);
+    var var_amount = sse_decode_u_64(deserializer);
+    var var_buyerPubkey = sse_decode_String(deserializer);
+    var var_buyerSig = sse_decode_String(deserializer);
+    return MbVoucherResult(
+      channelId: var_channelId,
+      seq: var_seq,
+      amount: var_amount,
+      buyerPubkey: var_buyerPubkey,
+      buyerSig: var_buyerSig,
+    );
+  }
+
+  @protected
   PaymentQrData sse_decode_payment_qr_data(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_merchantDid = sse_decode_String(deserializer);
@@ -2838,6 +3000,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_orderId = sse_decode_String(deserializer);
     var var_hubEndpoint = sse_decode_String(deserializer);
     var var_timestamp = sse_decode_i_64(deserializer);
+    var var_merchantMbPubkey = sse_decode_String(deserializer);
     return PaymentQrData(
       merchantDid: var_merchantDid,
       amount: var_amount,
@@ -2845,6 +3008,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       orderId: var_orderId,
       hubEndpoint: var_hubEndpoint,
       timestamp: var_timestamp,
+      merchantMbPubkey: var_merchantMbPubkey,
     );
   }
 
