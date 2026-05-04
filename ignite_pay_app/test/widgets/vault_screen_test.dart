@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ignite_pay_app/vault_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   // Use a tall viewport to avoid overflow from the vault screen's scroll content
   Future<void> _pumpVault(WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({});
     tester.view.physicalSize = const Size(800, 1600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() {
@@ -13,6 +15,8 @@ void main() {
     });
 
     await tester.pumpWidget(const MaterialApp(home: VaultIdentityScreen()));
+    // Allow initState + _loadVaultData to complete
+    await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 100));
   }
 
@@ -106,6 +110,7 @@ void main() {
 
   group('openVaultIdentity navigation', () {
     testWidgets('navigates to VaultIdentityScreen', (tester) async {
+      SharedPreferences.setMockInitialValues({});
       tester.view.physicalSize = const Size(800, 1600);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(() {

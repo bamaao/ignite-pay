@@ -859,6 +859,63 @@ async fn process_inner_message(
         return;
     }
 
+    // Handle QR payment notification from buyer's MCP
+    if msg.typ.contains("qr-payment-notify") {
+        let buyer_did = msg.from.clone().unwrap_or_default();
+        let order_id = msg.body.get("order_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let amount = msg.body.get("amount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let payment_method = msg.body.get("payment_method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        tracing::info!(
+            "Received qr-payment-notify from buyer {} (order: {}, amount: {}, method: {})",
+            buyer_did, order_id, amount, payment_method
+        );
+
+        // Forward payment confirmation to merchant app for voice announcement
+        if !order_id.is_empty() {
+            let phone_did_guard = paired_phone.lock().await;
+            if let Some(phone_did) = phone_did_guard.as_ref() {
+                let confirm_msg = didcomm::build_channel_payment_confirm(
+                    our_did, phone_did, &order_id, "", 0, 0,
+                );
+                let agent_guard = agent.lock().await;
+                if let Ok(jwe) = didcomm::pack_encrypted(&agent_guard, &confirm_msg, our_did, phone_did) {
+                    drop(agent_guard);
+                    // Send via phone mediator
+                    let http_url_guard = phone_mediator_http_url.lock().await;
+                    if let Some(http_url) = http_url_guard.as_ref() {
+                        let forward = serde_json::json!({
+                            "type": "https://didcomm.org/routing/2.0/forward",
+                            "id": format!("fwd-{}", uuid::Uuid::new_v4()),
+                            "body": { "next": phone_did },
+                            "attachments": [{ "data": { "json": jwe } }]
+                        });
+                        if let Ok(body) = serde_json::to_string(&forward) {
+                            let client = reqwest::Client::new();
+                            if let Err(e) = client.post(http_url)
+                                .header("Content-Type", "application/json")
+                                .body(body)
+                                .send().await
+                            {
+                                tracing::warn!("Failed to send payment confirmation to app: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return;
+    }
+
     // Handle MB voucher messages from buyers
     if msg.typ.contains("mb-voucher") {
         let buyer_did = msg.from.clone().unwrap_or_default();

@@ -8,6 +8,7 @@
 
 import 'api/channel.dart';
 import 'api/channel_store.dart';
+import 'api/mb_voucher.dart';
 import 'api/notification.dart';
 import 'api/session.dart';
 import 'api/simple.dart';
@@ -89,6 +90,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<SessionKeyEntry> dco_decode_list_session_key_entry(dynamic raw);
+
+  @protected
+  MbVoucherResult dco_decode_mb_voucher_result(dynamic raw);
 
   @protected
   MerchantPolicy dco_decode_merchant_policy(dynamic raw);
@@ -222,6 +226,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SessionKeyEntry> sse_decode_list_session_key_entry(
     SseDeserializer deserializer,
   );
+
+  @protected
+  MbVoucherResult sse_decode_mb_voucher_result(SseDeserializer deserializer);
 
   @protected
   MerchantPolicy sse_decode_merchant_policy(SseDeserializer deserializer);
@@ -391,6 +398,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_session_key_entry(
     List<SessionKeyEntry> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_mb_voucher_result(
+    MbVoucherResult self,
     SseSerializer serializer,
   );
 

@@ -3,6 +3,30 @@ use affinidi_messaging_didcomm::{DIDCommAgent, Message, UnpackResult};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+/// Payment method choices for the phone user during authorization.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PaymentMethod {
+    /// Direct on-chain SOL/SPL transfer via session key contract.
+    #[serde(rename = "session_key")]
+    SessionKey,
+    /// Off-chain MagicBlock voucher from unified global vault.
+    #[serde(rename = "magicblock")]
+    MagicBlock,
+    /// Future: delegated payment via relayer service.
+    #[serde(rename = "relayer")]
+    Relayer,
+}
+
+impl PaymentMethod {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PaymentMethod::SessionKey => "session_key",
+            PaymentMethod::MagicBlock => "magicblock",
+            PaymentMethod::Relayer => "relayer",
+        }
+    }
+}
+
 /// Build a plaintext `mediate-request` message.
 pub fn build_mediate_request(from_did: &str) -> Message {
     Message::new(
@@ -235,6 +259,27 @@ pub fn build_batch_pickup(from_did: &str, count: usize) -> Message {
 
 /// Build a payment authorization request message.
 /// Sent from the MCP server to the phone app via the mediator.
+/// New session key data sent from MCP to phone in the payment-auth-request.
+/// When included, the phone should register this session key on-chain, fund it,
+/// and authorize the payment — all in one user interaction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewSessionKeyRequest {
+    /// Base58-encoded ephemeral public key (MCP-generated).
+    pub session_key_pubkey: String,
+    /// Maximum spending limit in lamports for this session.
+    pub spending_limit: u64,
+    /// Session duration in seconds.
+    pub duration_secs: i64,
+    /// Permission scopes (e.g., ["sol:transfer", "spl:transfer"]).
+    pub scopes: Vec<String>,
+    /// SPL Token mint address (base58). None/empty for SOL sessions.
+    pub token_mint: Option<String>,
+    /// Suggested SOL funding amount (lamports) for gas + payments.
+    pub suggested_sol_funding: u64,
+    /// Suggested stablecoin funding amount (smallest unit) if applicable.
+    pub suggested_token_funding: Option<u64>,
+}
+
 pub fn build_authorization_request(
     from_did: &str,
     to_did: &str,
@@ -243,14 +288,85 @@ pub fn build_authorization_request(
     amount: u64,
     description: &str,
 ) -> Message {
+    build_authorization_request_inner(
+        from_did, to_did, payment_id, merchant_did, amount, description, None, None,
+    )
+}
+
+/// Build a payment authorization request with optional new session key info.
+/// When `new_session_key` is provided, the phone should create the session key
+/// account on-chain, fund it, and authorize the payment in one step.
+pub fn build_authorization_request_with_session_key(
+    from_did: &str,
+    to_did: &str,
+    payment_id: &str,
+    merchant_did: &str,
+    amount: u64,
+    description: &str,
+    new_session_key: &NewSessionKeyRequest,
+) -> Message {
+    build_authorization_request_inner(
+        from_did, to_did, payment_id, merchant_did, amount, description, Some(new_session_key), None,
+    )
+}
+
+/// Build a payment authorization request with session key and available payment methods.
+pub fn build_authorization_request_with_methods(
+    from_did: &str,
+    to_did: &str,
+    payment_id: &str,
+    merchant_did: &str,
+    amount: u64,
+    description: &str,
+    new_session_key: Option<&NewSessionKeyRequest>,
+    available_payment_methods: &[PaymentMethod],
+) -> Message {
+    build_authorization_request_inner(
+        from_did, to_did, payment_id, merchant_did, amount, description, new_session_key, Some(available_payment_methods),
+    )
+}
+
+fn build_authorization_request_inner(
+    from_did: &str,
+    to_did: &str,
+    payment_id: &str,
+    merchant_did: &str,
+    amount: u64,
+    description: &str,
+    new_session_key: Option<&NewSessionKeyRequest>,
+    available_payment_methods: Option<&[PaymentMethod]>,
+) -> Message {
+    let mut body = json!({
+        "payment_id": payment_id,
+        "merchant_did": merchant_did,
+        "amount": amount,
+        "description": description,
+    });
+
+    if let Some(sk) = new_session_key {
+        body.as_object_mut().unwrap().insert(
+            "new_session_key".to_string(),
+            json!({
+                "session_key_pubkey": sk.session_key_pubkey,
+                "spending_limit": sk.spending_limit,
+                "duration_secs": sk.duration_secs,
+                "scopes": sk.scopes,
+                "token_mint": sk.token_mint,
+                "suggested_sol_funding": sk.suggested_sol_funding,
+                "suggested_token_funding": sk.suggested_token_funding,
+            }),
+        );
+    }
+
+    if let Some(methods) = available_payment_methods {
+        body["available_payment_methods"] = json!(
+            methods.iter().map(|m| m.as_str()).collect::<Vec<_>>()
+        );
+    }
+
     Message::new(
         "https://didcomm.org/ignite-pay/1.0/payment-auth-request",
-        json!({
-            "payment_id": payment_id,
-            "merchant_did": merchant_did,
-            "amount": amount,
-            "description": description,
-        }),
+        body,
     )
     .from(from_did.to_string())
     .to(vec![to_did.to_string()])
@@ -320,6 +436,7 @@ pub fn build_authorization_response_v1(
         session_key_data,
         None,
         None,
+        None,
     )
 }
 
@@ -343,6 +460,32 @@ pub fn build_authorization_response_v1_1(
         session_key_data,
         list_label,
         list_max_amount,
+        None,
+    )
+}
+
+/// Build a V1.3 payment authorization response with payment method selection.
+pub fn build_authorization_response_v1_3(
+    from_did: &str,
+    to_did: &str,
+    payment_id: &str,
+    authorized: bool,
+    list_action: &str,
+    session_key_data: Option<&SessionKeyResponseData>,
+    list_label: Option<&str>,
+    list_max_amount: Option<u64>,
+    payment_method: Option<&PaymentMethod>,
+) -> Message {
+    build_authorization_response_v1_inner(
+        from_did,
+        to_did,
+        payment_id,
+        authorized,
+        list_action,
+        session_key_data,
+        list_label,
+        list_max_amount,
+        payment_method,
     )
 }
 
@@ -355,6 +498,7 @@ fn build_authorization_response_v1_inner(
     session_key_data: Option<&SessionKeyResponseData>,
     list_label: Option<&str>,
     list_max_amount: Option<u64>,
+    payment_method: Option<&PaymentMethod>,
 ) -> Message {
     let mut body = json!({
         "payment_id": payment_id,
@@ -382,6 +526,11 @@ fn build_authorization_response_v1_inner(
     }
     if let Some(max_amt) = list_max_amount {
         body["list_max_amount"] = json!(max_amt);
+    }
+
+    // V1.3: payment method chosen by user
+    if let Some(method) = payment_method {
+        body["payment_method"] = json!(method.as_str());
     }
 
     Message::new(
@@ -437,6 +586,92 @@ pub fn build_channel_payment_confirm(
             "channel_id": channel_id,
             "leaf_index": leaf_index,
             "sequence": sequence,
+        }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build a QR payment request message.
+/// Sent from the Phone App to the MCP server when user scans a merchant QR code.
+/// The MCP executes the payment and returns a qr-payment-response.
+pub fn build_qr_payment_request(
+    from_did: &str,
+    to_did: &str,
+    merchant_did: &str,
+    amount: u64,
+    description: &str,
+    order_id: &str,
+    payment_method: &str,
+    token: &str,
+    merchant_mediator_url: &str,
+) -> Message {
+    let mut body = json!({
+        "merchant_did": merchant_did,
+        "amount": amount,
+        "description": description,
+        "order_id": order_id,
+        "payment_method": payment_method,
+        "token": token,
+    });
+    if !merchant_mediator_url.is_empty() {
+        body["merchant_mediator_url"] = json!(merchant_mediator_url);
+    }
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/qr-payment-request",
+        body,
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build a QR payment response message.
+/// Sent from the MCP server back to the Phone App with the payment result.
+pub fn build_qr_payment_response(
+    from_did: &str,
+    to_did: &str,
+    order_id: &str,
+    success: bool,
+    payment_proof: &str,
+    payment_method: &str,
+    error: Option<&str>,
+) -> Message {
+    let mut body = json!({
+        "order_id": order_id,
+        "success": success,
+        "payment_proof": payment_proof,
+        "payment_method": payment_method,
+    });
+    if let Some(err) = error {
+        body["error"] = json!(err);
+    }
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/qr-payment-response",
+        body,
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build a QR payment notification message.
+/// Sent from the buyer's MCP to the merchant's MCP after a successful QR payment.
+/// The merchant MCP then forwards a `channel-payment-confirm` to the merchant app
+/// for voice announcement.
+pub fn build_qr_payment_notify(
+    from_did: &str,
+    to_did: &str,
+    order_id: &str,
+    amount: u64,
+    payment_method: &str,
+    payment_proof: &str,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/qr-payment-notify",
+        json!({
+            "order_id": order_id,
+            "amount": amount,
+            "payment_method": payment_method,
+            "payment_proof": payment_proof,
         }),
     )
     .from(from_did.to_string())
@@ -726,6 +961,82 @@ mod tests {
         assert_eq!(msg.body["merchant_did"], "did:ignite:zMerchant");
         assert_eq!(msg.body["amount"], 500_000_000);
         assert_eq!(msg.body["description"], "Coffee");
+        // No payment methods when not provided
+        assert!(msg.body.get("available_payment_methods").is_none());
+    }
+
+    #[test]
+    fn test_build_authorization_request_with_methods() {
+        let methods = vec![PaymentMethod::SessionKey, PaymentMethod::MagicBlock];
+        let msg = build_authorization_request_with_methods(
+            TEST_DID,
+            PHONE_DID,
+            "pay-methods",
+            "did:ignite:zMerchant",
+            100,
+            "Test",
+            None,
+            &methods,
+        );
+        let methods_arr = msg.body["available_payment_methods"].as_array().unwrap();
+        assert_eq!(methods_arr.len(), 2);
+        assert_eq!(methods_arr[0], "session_key");
+        assert_eq!(methods_arr[1], "magicblock");
+    }
+
+    #[test]
+    fn test_build_authorization_request_with_methods_and_session_key() {
+        let sk = NewSessionKeyRequest {
+            session_key_pubkey: "pubkey_test".to_string(),
+            spending_limit: 1000,
+            duration_secs: 3600,
+            scopes: vec!["sol:transfer".to_string()],
+            token_mint: None,
+            suggested_sol_funding: 5000,
+            suggested_token_funding: None,
+        };
+        let methods = vec![PaymentMethod::SessionKey];
+        let msg = build_authorization_request_with_methods(
+            TEST_DID,
+            PHONE_DID,
+            "pay-both",
+            "did:ignite:zMerchant",
+            100,
+            "Test",
+            Some(&sk),
+            &methods,
+        );
+        assert!(msg.body.get("new_session_key").is_some());
+        assert_eq!(msg.body["available_payment_methods"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_payment_method_enum() {
+        assert_eq!(PaymentMethod::SessionKey.as_str(), "session_key");
+        assert_eq!(PaymentMethod::MagicBlock.as_str(), "magicblock");
+        assert_eq!(PaymentMethod::Relayer.as_str(), "relayer");
+
+        // Serde roundtrip
+        let json = serde_json::to_string(&PaymentMethod::MagicBlock).unwrap();
+        assert_eq!(json, "\"magicblock\"");
+        let parsed: PaymentMethod = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, PaymentMethod::MagicBlock);
+    }
+
+    #[test]
+    fn test_build_auth_response_v1_3_with_payment_method() {
+        let msg = build_authorization_response_v1_3(
+            PHONE_DID,
+            TEST_DID,
+            "pay-006",
+            true,
+            "none",
+            None,
+            None,
+            None,
+            Some(&PaymentMethod::MagicBlock),
+        );
+        assert_eq!(msg.body["payment_method"], "magicblock");
     }
 
     // --- build_authorization_response_v1 ---
@@ -1032,6 +1343,83 @@ mod tests {
         assert_eq!(msg.body["current_root"], "hexroot");
         assert_eq!(msg.body["success"], true);
         assert!(msg.body.get("error_message").is_none());
+    }
+
+    #[test]
+    fn test_build_qr_payment_request() {
+        let msg = build_qr_payment_request(
+            PHONE_DID,
+            TEST_DID,
+            "did:ignite:zMerchant",
+            500_000_000,
+            "Coffee",
+            "order-123",
+            "session_key",
+            "SOL",
+            "https://merchant-relay.example.com/",
+        );
+        assert_eq!(msg.typ, "https://didcomm.org/ignite-pay/1.0/qr-payment-request");
+        assert_eq!(msg.from.as_ref().unwrap(), PHONE_DID);
+        assert_eq!(msg.to.as_ref().unwrap().first().unwrap(), TEST_DID);
+        assert_eq!(msg.body["merchant_did"], "did:ignite:zMerchant");
+        assert_eq!(msg.body["amount"], 500_000_000);
+        assert_eq!(msg.body["order_id"], "order-123");
+        assert_eq!(msg.body["payment_method"], "session_key");
+        assert_eq!(msg.body["token"], "SOL");
+        assert_eq!(msg.body["merchant_mediator_url"], "https://merchant-relay.example.com/");
+    }
+
+    #[test]
+    fn test_build_qr_payment_notify() {
+        let msg = build_qr_payment_notify(
+            "did:ignite:zBuyerMcp",
+            "did:ignite:zMerchant",
+            "order-789",
+            250_000_000,
+            "session_key",
+            "Tx: def456",
+        );
+        assert_eq!(msg.typ, "https://didcomm.org/ignite-pay/1.0/qr-payment-notify");
+        assert_eq!(msg.from.as_ref().unwrap(), "did:ignite:zBuyerMcp");
+        assert_eq!(msg.to.as_ref().unwrap().first().unwrap(), "did:ignite:zMerchant");
+        assert_eq!(msg.body["order_id"], "order-789");
+        assert_eq!(msg.body["amount"], 250_000_000);
+        assert_eq!(msg.body["payment_method"], "session_key");
+        assert_eq!(msg.body["payment_proof"], "Tx: def456");
+    }
+
+    #[test]
+    fn test_build_qr_payment_response_success() {
+        let msg = build_qr_payment_response(
+            TEST_DID,
+            PHONE_DID,
+            "order-123",
+            true,
+            "Tx: abc123",
+            "session_key",
+            None,
+        );
+        assert_eq!(msg.typ, "https://didcomm.org/ignite-pay/1.0/qr-payment-response");
+        assert_eq!(msg.body["order_id"], "order-123");
+        assert_eq!(msg.body["success"], true);
+        assert_eq!(msg.body["payment_proof"], "Tx: abc123");
+        assert_eq!(msg.body["payment_method"], "session_key");
+        assert!(msg.body.get("error").is_none());
+    }
+
+    #[test]
+    fn test_build_qr_payment_response_error() {
+        let msg = build_qr_payment_response(
+            TEST_DID,
+            PHONE_DID,
+            "order-456",
+            false,
+            "",
+            "magicblock",
+            Some("No channel found"),
+        );
+        assert_eq!(msg.body["success"], false);
+        assert_eq!(msg.body["error"], "No channel found");
     }
 
     #[test]

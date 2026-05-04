@@ -1,9 +1,54 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ignite_pay_app/policy_screen.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class FakePathProviderPlatform extends Fake
+    with MockPlatformInterfaceMixin
+    implements PathProviderPlatform {
+  @override
+  Future<String?> getApplicationSupportPath() async => '/tmp/test_app_support';
+
+  @override
+  Future<String?> getTemporaryPath() async => '/tmp/test_tmp';
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => '/tmp/test_docs';
+}
+
+/// Wraps [testWidgets] to suppress google_fonts fire-and-forget async errors
+/// that occur during PolicyArchitectScreen rebuilds.
+void _fontSafeTestWidgets(String description, WidgetTesterCallback body) {
+  testWidgets(description, (tester) async {
+    // The test binding creates its own zone. We need to override how it
+    // reports uncaught async errors to tolerate google_fonts font loading.
+    // Simply run the test body normally — errors will be caught by the
+    // test framework. We use a Zone to prevent the specific google_fonts
+    // errors from propagating.
+    Zone? innerZone;
+    innerZone = Zone.current.fork(
+      specification: ZoneSpecification(
+        handleUncaughtError: (self, parent, zone, error, stackTrace) {
+          final msg = error.toString();
+          if (msg.contains('Failed to load font') ||
+              msg.contains('google_fonts')) {
+            return;
+          }
+          parent.handleUncaughtError(zone, error, stackTrace);
+        },
+      ),
+    );
+    await innerZone.run(() => body(tester));
+  });
+}
 
 void main() {
   Future<void> _pumpPolicy(WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({});
+    PathProviderPlatform.instance = FakePathProviderPlatform();
     tester.view.physicalSize = const Size(800, 1600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() {
@@ -13,89 +58,37 @@ void main() {
 
     await tester.pumpWidget(const MaterialApp(home: PolicyArchitectScreen()));
     await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
   }
 
   group('PolicyArchitectScreen', () {
-    testWidgets('renders Policy Architect header', (tester) async {
+    _fontSafeTestWidgets('renders Policy Architect header', (tester) async {
       await _pumpPolicy(tester);
       expect(find.text('Policy Architect'), findsOneWidget);
       expect(find.text('Spending rules & whitelists'), findsOneWidget);
     });
 
-    testWidgets('renders stats grid labels', (tester) async {
+    _fontSafeTestWidgets('renders empty state when no policies', (tester) async {
       await _pumpPolicy(tester);
-      expect(find.text('MERCHANTS'), findsOneWidget);
-      expect(find.text('AUTO-PAY'), findsOneWidget);
-      expect(find.text('WEEKLY CAP'), findsOneWidget);
-      expect(find.text('SPENT'), findsOneWidget);
+      expect(find.text('No merchant policies yet'), findsOneWidget);
     });
 
-    testWidgets('renders correct merchant count', (tester) async {
+    _fontSafeTestWidgets('renders empty state subtitle', (tester) async {
       await _pumpPolicy(tester);
-      expect(find.text('4'), findsOneWidget);
+      expect(
+          find.textContaining('Policies will appear here'), findsOneWidget);
     });
 
-    testWidgets('renders auto-pay count', (tester) async {
-      await _pumpPolicy(tester);
-      // ShopX (auto) + RPC Provider (auto) = 2
-      expect(find.text('2'), findsOneWidget);
-    });
+    _fontSafeTestWidgets('back button pops navigator', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      PathProviderPlatform.instance = FakePathProviderPlatform();
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
 
-    testWidgets('renders all 4 policy merchant names', (tester) async {
-      await _pumpPolicy(tester);
-      expect(find.text('ShopX Marketplace'), findsOneWidget);
-      expect(find.text('DeFi Staking'), findsOneWidget);
-      expect(find.text('NFT Mint'), findsOneWidget);
-      expect(find.text('RPC Provider'), findsOneWidget);
-    });
-
-    testWidgets('renders all merchant domains', (tester) async {
-      await _pumpPolicy(tester);
-      expect(find.text('shopx.io'), findsOneWidget);
-      expect(find.text('defistake.xyz'), findsOneWidget);
-      expect(find.text('nftmint.pro'), findsOneWidget);
-      expect(find.text('solrpc.dev'), findsOneWidget);
-    });
-
-    testWidgets('shows AUTO for auto-pay policies', (tester) async {
-      await _pumpPolicy(tester);
-      expect(find.text('AUTO'), findsWidgets);
-    });
-
-    testWidgets('shows MANUAL for non-auto-pay policies', (tester) async {
-      await _pumpPolicy(tester);
-      expect(find.text('MANUAL'), findsWidgets);
-    });
-
-    testWidgets('tapping a policy card expands detail section', (tester) async {
-      await _pumpPolicy(tester);
-
-      // Initially no detail fields visible
-      expect(find.text('did:solana:7kPx...mN3q'), findsNothing);
-
-      // Tap on first merchant name to expand
-      await tester.tap(find.text('ShopX Marketplace'));
-      await tester.pump(const Duration(milliseconds: 300));
-
-      // DID should be visible in expanded state
-      expect(find.text('did:solana:7kPx...mN3q'), findsOneWidget);
-    });
-
-    testWidgets('tapping expanded card collapses it', (tester) async {
-      await _pumpPolicy(tester);
-
-      // Expand
-      await tester.tap(find.text('ShopX Marketplace'));
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('did:solana:7kPx...mN3q'), findsOneWidget);
-
-      // Collapse
-      await tester.tap(find.text('ShopX Marketplace'));
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('did:solana:7kPx...mN3q'), findsNothing);
-    });
-
-    testWidgets('back button pops navigator', (tester) async {
       await tester.pumpWidget(MaterialApp(
         home: Builder(
           builder: (context) => Scaffold(
@@ -113,7 +106,6 @@ void main() {
 
       expect(find.text('Policy Architect'), findsOneWidget);
 
-      // Find the back button by its icon (arrowLeft)
       final backBtn = find.byIcon(Icons.arrow_back);
       if (backBtn.evaluate().isNotEmpty) {
         await tester.tap(backBtn.first);

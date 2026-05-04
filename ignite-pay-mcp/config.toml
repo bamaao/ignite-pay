@@ -32,6 +32,12 @@ mode = "mock"
 [solana]
 # Solana RPC endpoint
 rpc_url = "https://api.devnet.solana.com"
+# DID program ID (ignite-pay-did-program) — enables on-chain DID verification
+did_program_id = ""
+# Photon RPC URL for ZK Compression queries (e.g. https://photon.helius.com?api-key=KEY)
+photon_url = ""
+# Address Merkle tree pubkey — used to derive compressed DID addresses
+address_tree = ""
 # Concurrent Merkle Tree address (deployed once, holds merchant DID hashes)
 tree_address = ""
 # Tree authority (platform keypair that controls the tree)

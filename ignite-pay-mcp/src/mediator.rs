@@ -30,6 +30,21 @@ pub struct CreateChannelCommand {
     pub tree_depth: u32,
 }
 
+/// Command sent when a qr-payment-request is received from the phone app.
+/// The MCP executes the payment and sends a qr-payment-response back.
+#[derive(Debug)]
+pub struct QrPaymentCommand {
+    pub phone_did: String,
+    pub merchant_did: String,
+    pub amount: u64,
+    pub description: String,
+    pub order_id: String,
+    pub payment_method: String,
+    pub token: String,
+    /// HTTP URL of the merchant's mediator (for sending payment notification).
+    pub merchant_mediator_url: String,
+}
+
 /// Encapsulates the WebSocket connection to the DIDComm mediator.
 pub struct MediatorConnection {
     agent: Arc<Mutex<DIDCommAgent>>,
@@ -216,6 +231,7 @@ impl MediatorConnection {
         &self,
         pending: Arc<PendingAuthStore>,
         create_channel_tx: Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+        qr_payment_tx: Option<mpsc::UnboundedSender<QrPaymentCommand>>,
     ) -> Result<()> {
         let agent = self.agent.clone();
         let our_did = self.our_did.clone();
@@ -250,6 +266,7 @@ impl MediatorConnection {
                 pending_phone,
                 phone_mediator_http_url,
                 create_channel_tx,
+                qr_payment_tx,
                 &signing_private,
                 &db,
             )
@@ -261,19 +278,55 @@ impl MediatorConnection {
 
     /// Send a payment authorization request to the phone.
     /// Encrypts to JWE, wraps in forward message, and sends directly to the phone's mediator.
+    /// If `new_session_key` is provided, the phone should register the session key
+    /// on-chain, fund it, and authorize the payment in one user interaction.
+    /// If `available_payment_methods` is provided, the phone should present the choices to the user.
     pub async fn send_auth_request(
         &self,
         phone_did: &str,
         payment: &PaymentRequest,
+        new_session_key: Option<&didcomm::NewSessionKeyRequest>,
+        available_payment_methods: Option<&[didcomm::PaymentMethod]>,
     ) -> Result<String> {
-        let msg = didcomm::build_authorization_request(
-            &self.our_did,
-            phone_did,
-            &payment.id,
-            &payment.merchant_did,
-            payment.amount,
-            &payment.description,
-        );
+        let msg = match (new_session_key, available_payment_methods) {
+            (Some(sk), Some(methods)) => didcomm::build_authorization_request_with_methods(
+                &self.our_did,
+                phone_did,
+                &payment.id,
+                &payment.merchant_did,
+                payment.amount,
+                &payment.description,
+                Some(sk),
+                methods,
+            ),
+            (Some(sk), None) => didcomm::build_authorization_request_with_session_key(
+                &self.our_did,
+                phone_did,
+                &payment.id,
+                &payment.merchant_did,
+                payment.amount,
+                &payment.description,
+                sk,
+            ),
+            (None, Some(methods)) => didcomm::build_authorization_request_with_methods(
+                &self.our_did,
+                phone_did,
+                &payment.id,
+                &payment.merchant_did,
+                payment.amount,
+                &payment.description,
+                None,
+                methods,
+            ),
+            (None, None) => didcomm::build_authorization_request(
+                &self.our_did,
+                phone_did,
+                &payment.id,
+                &payment.merchant_did,
+                payment.amount,
+                &payment.description,
+            ),
+        };
 
         let agent = self.agent.lock().await;
         let jwe = didcomm::pack_encrypted(&agent, &msg, &self.our_did, phone_did)
@@ -345,6 +398,23 @@ impl MediatorConnection {
             entry_did,
             new_cid
         );
+
+        Ok(jwe)
+    }
+
+    /// Send an arbitrary DIDComm Message to the phone (encrypts as JWE and forwards).
+    /// Used for qr-payment-response and other ad-hoc messages.
+    pub async fn send_to_phone(
+        &self,
+        msg: &affinidi_messaging_didcomm::Message,
+        phone_did: &str,
+    ) -> Result<String> {
+        let agent = self.agent.lock().await;
+        let jwe = didcomm::pack_encrypted(&agent, msg, &self.our_did, phone_did)
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
+        drop(agent);
+
+        self.send_to_phone_mediator(phone_did, &jwe).await?;
 
         Ok(jwe)
     }
@@ -455,6 +525,57 @@ impl MediatorConnection {
 
         Ok(())
     }
+
+    /// Send a DIDComm Message to an arbitrary DID via its mediator HTTP endpoint.
+    /// Encrypts the message as JWE, wraps in a forward message, and POSTs to the
+    /// target mediator. Used for notifying merchant MCPs after QR payment.
+    pub async fn send_to_mediator(
+        &self,
+        msg: &affinidi_messaging_didcomm::Message,
+        target_did: &str,
+        mediator_http_url: &str,
+    ) -> Result<String> {
+        let agent = self.agent.lock().await;
+        let jwe = didcomm::pack_encrypted(&agent, msg, &self.our_did, target_did)
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
+        drop(agent);
+
+        let forward_msg = serde_json::json!({
+            "type": "https://didcomm.org/routing/2.0/forward",
+            "id": format!("fwd-{}", uuid::Uuid::new_v4()),
+            "body": { "next": target_did },
+            "attachments": [{
+                "data": { "json": serde_json::Value::String(jwe.clone()) }
+            }]
+        });
+        let forward_str = serde_json::to_string(&forward_msg)?;
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(mediator_http_url)
+            .header("Content-Type", "application/json")
+            .body(forward_str)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "Target mediator rejected message: {} - {}",
+                status,
+                body
+            ));
+        }
+
+        tracing::info!(
+            "Sent DIDComm message to {} via mediator {}",
+            target_did,
+            mediator_http_url
+        );
+
+        Ok(jwe)
+    }
 }
 async fn real_ws_client(
     ws_url: &str,
@@ -468,6 +589,7 @@ async fn real_ws_client(
     pending_phone: Arc<tokio::sync::Mutex<Option<String>>>,
     phone_mediator_http_url: Arc<tokio::sync::Mutex<Option<String>>>,
     create_channel_tx: Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+    qr_payment_tx: Option<mpsc::UnboundedSender<QrPaymentCommand>>,
     signing_private: &[u8; 32],
     db: &sled::Db,
 ) {
@@ -483,6 +605,7 @@ async fn real_ws_client(
             &pending_phone,
             &phone_mediator_http_url,
             &create_channel_tx,
+            &qr_payment_tx,
             signing_private,
             db,
         )
@@ -511,6 +634,7 @@ async fn connect_and_run(
     pending_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
     phone_mediator_http_url: &Arc<tokio::sync::Mutex<Option<String>>>,
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+    qr_payment_tx: &Option<mpsc::UnboundedSender<QrPaymentCommand>>,
     signing_private: &[u8; 32],
     db: &sled::Db,
 ) -> Result<()> {
@@ -677,7 +801,7 @@ async fn connect_and_run(
                                     for entry in messages {
                                         if let Some(jwe) = entry.get("message").and_then(|m| m.as_str()) {
                                             handle_incoming_message(
-                                                jwe, agent, pending, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, db, our_did, did_doc, ws_url, signing_private,
+                                                jwe, agent, pending, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, qr_payment_tx, db, our_did, did_doc, ws_url, signing_private,
                                             )
                                             .await;
                                         }
@@ -716,7 +840,7 @@ async fn connect_and_run(
             msg = ws.next() => {
                 match msg {
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
-                        handle_incoming_message(&text, agent, pending, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, db, our_did, did_doc, ws_url, signing_private).await;
+                        handle_incoming_message(&text, agent, pending, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, qr_payment_tx, db, our_did, did_doc, ws_url, signing_private).await;
                     }
                     Some(Ok(_)) => {}
                     Some(Err(e)) => return Err(e.into()),
@@ -823,6 +947,7 @@ async fn handle_incoming_message(
     pending_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
     phone_mediator_http_url: &Arc<tokio::sync::Mutex<Option<String>>>,
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+    qr_payment_tx: &Option<mpsc::UnboundedSender<QrPaymentCommand>>,
     db: &sled::Db,
     our_did: &str,
     did_doc: &Value,
@@ -835,7 +960,7 @@ async fn handle_incoming_message(
         match didcomm::unpack_message(&agent_guard, text, None) {
             Ok(msg) => {
                 drop(agent_guard);
-                process_inner_message(&msg, pending, paired_phone, pending_phone, phone_mediator_http_url, agent, create_channel_tx, db, our_did, did_doc, mcp_ws_url, signing_private).await;
+                process_inner_message(&msg, pending, paired_phone, pending_phone, phone_mediator_http_url, agent, create_channel_tx, qr_payment_tx, db, our_did, did_doc, mcp_ws_url, signing_private).await;
                 return;
             }
             Err(e) => {
@@ -1044,6 +1169,9 @@ async fn handle_incoming_message(
             let token_mint = body.get("token_mint")
                 .and_then(|v| v.as_str())
                 .map(String::from);
+            let payment_method = body.get("payment_method")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let response = AuthResponse {
                 authorized,
                 list_action,
@@ -1057,6 +1185,7 @@ async fn handle_incoming_message(
                 list_label,
                 list_max_amount,
                 token_mint,
+                payment_method,
             };
             if pending.resolve(payment_id, response) {
                 tracing::info!("Resolved pending auth: {} -> {}", payment_id, authorized);
@@ -1080,6 +1209,7 @@ async fn process_inner_message(
     phone_mediator_http_url: &Arc<tokio::sync::Mutex<Option<String>>>,
     agent: &Arc<Mutex<DIDCommAgent>>,
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+    qr_payment_tx: &Option<mpsc::UnboundedSender<QrPaymentCommand>>,
     db: &sled::Db,
     our_did: &str,
     did_doc: &Value,
@@ -1289,6 +1419,9 @@ async fn process_inner_message(
             let token_mint = msg.body.get("token_mint")
                 .and_then(|v| v.as_str())
                 .map(String::from);
+            let payment_method = msg.body.get("payment_method")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let response = AuthResponse {
                 authorized,
                 list_action,
@@ -1302,6 +1435,7 @@ async fn process_inner_message(
                 list_label,
                 list_max_amount,
                 token_mint,
+                payment_method,
             };
             if pending.resolve(payment_id, response) {
                 tracing::info!(
@@ -1358,6 +1492,59 @@ async fn process_inner_message(
             }
         } else {
             tracing::warn!("No create_channel_tx available, ignoring create-channel-request");
+        }
+    } else if msg.typ.contains("qr-payment-request") {
+        // Handle QR payment request from phone (user scanned merchant QR code)
+        let phone_did = msg.from.clone().unwrap_or_default();
+        let merchant_did = msg.body.get("merchant_did")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let amount = msg.body.get("amount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let description = msg.body.get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let order_id = msg.body.get("order_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let payment_method = msg.body.get("payment_method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("session_key")
+            .to_string();
+        let token = msg.body.get("token")
+            .and_then(|v| v.as_str())
+            .unwrap_or("SOL")
+            .to_string();
+        let merchant_mediator_url = msg.body.get("merchant_mediator_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        tracing::info!(
+            "Received qr-payment-request from phone {}: merchant={} amount={} method={}",
+            phone_did, merchant_did, amount, payment_method
+        );
+
+        if let Some(tx) = qr_payment_tx {
+            let cmd = QrPaymentCommand {
+                phone_did,
+                merchant_did,
+                amount,
+                description,
+                order_id,
+                payment_method,
+                token,
+                merchant_mediator_url,
+            };
+            if let Err(e) = tx.send(cmd) {
+                tracing::error!("Failed to send QrPaymentCommand: {}", e);
+            }
+        } else {
+            tracing::warn!("No qr_payment_tx available, ignoring qr-payment-request");
         }
     } else {
         tracing::info!("Received message type={}, no handler", msg.typ);

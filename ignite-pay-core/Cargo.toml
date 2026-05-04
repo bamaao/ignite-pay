@@ -53,7 +53,7 @@ prost-build = "0.13"
 [features]
 default = []
 kubo = ["reqwest"]
-solana = ["ignite-pay-solana"]
+solana = ["ignite-pay-solana", "reqwest"]
 
 [dev-dependencies]
 tempfile = "3"

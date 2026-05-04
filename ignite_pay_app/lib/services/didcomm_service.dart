@@ -43,6 +43,23 @@ class AuthResponseData {
   });
 }
 
+/// A QR payment response from the MCP server.
+class QrPaymentResult {
+  final String orderId;
+  final bool success;
+  final String paymentProof;
+  final String paymentMethod;
+  final String? error;
+
+  QrPaymentResult({
+    required this.orderId,
+    required this.success,
+    required this.paymentProof,
+    required this.paymentMethod,
+    this.error,
+  });
+}
+
 /// A paired MCP server with its identity info received from connection-response.
 class PairedMcp {
   final String did;
@@ -100,9 +117,15 @@ class DecryptedMsg {
 /// Service managing DID identity, DIDComm connections, and message flow.
 /// Uses ChangeNotifier for Provider state management.
 class DidcommService extends ChangeNotifier {
-  static final DidcommService _instance = DidcommService._internal();
+  static DidcommService _instance = DidcommService._internal();
   factory DidcommService() => _instance;
   DidcommService._internal();
+
+  /// Reset the singleton so tests get a fresh instance.
+  @visibleForTesting
+  static void resetInstance() {
+    _instance = DidcommService._internal();
+  }
 
   // State
   String _storagePath = '';
@@ -125,6 +148,8 @@ class DidcommService extends ChangeNotifier {
   // Streams
   final StreamController<AuthRequest> _authRequestController =
       StreamController<AuthRequest>.broadcast();
+  final StreamController<QrPaymentResult> _qrPaymentResultController =
+      StreamController<QrPaymentResult>.broadcast();
 
   // Getters
   String get did => _did;
@@ -140,6 +165,7 @@ class DidcommService extends ChangeNotifier {
 
   /// Stream of incoming auth requests.
   Stream<AuthRequest> get authRequests => _authRequestController.stream;
+  Stream<QrPaymentResult> get qrPaymentResults => _qrPaymentResultController.stream;
 
   /// Whether the current user is detected as a Chinese user based on locale.
   /// Chinese users use WebSocket direct push instead of FCM.
@@ -508,6 +534,20 @@ class DidcommService extends ChangeNotifier {
         _authRequestController.add(authReq);
       }
 
+      // Check if it's a qr-payment-response (MCP processed our QR scan payment)
+      if (msg.msgType.contains('qr-payment-response')) {
+        final body = jsonDecode(msg.rawBody) as Map<String, dynamic>;
+        final qrResult = QrPaymentResult(
+          orderId: body['order_id'] as String? ?? '',
+          success: body['success'] as bool? ?? false,
+          paymentProof: body['payment_proof'] as String? ?? '',
+          paymentMethod: body['payment_method'] as String? ?? '',
+          error: body['error'] as String?,
+        );
+        AppLogService().info('DIDComm', 'QR payment response: order=${qrResult.orderId} success=${qrResult.success}');
+        _qrPaymentResultController.add(qrResult);
+      }
+
       notifyListeners();
     } catch (e) {
       // JWE decryption failed — try plaintext JSON fallback for messages
@@ -841,6 +881,7 @@ class DidcommService extends ChangeNotifier {
   void dispose() {
     _messagePollTimer?.cancel();
     _authRequestController.close();
+    _qrPaymentResultController.close();
     super.dispose();
   }
 }

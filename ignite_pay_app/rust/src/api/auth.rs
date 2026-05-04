@@ -30,6 +30,8 @@ pub struct AuthResponse {
     pub per_tx_limit: Option<u64>,
     // V1.3: SPL token mint for this session
     pub token_mint: Option<String>,
+    // V1.4: payment method chosen by user (session_key, magicblock, relayer)
+    pub payment_method: Option<String>,
 }
 
 /// List action choices for the phone user.

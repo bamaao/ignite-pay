@@ -1,4 +1,4 @@
-use ignite_pay_mcp::mediator::MediatorConnection;
+use ignite_pay_mcp::mediator::{MediatorConnection, QrPaymentCommand};
 use ignite_pay_mcp::payment::{
     execute_mock_payment, AuthResponse, PaymentRequest, PaymentStatus, PendingAuthStore,
 };
@@ -123,8 +123,10 @@ struct SolanaConfig {
     #[serde(default)]
     did_program_id: String,
     #[serde(default)]
-    #[allow(dead_code)]
     photon_url: String,
+    /// Address Merkle tree pubkey (for compressed DID address derivation)
+    #[serde(default)]
+    address_tree: String,
     #[serde(default = "default_pay_mode")]
     pay_mode: String,
     #[serde(default)]
@@ -253,6 +255,223 @@ async fn execute_payment(
             tracing::warn!("Mock payment (no Solana client configured)");
             Ok(execute_mock_payment(payment))
         }
+    }
+}
+
+/// Payment execution result — either a MagicBlock voucher or an on-chain tx signature.
+enum PaymentProof {
+    /// MagicBlock off-chain voucher: channel, seq, amount, msg_hash, buyer_sig
+    Voucher {
+        channel: String,
+        seq: u64,
+        amount: u64,
+        msg_hash: String,
+        signature: String,
+    },
+    /// On-chain Solana transaction signature
+    TxSignature(String),
+}
+
+impl std::fmt::Display for PaymentProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PaymentProof::Voucher { channel, seq, amount, msg_hash, signature } => {
+                write!(f, "Voucher payment.\nChannel: {}\nSeq: {}\nAmount: {}\nSignature: {}\nMessage hash: {}",
+                    channel, seq, amount, signature, msg_hash)
+            }
+            PaymentProof::TxSignature(sig) => {
+                write!(f, "Tx: {}", sig)
+            }
+        }
+    }
+}
+
+impl IgnitePayMcpServer {
+    /// Try to pay via MagicBlock payment channel.
+    ///
+    /// Returns Some(proof) if a channel exists with the merchant and the voucher was signed.
+    /// Returns None if no channel exists (caller should fall back to session key).
+    fn try_mb_voucher_payment(&self, merchant_did: &str, amount: u64) -> Option<PaymentProof> {
+        // Extract merchant Solana pubkey from DID
+        let pk_bytes = ignite_pay_core::identity::extract_pubkey_from_did(merchant_did)?;
+        let merchant = Pubkey::new_from_array(pk_bytes);
+
+        // Derive channel PDA
+        let (channel_pda, _) = pda::derive_channel_pda(
+            &self.mb_program_id,
+            &self.mb_buyer_keypair.pubkey(),
+            &merchant,
+        );
+
+        // Check if channel exists on-chain
+        let account = self.mb_rpc.get_account(&channel_pda).ok()?;
+        let channel = deserialize_channel(&account.data).ok()?;
+
+        // Check spending cap remaining
+        let remaining = channel.spending_cap.saturating_sub(channel.settled_amount);
+        if remaining < amount {
+            tracing::warn!(
+                "MagicBlock channel {} spending cap exceeded: cap={}, settled={}, remaining={}, need={}",
+                channel_pda, channel.spending_cap, channel.settled_amount, remaining, amount
+            );
+            return None;
+        }
+
+        // Determine next seq from stored vouchers
+        let channel_id = channel_pda.to_bytes();
+        let next_seq = self.mb_voucher_store
+            .get_vouchers_for_channel(&channel_id)
+            .ok()
+            .map(|v| v.last().map(|last| last.seq + 1).unwrap_or(1))
+            .unwrap_or(1);
+
+        // Sign voucher: SHA256(channel_id || seq || amount)
+        let kp_bytes = self.mb_buyer_keypair.to_bytes();
+        let (msg_hash, sig) = signing::sign_voucher(
+            &channel_id,
+            next_seq,
+            amount,
+            &kp_bytes,
+        );
+
+        // Store voucher
+        let voucher = StoredVoucher {
+            channel_id,
+            merchant: merchant.to_bytes(),
+            seq: next_seq,
+            amount,
+            buyer_sig: sig,
+        };
+        if let Err(e) = self.mb_voucher_store.store_voucher(&voucher) {
+            tracing::error!("Failed to store voucher: {}", e);
+            return None;
+        }
+
+        tracing::info!(
+            "MagicBlock voucher signed: channel={}, seq={}, amount={}",
+            channel_pda, next_seq, amount
+        );
+
+        Some(PaymentProof::Voucher {
+            channel: channel_pda.to_string(),
+            seq: next_seq,
+            amount,
+            msg_hash: bs58::encode(msg_hash).into_string(),
+            signature: bs58::encode(sig).into_string(),
+        })
+    }
+
+    /// Unified payment execution: try MagicBlock channel first, then session key.
+    /// If `preferred_method` is set, only use that method.
+    async fn execute_payment_auto(
+        &self,
+        payment: &PaymentRequest,
+        session: &Option<SessionKeypair>,
+        spl_params: Option<&SplPaymentParams>,
+        preferred_method: Option<&str>,
+    ) -> Result<PaymentProof, String> {
+        match preferred_method {
+            Some("magicblock") => {
+                // User chose MagicBlock — only use that path
+                match self.try_mb_voucher_payment(&payment.merchant_did, payment.amount) {
+                    Some(proof) => Ok(proof),
+                    None => Err("MagicBlock channel not available for this merchant".to_string()),
+                }
+            }
+            Some("session_key") => {
+                // User chose session key — only use that path
+                match execute_payment(&self.solana_client, payment, session, spl_params).await {
+                    Ok(tx_sig) => Ok(PaymentProof::TxSignature(tx_sig)),
+                    Err(e) => Err(e),
+                }
+            }
+            Some("relayer") => {
+                Err("Relayer payment method not yet implemented".to_string())
+            }
+            _ => {
+                // No preference (auto-approve) or unknown: try MagicBlock first, then session key
+                if let Some(proof) = self.try_mb_voucher_payment(&payment.merchant_did, payment.amount) {
+                    return Ok(proof);
+                }
+                match execute_payment(&self.solana_client, payment, session, spl_params).await {
+                    Ok(tx_sig) => Ok(PaymentProof::TxSignature(tx_sig)),
+                    Err(e) => Err(e),
+                }
+            }
+        }
+    }
+
+    /// Create a local ephemeral session key for embedding in a payment-auth-request.
+    /// The phone will register this key on-chain, fund it, and authorize the payment.
+    fn create_session_key_for_request(
+        &self,
+        payment: &PaymentRequest,
+        spl_params: &Option<SplPaymentParams>,
+    ) -> Option<ignite_pay_core::didcomm::NewSessionKeyRequest> {
+        let client = self.solana_client.as_ref()?;
+
+        // Determine session parameters based on token type
+        let (target_program, scopes, token_mint) = if payment.token == "SOL" || payment.token == "sol" || payment.token == "unknown" {
+            (ignite_pay_solana::solana_sdk::system_program::id(), vec!["sol:transfer".to_string()], None)
+        } else {
+            let mint = spl_params.as_ref().map(|p| p.mint.to_string());
+            (
+                "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".parse().unwrap(),
+                vec!["spl:transfer".to_string()],
+                mint,
+            )
+        };
+
+        let spending_limit = payment.amount.saturating_mul(10); // 10x payment as buffer
+        let duration_secs = 3600; // 1 hour default
+
+        let session = client.session_manager().create_session(
+            &self.default_owner,
+            &target_program,
+            scopes.clone(),
+            spending_limit,
+            duration_secs,
+        ).ok()?;
+
+        Some(ignite_pay_core::didcomm::NewSessionKeyRequest {
+            session_key_pubkey: session.keypair.pubkey().to_string(),
+            spending_limit,
+            duration_secs,
+            scopes,
+            token_mint: token_mint.clone(),
+            suggested_sol_funding: payment.amount + 10_000_000, // payment + 0.01 SOL for gas
+            suggested_token_funding: if token_mint.is_some() { Some(payment.amount) } else { None },
+        })
+    }
+
+    /// Determine which payment methods are available for a given merchant.
+    fn get_available_payment_methods(&self, merchant_did: &str) -> Vec<ignite_pay_core::didcomm::PaymentMethod> {
+        let mut methods = Vec::new();
+
+        // Session key is always available (MCP can create one if needed)
+        methods.push(ignite_pay_core::didcomm::PaymentMethod::SessionKey);
+
+        // Check if MagicBlock channel exists with this merchant
+        if self.has_mb_channel(merchant_did) {
+            methods.push(ignite_pay_core::didcomm::PaymentMethod::MagicBlock);
+        }
+
+        methods
+    }
+
+    /// Check whether a MagicBlock payment channel exists with a merchant.
+    fn has_mb_channel(&self, merchant_did: &str) -> bool {
+        let pk_bytes = match ignite_pay_core::identity::extract_pubkey_from_did(merchant_did) {
+            Some(b) => b,
+            None => return false,
+        };
+        let merchant = Pubkey::new_from_array(pk_bytes);
+        let (channel_pda, _) = pda::derive_channel_pda(
+            &self.mb_program_id,
+            &self.mb_buyer_keypair.pubkey(),
+            &merchant,
+        );
+        self.mb_rpc.get_account(&channel_pda).is_ok()
     }
 }
 
@@ -512,12 +731,14 @@ impl IgnitePayMcpServer {
             }
             Ok(RiskControlDecision::AutoApproved { max_amount: _, label }) => {
                 let session = self.get_active_session();
-                return match execute_payment(&self.solana_client, &payment, &session, spl_params.as_ref()).await {
-                    Ok(tx_sig) => {
+                return match self.execute_payment_auto(&payment, &session, spl_params.as_ref(), None).await {
+                    Ok(proof) => {
                         let _ = self
                             .payments
                             .update_status(&payment_id, &PaymentStatus::Executed);
-                        let _ = self.payments.set_tx_signature(&payment_id, &tx_sig);
+                        if let PaymentProof::TxSignature(tx_sig) = &proof {
+                            let _ = self.payments.set_tx_signature(&payment_id, tx_sig);
+                        }
                         let _ = self.audit.record_payment_event(
                             &payment_id,
                             "payment_executed",
@@ -526,8 +747,8 @@ impl IgnitePayMcpServer {
                         );
                         let label_info = label.map(|l| format!(" ({})", l)).unwrap_or_default();
                         format!(
-                            "Auto-approved payment (whitelisted{}). Tx: {}\nAmount: {} {}\nTo: {}",
-                            label_info, tx_sig, amount, token, recipient
+                            "Auto-approved payment (whitelisted{}). {}\nAmount: {} {}\nTo: {}",
+                            label_info, proof, amount, token, recipient
                         )
                     }
                     Err(e) => {
@@ -549,16 +770,18 @@ impl IgnitePayMcpServer {
         // 4. Check auto-approve (global threshold)
         if self.auto_approve_max > 0 && amount <= self.auto_approve_max {
             let session = self.get_active_session();
-            match execute_payment(&self.solana_client, &payment, &session, spl_params.as_ref()).await {
-                Ok(tx_sig) => {
+            match self.execute_payment_auto(&payment, &session, spl_params.as_ref(), None).await {
+                Ok(proof) => {
                     if let Err(e) = self
                         .payments
                         .update_status(&payment_id, &PaymentStatus::Executed)
                     {
                         return format!("Error: Failed to update status: {}", e);
                     }
-                    if let Err(e) = self.payments.set_tx_signature(&payment_id, &tx_sig) {
-                        return format!("Error: Failed to set tx signature: {}", e);
+                    if let PaymentProof::TxSignature(tx_sig) = &proof {
+                        if let Err(e) = self.payments.set_tx_signature(&payment_id, tx_sig) {
+                            return format!("Error: Failed to set tx signature: {}", e);
+                        }
                     }
                     let _ = self.audit.record_payment_event(
                         &payment_id,
@@ -566,7 +789,7 @@ impl IgnitePayMcpServer {
                         amount,
                         &merchant_did,
                     );
-                    return format!("Auto-approved payment (under threshold). Tx: {}", tx_sig);
+                    return format!("Auto-approved payment (under threshold). {}", proof);
                 }
                 Err(e) => {
                     let _ = self
@@ -590,9 +813,34 @@ impl IgnitePayMcpServer {
             }
         };
 
+        // If no active session key exists, create one locally and include it
+        // in the auth request so the phone registers + funds + authorizes in one step.
+        let new_session_key = if self.get_active_session().is_none() {
+            match self.create_session_key_for_request(&payment, &spl_params) {
+                Some(sk) => {
+                    tracing::info!(
+                        "No active session key — created new ephemeral key {} for payment {}",
+                        sk.session_key_pubkey, payment_id
+                    );
+                    Some(sk)
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+
+        // Determine available payment methods for phone to display
+        let available_methods = self.get_available_payment_methods(&merchant_did);
+        tracing::info!(
+            "Available payment methods for {}: {:?}",
+            merchant_did,
+            available_methods.iter().map(|m| m.as_str()).collect::<Vec<_>>()
+        );
+
         match self
             .mediator
-            .send_auth_request(&phone_did, &payment)
+            .send_auth_request(&phone_did, &payment, new_session_key.as_ref(), Some(&available_methods))
             .await
         {
             Ok(_) => {}
@@ -612,6 +860,7 @@ impl IgnitePayMcpServer {
                         list_label: None,
                         list_max_amount: None,
                         token_mint: None,
+                        payment_method: None,
                     },
                 );
                 return format!("Error: Failed to send auth request: {}", e);
@@ -626,12 +875,18 @@ impl IgnitePayMcpServer {
                 let session = self
                     .get_session_from_auth_response(&resp)
                     .or_else(|| self.get_active_session());
-                match execute_payment(&self.solana_client, &payment, &session, spl_params.as_ref()).await {
-                    Ok(tx_sig) => {
+                let chosen_method = resp.payment_method.as_deref();
+                if let Some(method) = chosen_method {
+                    tracing::info!("User chose payment method: {}", method);
+                }
+                match self.execute_payment_auto(&payment, &session, spl_params.as_ref(), chosen_method).await {
+                    Ok(proof) => {
                         let _ = self
                             .payments
                             .update_status(&payment_id, &PaymentStatus::Executed);
-                        let _ = self.payments.set_tx_signature(&payment_id, &tx_sig);
+                        if let PaymentProof::TxSignature(tx_sig) = &proof {
+                            let _ = self.payments.set_tx_signature(&payment_id, tx_sig);
+                        }
 
                         let _ = self.audit.record_payment_event(
                             &payment_id,
@@ -652,9 +907,12 @@ impl IgnitePayMcpServer {
                             .await;
                         }
 
+                        let method_info = chosen_method
+                            .map(|m| format!(" via {}", m))
+                            .unwrap_or_default();
                         format!(
-                            "Payment authorized and executed. Tx: {}\nAmount: {} {}\nTo: {}",
-                            tx_sig, amount, token, recipient
+                            "Payment authorized and executed{}. {}\nAmount: {} {}\nTo: {}",
+                            method_info, proof, amount, token, recipient
                         )
                     }
                     Err(e) => {
@@ -693,6 +951,7 @@ impl IgnitePayMcpServer {
                         list_label: None,
                         list_max_amount: None,
                         token_mint: None,
+                        payment_method: None,
                     },
                 );
                 let _ = self
@@ -1937,10 +2196,15 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // V2.0: Initialize Solana DID bridge if DID program is configured
-    let solana_bridge = if !config.solana.did_program_id.is_empty() {
+    let solana_bridge = if !config.solana.did_program_id.is_empty()
+        && !config.solana.photon_url.is_empty()
+        && !config.solana.address_tree.is_empty()
+    {
         match SolanaDidBridge::new(
             &config.solana.rpc_url,
             &config.solana.did_program_id,
+            &config.solana.photon_url,
+            &config.solana.address_tree,
         ) {
             Ok(bridge) => {
                 tracing::info!("Solana DID bridge initialized for on-chain verification");
@@ -1951,6 +2215,11 @@ async fn main() -> anyhow::Result<()> {
                 None
             }
         }
+    } else if !config.solana.did_program_id.is_empty() {
+        tracing::warn!(
+            "Solana DID program configured but photon_url or address_tree missing — on-chain DID verification disabled"
+        );
+        None
     } else {
         None
     };
@@ -1995,8 +2264,9 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Connect to mediator (spawns background task with pending auth handling)
+    let (qr_payment_tx, mut qr_payment_rx) = tokio::sync::mpsc::unbounded_channel::<QrPaymentCommand>();
     mediator
-        .connect(Arc::clone(&pending), None)
+        .connect(Arc::clone(&pending), None, Some(qr_payment_tx))
         .await?;
     tracing::info!("Connecting to mediator at {}...", config.mediator.ws_url);
 
@@ -2084,6 +2354,120 @@ async fn main() -> anyhow::Result<()> {
         mb_buyer_keypair,
         mb_voucher_store,
     };
+
+    // Spawn QR payment handler background task
+    // When the phone sends a qr-payment-request (user scanned merchant QR),
+    // the mediator forwards it here via the mpsc channel.
+    {
+        let server = server.clone();
+        tokio::spawn(async move {
+            while let Some(cmd) = qr_payment_rx.recv().await {
+                tracing::info!(
+                    "Processing QR payment: order={} merchant={} amount={} method={}",
+                    cmd.order_id, cmd.merchant_did, cmd.amount, cmd.payment_method
+                );
+
+                // Create a payment record for tracking
+                let payment_id = uuid::Uuid::new_v4().to_string();
+                let payment = PaymentRequest {
+                    id: payment_id.clone(),
+                    merchant_did: cmd.merchant_did.clone(),
+                    amount: cmd.amount,
+                    token: cmd.token.clone(),
+                    network: "solana".to_string(),
+                    recipient: String::new(), // resolved from merchant DID
+                    description: cmd.description.clone(),
+                    status: PaymentStatus::PendingAuth,
+                    created_at: chrono::Utc::now(),
+                    tx_signature: None,
+                };
+                let _ = server.payments.save_payment(&payment);
+
+                // Execute payment via the chosen method
+                let session = server.get_active_session();
+                let spl_params: Option<SplPaymentParams> = if cmd.token != "SOL" && cmd.token != "sol" {
+                    // Resolve SPL token mint
+                    match resolve_mint(&cmd.token, "solana") {
+                        Some(mint) => Some(SplPaymentParams {
+                            mint,
+                            source_ata_override: None,
+                            dest_ata_override: None,
+                        }),
+                        None => None,
+                    }
+                } else {
+                    None
+                };
+
+                let result = server.execute_payment_auto(
+                    &payment,
+                    &session,
+                    spl_params.as_ref(),
+                    Some(cmd.payment_method.as_str()),
+                ).await;
+
+                let (success, proof_str, error_msg) = match result {
+                    Ok(proof) => {
+                        let _ = server.payments.update_status(&payment_id, &PaymentStatus::Executed);
+                        if let PaymentProof::TxSignature(tx_sig) = &proof {
+                            let _ = server.payments.set_tx_signature(&payment_id, tx_sig);
+                        }
+                        let _ = server.audit.record_payment_event(
+                            &payment_id,
+                            "qr_payment_executed",
+                            cmd.amount,
+                            &cmd.merchant_did,
+                        );
+                        (true, format!("{}", proof), None)
+                    }
+                    Err(e) => {
+                        let _ = server.payments.update_status(&payment_id, &PaymentStatus::Rejected);
+                        tracing::error!("QR payment execution failed: {}", e);
+                        (false, String::new(), Some(e))
+                    }
+                };
+
+                // Send qr-payment-response back to phone
+                let response = ignite_pay_core::didcomm::build_qr_payment_response(
+                    &server.mediator.our_did(),
+                    &cmd.phone_did,
+                    &cmd.order_id,
+                    success,
+                    &proof_str,
+                    &cmd.payment_method,
+                    error_msg.as_deref(),
+                );
+
+                // Encrypt and send via mediator
+                match server.mediator.send_to_phone(&response, &cmd.phone_did).await {
+                    Ok(_) => tracing::info!("QR payment response sent to phone for order {}", cmd.order_id),
+                    Err(e) => tracing::error!("Failed to send QR payment response: {}", e),
+                }
+
+                // Notify merchant MCP so their app can announce the payment
+                if success && !cmd.merchant_mediator_url.is_empty() {
+                    let notify = ignite_pay_core::didcomm::build_qr_payment_notify(
+                        &server.mediator.our_did(),
+                        &cmd.merchant_did,
+                        &cmd.order_id,
+                        cmd.amount,
+                        &cmd.payment_method,
+                        &proof_str,
+                    );
+                    match server.mediator.send_to_mediator(
+                        &notify, &cmd.merchant_did, &cmd.merchant_mediator_url,
+                    ).await {
+                        Ok(_) => tracing::info!(
+                            "QR payment notify sent to merchant MCP for order {}", cmd.order_id
+                        ),
+                        Err(e) => tracing::warn!(
+                            "Failed to notify merchant MCP (non-fatal): {}", e
+                        ),
+                    }
+                }
+            }
+        });
+    }
 
     tracing::info!("Starting MCP server on stdio...");
     // Spawn the MCP stdio server in a background task.

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ignite_pay_app/main.dart';
+import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:provider/provider.dart';
 
 void main() {
   // The dashboard has an animated ConnectionDot that never settles,
@@ -13,7 +15,15 @@ void main() {
       tester.view.resetDevicePixelRatio();
     });
 
-    await tester.pumpWidget(const MaterialApp(home: IgnitePayDashboard()));
+    // Reset the singleton so it is not in a disposed state from a prior test.
+    DidcommService.resetInstance();
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider(
+        create: (_) => DidcommService(),
+        child: const MaterialApp(home: IgnitePayDashboard()),
+      ),
+    );
     await tester.pump(const Duration(milliseconds: 100));
   }
 
@@ -63,40 +73,25 @@ void main() {
       expect(find.text('RECENT ACTIVITY'), findsOneWidget);
     });
 
-    testWidgets('renders 4 activity items', (tester) async {
+    testWidgets('renders empty activity state when no messages',
+        (tester) async {
       await _pumpDashboard(tester);
-      expect(find.text('ShopX Marketplace'), findsOneWidget);
-      expect(find.text('DeFi Staking'), findsOneWidget);
-      expect(find.text('Unknown Merchant'), findsOneWidget);
-      expect(find.text('NFT Mint'), findsOneWidget);
+      expect(find.text('No recent activity'), findsOneWidget);
     });
 
-    testWidgets('renders activity amounts', (tester) async {
+    testWidgets('renders Scan nav card', (tester) async {
       await _pumpDashboard(tester);
-      expect(find.text('0.12 SOL'), findsOneWidget);
-      expect(find.text('0.30 SOL'), findsOneWidget);
-      expect(find.text('2.50 SOL'), findsOneWidget);
-      expect(find.text('0.05 SOL'), findsOneWidget);
+      expect(find.text('Scan'), findsOneWidget);
     });
 
-    testWidgets('renders status badges', (tester) async {
+    testWidgets('renders Channels nav card', (tester) async {
       await _pumpDashboard(tester);
-      expect(find.text('Success'), findsWidgets);
-      expect(find.text('Pending'), findsOneWidget);
-      expect(find.text('Intercepted'), findsOneWidget);
+      expect(find.text('Channels'), findsOneWidget);
     });
 
     testWidgets('renders Authorize Payment button', (tester) async {
       await _pumpDashboard(tester);
       expect(find.text('Authorize Payment'), findsOneWidget);
-    });
-
-    testWidgets('renders activity timestamps', (tester) async {
-      await _pumpDashboard(tester);
-      expect(find.text('2m ago'), findsOneWidget);
-      expect(find.text('15m ago'), findsOneWidget);
-      expect(find.text('1h ago'), findsOneWidget);
-      expect(find.text('3h ago'), findsOneWidget);
     });
   });
 

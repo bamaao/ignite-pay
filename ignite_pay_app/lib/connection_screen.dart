@@ -3,7 +3,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/theme.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:ignite_pay_app/services/channel_service.dart';
 import 'package:ignite_pay_app/qr_scanner_screen.dart';
+import 'package:ignite_pay_app/qr_payment_screen.dart';
 import 'package:provider/provider.dart';
 
 // ---------------------------------------------------------------------------
@@ -130,8 +132,39 @@ class _ConnectionManagementScreenState
   }
 
   Future<void> _scanQr() async {
+    final didcomm = context.read<DidcommService>();
     final result = await showQrScanner(context);
-    if (result != null && mounted) {
+    if (result == null || !mounted) return;
+
+    if (result is PaymentQrData) {
+      // Navigated to payment confirmation screen
+      Navigator.of(context).push<dynamic>(
+        MaterialPageRoute(
+          builder: (_) => QrPaymentScreen(
+            paymentData: result,
+            storagePath: didcomm.storagePath,
+            onConfirmPayment: ({
+              required storagePath,
+              required channelId,
+              required hubEndpoint,
+              required amount,
+              required recipientPubkey,
+            }) async {
+              final channelSvc = ChannelService();
+              await channelSvc.refreshChannels(storagePath);
+              return channelSvc.channelPay(
+                storagePath: storagePath,
+                channelId: channelId,
+                hubEndpoint: hubEndpoint,
+                amount: amount,
+                recipientPubkey: recipientPubkey,
+              );
+            },
+          ),
+        ),
+      );
+    } else {
+      // Pairing result
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: kSuccess,
