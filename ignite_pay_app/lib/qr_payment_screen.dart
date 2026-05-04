@@ -1,13 +1,16 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart' as bridge;
-import 'services/channel_service.dart';
-import 'theme.dart';
+import 'package:ignite_pay_app/services/channel_service.dart';
+import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:ignite_pay_app/services/direct_payment_service.dart';
+import 'package:ignite_pay_app/theme.dart';
 
 /// QR Payment Confirmation Screen.
 ///
 /// Shown after scanning a merchant's payment QR code.
-/// Displays payment details and a confirm/cancel flow.
+/// Displays payment details, lets user select payment method, and confirms.
 class QrPaymentScreen extends StatefulWidget {
   final PaymentQrData paymentData;
   final String storagePath;
@@ -35,6 +38,51 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
   bool _isSuccess = false;
   String? _errorMessage;
   ChannelPaymentResult? _result;
+  String? _paymentProof;
+
+  /// Available payment methods for the user to choose from.
+  static const _paymentMethods = [
+    _PaymentMethodOption('session_key', 'Session Key', '链上直接转账', Icons.key),
+    _PaymentMethodOption('magicblock', 'MagicBlock', '链下 Voucher 支付', Icons.bolt),
+    _PaymentMethodOption('local_wallet', 'Local Wallet', '本地钱包直接转账', Icons.account_balance_wallet),
+  ];
+
+  String _selectedMethod = 'session_key';
+  StreamSubscription<QrPaymentResult>? _qrResultSub;
+  final _directPaySvc = DirectPaymentService();
+
+  @override
+  void initState() {
+    super.initState();
+    // If merchant provides MB pubkey, default to MagicBlock
+    if (widget.paymentData.merchantMbPubkey.isNotEmpty) {
+      _selectedMethod = 'magicblock';
+    }
+    // Listen for qr-payment-response from MCP
+    _qrResultSub = DidcommService().qrPaymentResults.listen(_onQrPaymentResult);
+  }
+
+  @override
+  void dispose() {
+    _qrResultSub?.cancel();
+    _directPaySvc.reset();
+    super.dispose();
+  }
+
+  void _onQrPaymentResult(QrPaymentResult result) {
+    if (result.orderId != widget.paymentData.orderId) return;
+    if (!mounted) return;
+
+    setState(() {
+      _isProcessing = false;
+      if (result.success) {
+        _isSuccess = true;
+        _paymentProof = result.paymentProof;
+      } else {
+        _errorMessage = result.error ?? 'Payment failed';
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -61,7 +109,7 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
                     ),
                   ),
                   const Spacer(),
-                  const SizedBox(width: 36), // Balance header
+                  const SizedBox(width: 36),
                 ],
               ),
               const SizedBox(height: 32),
@@ -89,8 +137,15 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
               ),
               const SizedBox(height: 24),
 
-              // Channel info card
-              _buildChannelCard(),
+              // Payment method selector
+              _buildPaymentMethodSelector(),
+
+              // Wallet connection UI (only for local_wallet method)
+              if (_selectedMethod == 'local_wallet') ...[
+                const SizedBox(height: 16),
+                _buildWalletConnectSection(),
+              ],
+
               const Spacer(),
 
               // Error message
@@ -111,7 +166,7 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
               ],
 
               // Success message
-              if (_isSuccess && _result != null) ...[
+              if (_isSuccess) ...[
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -119,11 +174,24 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: kSuccess.withValues(alpha: 0.3)),
                   ),
-                  child: Text(
-                    widget.paymentData.merchantMbPubkey.isNotEmpty
-                        ? 'MB Payment Success! Seq: ${_result!.sequence}'
-                        : 'Payment Success! Sequence: ${_result!.sequence}, Leaf: ${_result!.leafIndex}',
-                    style: GoogleFonts.inter(fontSize: 12, color: kSuccess),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '支付成功',
+                        style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w700, color: kSuccess),
+                      ),
+                      if (_paymentProof != null && _paymentProof!.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            _paymentProof!,
+                            style: GoogleFonts.jetBrainsMono(fontSize: 11, color: kSuccess),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -183,7 +251,7 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
                   width: double.infinity,
                   height: 48,
                   child: ElevatedButton(
-                    onPressed: () => Navigator.of(context).pop(_result),
+                    onPressed: () => Navigator.of(context).pop(_result ?? true),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: kSuccess,
                       foregroundColor: kBackground,
@@ -253,8 +321,7 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
     );
   }
 
-  Widget _buildChannelCard() {
-    final isMb = widget.paymentData.merchantMbPubkey.isNotEmpty;
+  Widget _buildPaymentMethodSelector() {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: glassDecoration(),
@@ -262,7 +329,7 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '支付通道',
+            '支付方式',
             style: GoogleFonts.inter(
               fontSize: 10,
               fontWeight: FontWeight.w700,
@@ -270,32 +337,180 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
               letterSpacing: 1.5,
             ),
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Icon(
-                isMb ? Icons.bolt : Icons.hub,
-                size: 14,
-                color: kNeonCyanDim,
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  isMb
-                      ? 'MB: ${_shortenDid(widget.paymentData.merchantMbPubkey)}'
-                      : 'Hub: ${widget.paymentData.hubEndpoint.replaceAll(RegExp(r'https?://'), '')}',
-                  style: GoogleFonts.inter(
-                    fontSize: 12,
-                    color: kTextSecondary,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
+          const SizedBox(height: 10),
+          ..._paymentMethods.map((method) => _buildMethodOption(method)),
         ],
       ),
     );
+  }
+
+  Widget _buildMethodOption(_PaymentMethodOption method) {
+    final isSelected = _selectedMethod == method.id;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        onTap: _isProcessing ? null : () => setState(() => _selectedMethod = method.id),
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: isSelected ? kNeonCyan.withValues(alpha: 0.1) : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected ? kNeonCyan : kGlassBorder,
+              width: isSelected ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(method.icon, size: 18, color: isSelected ? kNeonCyan : kTextSecondary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      method.label,
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: isSelected ? kNeonCyan : kTextPrimary,
+                      ),
+                    ),
+                    Text(
+                      method.subtitle,
+                      style: GoogleFonts.inter(fontSize: 11, color: kTextSecondary),
+                    ),
+                  ],
+                ),
+              ),
+              if (isSelected)
+                const Icon(Icons.check_circle, size: 18, color: kNeonCyan),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWalletConnectSection() {
+    return AnimatedBuilder(
+      animation: _directPaySvc,
+      builder: (context, _) {
+        final svc = _directPaySvc;
+
+        if (svc.isConnecting) {
+          // Waiting for wallet connect callback
+          return Container(
+            padding: const EdgeInsets.all(16),
+            decoration: glassDecoration(),
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: kNeonCyan),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  '等待钱包响应...',
+                  style: GoogleFonts.inter(fontSize: 13, color: kTextSecondary),
+                ),
+              ],
+            ),
+          );
+        }
+
+        if (svc.walletPubkey != null) {
+          // Connected
+          final shortAddr = _shortenAddress(svc.walletPubkey!);
+          return Container(
+            padding: const EdgeInsets.all(16),
+            decoration: glassDecoration(accentBorder: kSuccess.withValues(alpha: 0.3)),
+            child: Row(
+              children: [
+                const Icon(Icons.check_circle, size: 18, color: kSuccess),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        svc.walletType == 'phantom' ? 'Phantom' : 'Solflare',
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: kSuccess,
+                        ),
+                      ),
+                      Text(
+                        shortAddr,
+                        style: GoogleFonts.jetBrainsMono(fontSize: 11, color: kTextSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        // Not connected: show wallet selection buttons
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: glassDecoration(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '选择钱包连接',
+                style: GoogleFonts.inter(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: kTextTertiary,
+                  letterSpacing: 1.5,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: _WalletButton(
+                      label: 'Phantom',
+                      icon: Icons.account_balance_wallet,
+                      onTap: () => _connectWallet('phantom'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _WalletButton(
+                      label: 'Solflare',
+                      icon: Icons.account_balance_wallet_outlined,
+                      onTap: () => _connectWallet('solflare'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _connectWallet(String walletType) async {
+    try {
+      await _directPaySvc.connectWallet(walletType);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _errorMessage = 'Wallet connect failed: $e');
+      }
+    }
+  }
+
+  String _shortenAddress(String address) {
+    if (address.length <= 12) return address;
+    return '${address.substring(0, 4)}...${address.substring(address.length - 4)}';
   }
 
   String _shortenDid(String did) {
@@ -310,41 +525,31 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
     });
 
     try {
-      // MB payment path: sign voucher and send via DIDComm
-      if (widget.paymentData.merchantMbPubkey.isNotEmpty) {
+      if (_selectedMethod == 'local_wallet') {
+        await _onConfirmDirectPayment();
+        return;
+      }
+
+      if (_selectedMethod == 'magicblock' && widget.paymentData.merchantMbPubkey.isNotEmpty) {
+        // MB direct path: sign voucher locally and send to merchant
         await _onConfirmMbPayment();
         return;
       }
 
-      // Legacy Hub payment path
-      final channelSvc = ChannelService();
-      await channelSvc.refreshChannels(widget.storagePath);
-      final openCh = channelSvc.firstOpenChannel;
-      if (openCh == null) {
-        if (mounted) {
-          setState(() {
-            _isProcessing = false;
-            _errorMessage = 'No open payment channel. Please create one first.';
-          });
-        }
-        return;
-      }
-
-      final result = await widget.onConfirmPayment(
+      // MCP-mediated path: send qr-payment-request, wait for qr-payment-response
+      await bridge.sendQrPaymentRequest(
         storagePath: widget.storagePath,
-        channelId: openCh.channelId,
-        hubEndpoint: widget.paymentData.hubEndpoint,
-        amount: widget.paymentData.amount,
-        recipientPubkey: widget.paymentData.merchantDid,
+        merchantDid: widget.paymentData.merchantDid,
+        amount: BigInt.from(widget.paymentData.amount),
+        description: widget.paymentData.description,
+        orderId: widget.paymentData.orderId,
+        paymentMethod: _selectedMethod,
+        token: 'SOL',
+        merchantMediatorUrl: widget.paymentData.merchantMediatorUrl,
       );
 
-      if (mounted) {
-        setState(() {
-          _isProcessing = false;
-          _isSuccess = true;
-          _result = result;
-        });
-      }
+      // Response will arrive via DidcommService.qrPaymentResults stream
+      // _onQrPaymentResult will update the UI when it arrives
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -355,14 +560,34 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
     }
   }
 
+  Future<void> _onConfirmDirectPayment() async {
+    const rpcUrl = String.fromEnvironment('SOLANA_RPC_URL', defaultValue: 'https://api.devnet.solana.com');
+
+    final result = await _directPaySvc.executePayment(
+      rpcUrl: rpcUrl,
+      merchantDid: widget.paymentData.merchantDid,
+      amountLamports: widget.paymentData.amount,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _isProcessing = false;
+      if (result.success) {
+        _isSuccess = true;
+        _paymentProof = result.signature;
+      } else {
+        _errorMessage = result.error ?? 'Direct payment failed';
+      }
+    });
+  }
+
   Future<void> _onConfirmMbPayment() async {
     const mbProgramId = String.fromEnvironment('MB_PROGRAM_ID', defaultValue: '');
 
     try {
-      // Ensure buyer MB keypair exists
       await bridge.mbGetBuyerPubkey(storagePath: widget.storagePath);
 
-      // Sign the voucher
       final voucher = await bridge.mbSignVoucher(
         storagePath: widget.storagePath,
         programId: mbProgramId,
@@ -371,7 +596,6 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
         amount: BigInt.from(widget.paymentData.amount),
       );
 
-      // Send the voucher via DIDComm
       await bridge.mbSendVoucher(
         storagePath: widget.storagePath,
         merchantDid: widget.paymentData.merchantDid,
@@ -403,5 +627,56 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
         });
       }
     }
+  }
+}
+
+class _PaymentMethodOption {
+  final String id;
+  final String label;
+  final String subtitle;
+  final IconData icon;
+  const _PaymentMethodOption(this.id, this.label, this.subtitle, this.icon);
+}
+
+/// Wallet selection button widget.
+class _WalletButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _WalletButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
+        decoration: BoxDecoration(
+          color: kSurfaceMid.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: kGlassBorder),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 16, color: kNeonCyan),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: kTextPrimary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

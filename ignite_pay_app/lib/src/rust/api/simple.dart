@@ -6,6 +6,7 @@
 import '../frb_generated.dart';
 import 'channel.dart';
 import 'channel_store.dart';
+import 'mb_voucher.dart';
 import 'notification.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'session.dart';
@@ -355,6 +356,85 @@ Future<void> sendCreateChannelRequest({
   treeDepth: treeDepth,
 );
 
+/// Get or generate the buyer MB keypair, return base58 pubkey.
+Future<String> mbGetBuyerPubkey({required String storagePath}) => RustLib
+    .instance
+    .api
+    .crateApiSimpleMbGetBuyerPubkey(storagePath: storagePath);
+
+/// Sign an MB voucher for payment.
+Future<MbVoucherResult> mbSignVoucher({
+  required String storagePath,
+  required String programId,
+  required String merchantMbPubkey,
+  required BigInt seq,
+  required BigInt amount,
+}) => RustLib.instance.api.crateApiSimpleMbSignVoucher(
+  storagePath: storagePath,
+  programId: programId,
+  merchantMbPubkey: merchantMbPubkey,
+  seq: seq,
+  amount: amount,
+);
+
+/// Send a QR payment request to the MCP server.
+/// Called when user scans a merchant QR code, selects payment method, and confirms.
+/// The MCP executes the payment and returns a qr-payment-response.
+Future<void> sendQrPaymentRequest({
+  required String storagePath,
+  required String merchantDid,
+  required BigInt amount,
+  required String description,
+  required String orderId,
+  required String paymentMethod,
+  required String token,
+  required String merchantMediatorUrl,
+}) => RustLib.instance.api.crateApiSimpleSendQrPaymentRequest(
+  storagePath: storagePath,
+  merchantDid: merchantDid,
+  amount: amount,
+  description: description,
+  orderId: orderId,
+  paymentMethod: paymentMethod,
+  token: token,
+  merchantMediatorUrl: merchantMediatorUrl,
+);
+
+/// Send a signed MB voucher to the merchant via DIDComm.
+Future<void> mbSendVoucher({
+  required String storagePath,
+  required String merchantDid,
+  required String orderId,
+  required String channelId,
+  required BigInt seq,
+  required BigInt amount,
+  required String buyerPubkey,
+  required String buyerSig,
+}) => RustLib.instance.api.crateApiSimpleMbSendVoucher(
+  storagePath: storagePath,
+  merchantDid: merchantDid,
+  orderId: orderId,
+  channelId: channelId,
+  seq: seq,
+  amount: amount,
+  buyerPubkey: buyerPubkey,
+  buyerSig: buyerSig,
+);
+
+/// Build an unsigned SOL transfer transaction for direct wallet signing.
+/// Bridge wrapper around `session::build_unsigned_transfer_tx`.
+Future<String> buildUnsignedTransferTx({
+  required String rpcUrl,
+  required String walletPubkeyB58,
+  required String merchantDid,
+  required BigInt amountLamports,
+}) => RustLib.instance.api.crateApiSimpleBuildUnsignedTransferTx(
+  rpcUrl: rpcUrl,
+  walletPubkeyB58: walletPubkeyB58,
+  merchantDid: merchantDid,
+  amountLamports: amountLamports,
+);
+
 /// Auth grant returned from payment signing.
 class AuthGrant {
   final String merchantDid;
@@ -499,81 +579,3 @@ class OobInvitationData {
           mediatorWsUrl == other.mediatorWsUrl &&
           label == other.label;
 }
-
-/// Result of signing an MB voucher.
-class MbVoucherResult {
-  final String channelId;
-  final BigInt seq;
-  final BigInt amount;
-  final String buyerPubkey;
-  final String buyerSig;
-
-  const MbVoucherResult({
-    required this.channelId,
-    required this.seq,
-    required this.amount,
-    required this.buyerPubkey,
-    required this.buyerSig,
-  });
-
-  @override
-  int get hashCode =>
-      channelId.hashCode ^
-      seq.hashCode ^
-      amount.hashCode ^
-      buyerPubkey.hashCode ^
-      buyerSig.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is MbVoucherResult &&
-          runtimeType == other.runtimeType &&
-          channelId == other.channelId &&
-          seq == other.seq &&
-          amount == other.amount &&
-          buyerPubkey == other.buyerPubkey &&
-          buyerSig == other.buyerSig;
-}
-
-/// Get or generate the buyer MB keypair, return base58 pubkey.
-Future<String> mbGetBuyerPubkey({required String storagePath}) => RustLib
-    .instance
-    .api
-    .crateApiSimpleMbGetBuyerPubkey(storagePath: storagePath);
-
-/// Sign an MB voucher for payment.
-Future<MbVoucherResult> mbSignVoucher({
-  required String storagePath,
-  required String programId,
-  required String merchantMbPubkey,
-  required BigInt seq,
-  required BigInt amount,
-}) => RustLib.instance.api.crateApiSimpleMbSignVoucher(
-  storagePath: storagePath,
-  programId: programId,
-  merchantMbPubkey: merchantMbPubkey,
-  seq: seq,
-  amount: amount,
-);
-
-/// Send a signed MB voucher to the merchant via DIDComm.
-Future<void> mbSendVoucher({
-  required String storagePath,
-  required String merchantDid,
-  required String orderId,
-  required String channelId,
-  required BigInt seq,
-  required BigInt amount,
-  required String buyerPubkey,
-  required String buyerSig,
-}) => RustLib.instance.api.crateApiSimpleMbSendVoucher(
-  storagePath: storagePath,
-  merchantDid: merchantDid,
-  orderId: orderId,
-  channelId: channelId,
-  seq: seq,
-  amount: amount,
-  buyerPubkey: buyerPubkey,
-  buyerSig: buyerSig,
-);

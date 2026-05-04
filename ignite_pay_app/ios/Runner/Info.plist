@@ -65,6 +65,19 @@
 	</array>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Ignite Pay uses Face ID to unlock the app securely.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>com.ignite.pay</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>ignitepay</string>
+			</array>
+		</dict>
+	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

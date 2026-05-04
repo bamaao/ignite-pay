@@ -39,6 +39,30 @@ class WalletDeepLinkService {
         '&cluster=devnet';
   }
 
+  /// Build a Phantom connect deep link URL.
+  String buildPhantomConnectUrl({
+    required String redirectScheme,
+    required String redirectPath,
+  }) {
+    final redirect = Uri.encodeFull('$redirectScheme://$redirectPath');
+    return 'https://phantom.app/ul/v1/connect'
+        '?dapp_encryption_public_key=placeholder'
+        '&redirect_link=$redirect'
+        '&cluster=devnet';
+  }
+
+  /// Build a Solflare connect deep link URL.
+  String buildSolflareConnectUrl({
+    required String redirectScheme,
+    required String redirectPath,
+  }) {
+    final redirect = Uri.encodeFull('$redirectScheme://$redirectPath');
+    return 'solflare://v1/connect'
+        '?dapp_encryption_public_key=placeholder'
+        '&redirect_link=$redirect'
+        '&cluster=devnet';
+  }
+
   /// Open a deep link URL in the wallet app.
   Future<bool> openWalletUrl(String url) async {
     final uri = Uri.parse(url);

@@ -937,3 +937,100 @@ pub fn load_merchant_policy(
         None => Ok(None),
     }
 }
+
+// ── Direct Wallet Payment: Build Unsigned SOL Transfer ──────────────────
+
+/// Build an unsigned SOL transfer transaction for direct wallet signing.
+///
+/// Constructs a legacy Solana transaction with a SystemProgram Transfer instruction.
+/// The first signature slot is filled with 64 zero bytes (placeholder) so that
+/// the receiving wallet can replace it with the real signature.
+///
+/// Returns the base58-encoded unsigned transaction bytes.
+pub async fn build_unsigned_transfer_tx(
+    rpc_url: String,
+    wallet_pubkey_b58: String,
+    merchant_did: String,
+    amount_lamports: u64,
+) -> Result<String> {
+    // 1. Extract merchant Solana address from DID
+    let merchant_pubkey = ignite_pay_core::identity::extract_pubkey_from_did(&merchant_did)
+        .ok_or_else(|| anyhow::anyhow!("Cannot extract Solana pubkey from merchant DID: {}", merchant_did))?;
+
+    // 2. Decode wallet pubkey
+    let wallet_pubkey = bs58::decode(&wallet_pubkey_b58)
+        .into_vec()
+        .map_err(|_| anyhow::anyhow!("Invalid wallet pubkey base58"))?;
+    if wallet_pubkey.len() != 32 {
+        return Err(anyhow::anyhow!("Wallet pubkey must be 32 bytes"));
+    }
+    let wallet_pubkey_arr: [u8; 32] = wallet_pubkey.try_into().unwrap();
+
+    // 3. Fetch recent blockhash
+    let client = reqwest::Client::new();
+    let blockhash = get_recent_blockhash(&client, &rpc_url).await?;
+    let blockhash_bytes = bs58::decode(&blockhash).into_vec()?;
+    if blockhash_bytes.len() != 32 {
+        return Err(anyhow::anyhow!("Invalid blockhash"));
+    }
+    let blockhash_arr: [u8; 32] = blockhash_bytes.try_into().unwrap();
+
+    // 4. System program address
+    let system_program: [u8; 32] = [
+        0x06, 0x9b, 0x88, 0x64, 0xd1, 0x6a, 0xed, 0x71, 0x48, 0xb5, 0xd0, 0x40, 0xb1, 0x3e, 0xa0,
+        0x17, 0x42, 0xaf, 0x28, 0x37, 0xa0, 0xc8, 0x72, 0x21, 0x53, 0x25, 0x04, 0xb2, 0x5d, 0x2d,
+        0x5e, 0x06,
+    ];
+
+    // Account ordering:
+    // 0: wallet (signer, writable)
+    // 1: merchant (writable, non-signer)
+    // 2: system_program (readonly, non-signer)
+    let account_keys: Vec<[u8; 32]> = vec![
+        wallet_pubkey_arr,
+        merchant_pubkey,
+        system_program,
+    ];
+
+    // Build message
+    let mut message = Vec::new();
+    message.push(1); // num_required_signatures = 1 (wallet)
+    message.push(0); // num_readonly_signed = 0
+    message.push(1); // num_readonly_unsigned = 1 (system_program)
+
+    // Account keys compact-array
+    compact_u64_encode(&mut message, account_keys.len() as u64);
+    for key in &account_keys {
+        message.extend_from_slice(key);
+    }
+
+    // Recent blockhash
+    message.extend_from_slice(&blockhash_arr);
+
+    // Instructions compact-array (1 instruction)
+    compact_u64_encode(&mut message, 1);
+
+    // Instruction 0: SystemProgram Transfer
+    // program_id_index = 2 (system_program)
+    message.push(2);
+
+    // Account indices: [wallet(0), merchant(1)]
+    let ix_accounts: Vec<u8> = vec![0, 1];
+    compact_u64_encode(&mut message, ix_accounts.len() as u64);
+    message.extend_from_slice(&ix_accounts);
+
+    // Transfer instruction data: 4-byte LE discriminant (0) + 8-byte LE amount = 12 bytes
+    let mut ix_data = Vec::with_capacity(12);
+    ix_data.extend_from_slice(&0u32.to_le_bytes()); // Transfer discriminant
+    ix_data.extend_from_slice(&amount_lamports.to_le_bytes());
+    compact_u64_encode(&mut message, ix_data.len() as u64);
+    message.extend_from_slice(&ix_data);
+
+    // Build transaction: placeholder signature + message
+    let mut tx = Vec::new();
+    compact_u64_encode(&mut tx, 1); // 1 signature
+    tx.extend_from_slice(&[0u8; 64]); // placeholder signature
+    tx.extend_from_slice(&message);
+
+    Ok(bs58::encode(&tx).into_string())
+}

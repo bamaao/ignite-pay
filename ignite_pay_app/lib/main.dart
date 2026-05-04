@@ -12,8 +12,12 @@ import 'package:ignite_pay_app/messages_screen.dart';
 import 'package:ignite_pay_app/settings_screen.dart';
 import 'package:ignite_pay_app/notification_screen.dart';
 import 'package:ignite_pay_app/channel_topology_screen.dart';
+import 'package:ignite_pay_app/qr_scanner_screen.dart';
+import 'package:ignite_pay_app/qr_payment_screen.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:ignite_pay_app/services/channel_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
+import 'package:ignite_pay_app/services/direct_payment_service.dart';
 import 'package:ignite_pay_app/onboarding_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:app_links/app_links.dart';
@@ -373,17 +377,39 @@ class _MainNavigatorState extends State<_MainNavigator> {
   }
 
   void _handleDeepLink(Uri uri) {
-    if (uri.scheme == 'ignitepay' && uri.host == 'onchain') {
-      final signature = uri.queryParameters['signature'];
-      if (signature != null) {
-        debugPrint('Deep link callback: signature=$signature');
-        final svc = SessionKeyService();
-        svc.completeRegistration(signature).then((session_info) {
-          debugPrint('Session key registered: ${session_info.ephemeralPubkey}');
-        }).catchError((e) {
-          debugPrint('Deep link registration failed: $e');
-        });
-      }
+    if (uri.scheme != 'ignitepay') return;
+
+    switch (uri.host) {
+      case 'onchain':
+        // Existing session key registration callback
+        final signature = uri.queryParameters['signature'];
+        if (signature != null) {
+          debugPrint('Deep link callback: signature=$signature');
+          final svc = SessionKeyService();
+          svc.completeRegistration(signature).then((session_info) {
+            debugPrint('Session key registered: ${session_info.ephemeralPubkey}');
+          }).catchError((e) {
+            debugPrint('Deep link registration failed: $e');
+          });
+        }
+      case 'wallet_connect':
+        // Direct wallet payment: connect callback
+        final publicKey = uri.queryParameters['public_key'] ??
+            uri.queryParameters['publicKey'];
+        if (publicKey != null) {
+          debugPrint('Wallet connect callback: publicKey=$publicKey');
+          DirectPaymentService().handleConnectCallback(publicKey);
+        }
+      case 'direct_pay':
+        // Direct wallet payment: sign-and-send callback
+        final signature = uri.queryParameters['signature'];
+        final errorCode = uri.queryParameters['errorCode'] ??
+            uri.queryParameters['errorMessage'];
+        debugPrint('Direct pay callback: signature=$signature, errorCode=$errorCode');
+        DirectPaymentService().handlePaymentCallback(
+          signature: signature,
+          errorCode: errorCode,
+        );
     }
   }
 
@@ -713,6 +739,16 @@ class _QuickNavRow extends StatelessWidget {
       children: [
         Expanded(
           child: _QuickNavCard(
+            icon: LucideIcons.scanLine,
+            label: 'Scan',
+            subtitle: '扫码支付',
+            gradientColors: [const Color(0xFF00E5FF), const Color(0xFF0097A7)],
+            onTap: () => _scanAndPay(context),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _QuickNavCard(
             icon: LucideIcons.lock,
             label: 'Vault',
             subtitle: 'Keys & Identity',
@@ -742,6 +778,40 @@ class _QuickNavRow extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  Future<void> _scanAndPay(BuildContext context) async {
+    final didcomm = context.read<DidcommService>();
+    final result = await showQrScanner(context);
+    if (result == null || !context.mounted) return;
+
+    if (result is PaymentQrData) {
+      Navigator.of(context).push<dynamic>(
+        MaterialPageRoute(
+          builder: (_) => QrPaymentScreen(
+            paymentData: result,
+            storagePath: didcomm.storagePath,
+            onConfirmPayment: ({
+              required storagePath,
+              required channelId,
+              required hubEndpoint,
+              required amount,
+              required recipientPubkey,
+            }) async {
+              final channelSvc = ChannelService();
+              await channelSvc.refreshChannels(storagePath);
+              return channelSvc.channelPay(
+                storagePath: storagePath,
+                channelId: channelId,
+                hubEndpoint: hubEndpoint,
+                amount: amount,
+                recipientPubkey: recipientPubkey,
+              );
+            },
+          ),
+        ),
+      );
+    }
   }
 }
 

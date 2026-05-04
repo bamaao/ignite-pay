@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 2136643897;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -680292939;
 
 // Section: executor
 
@@ -1120,6 +1120,139 @@ fn wire__crate__api__simple__load_merchant_policy_impl(
         },
     )
 }
+fn wire__crate__api__simple__mb_get_buyer_pubkey_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "mb_get_buyer_pubkey",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::simple::mb_get_buyer_pubkey(api_storage_path)?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__simple__mb_send_voucher_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "mb_send_voucher",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_merchant_did = <String>::sse_decode(&mut deserializer);
+            let api_order_id = <String>::sse_decode(&mut deserializer);
+            let api_channel_id = <String>::sse_decode(&mut deserializer);
+            let api_seq = <u64>::sse_decode(&mut deserializer);
+            let api_amount = <u64>::sse_decode(&mut deserializer);
+            let api_buyer_pubkey = <String>::sse_decode(&mut deserializer);
+            let api_buyer_sig = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::mb_send_voucher(
+                            api_storage_path,
+                            api_merchant_did,
+                            api_order_id,
+                            api_channel_id,
+                            api_seq,
+                            api_amount,
+                            api_buyer_pubkey,
+                            api_buyer_sig,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__simple__mb_sign_voucher_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "mb_sign_voucher",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_program_id = <String>::sse_decode(&mut deserializer);
+            let api_merchant_mb_pubkey = <String>::sse_decode(&mut deserializer);
+            let api_seq = <u64>::sse_decode(&mut deserializer);
+            let api_amount = <u64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::simple::mb_sign_voucher(
+                            api_storage_path,
+                            api_program_id,
+                            api_merchant_mb_pubkey,
+                            api_seq,
+                            api_amount,
+                        )?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__simple__open_channel_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1664,6 +1797,59 @@ fn wire__crate__api__simple__send_create_channel_request_impl(
         },
     )
 }
+fn wire__crate__api__simple__send_qr_payment_request_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "send_qr_payment_request",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_merchant_did = <String>::sse_decode(&mut deserializer);
+            let api_amount = <u64>::sse_decode(&mut deserializer);
+            let api_description = <String>::sse_decode(&mut deserializer);
+            let api_order_id = <String>::sse_decode(&mut deserializer);
+            let api_payment_method = <String>::sse_decode(&mut deserializer);
+            let api_token = <String>::sse_decode(&mut deserializer);
+            let api_merchant_mediator_url = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::send_qr_payment_request(
+                            api_storage_path,
+                            api_merchant_did,
+                            api_amount,
+                            api_description,
+                            api_order_id,
+                            api_payment_method,
+                            api_token,
+                            api_merchant_mediator_url,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__simple__settle_channel_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1824,89 +2010,7 @@ fn wire__crate__api__simple__verify_did_signature_impl(
     )
 }
 
-fn wire__crate__api__simple__mb_get_buyer_pubkey_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "mb_get_buyer_pubkey",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_storage_path = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || {
-                        let output_ok = crate::api::simple::mb_get_buyer_pubkey(api_storage_path)?;
-                        Ok(output_ok)
-                    })(),
-                )
-            }
-        },
-    )
-}
-
-fn wire__crate__api__simple__mb_sign_voucher_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "mb_sign_voucher",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_storage_path = <String>::sse_decode(&mut deserializer);
-            let api_program_id = <String>::sse_decode(&mut deserializer);
-            let api_merchant_mb_pubkey = <String>::sse_decode(&mut deserializer);
-            let api_seq = <u64>::sse_decode(&mut deserializer);
-            let api_amount = <u64>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || {
-                        let output_ok = crate::api::simple::mb_sign_voucher(
-                            api_storage_path,
-                            api_program_id,
-                            api_merchant_mb_pubkey,
-                            api_seq,
-                            api_amount,
-                        )?;
-                        Ok(output_ok)
-                    })(),
-                )
-            }
-        },
-    )
-}
-
-fn wire__crate__api__simple__mb_send_voucher_impl(
+fn wire__crate__api__simple__build_unsigned_transfer_tx_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -1914,7 +2018,7 @@ fn wire__crate__api__simple__mb_send_voucher_impl(
 ) {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "mb_send_voucher",
+            debug_name: "build_unsigned_transfer_tx",
             port: Some(port_),
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
@@ -1928,27 +2032,19 @@ fn wire__crate__api__simple__mb_send_voucher_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_rpc_url = <String>::sse_decode(&mut deserializer);
+            let api_wallet_pubkey_b58 = <String>::sse_decode(&mut deserializer);
             let api_merchant_did = <String>::sse_decode(&mut deserializer);
-            let api_order_id = <String>::sse_decode(&mut deserializer);
-            let api_channel_id = <String>::sse_decode(&mut deserializer);
-            let api_seq = <u64>::sse_decode(&mut deserializer);
-            let api_amount = <u64>::sse_decode(&mut deserializer);
-            let api_buyer_pubkey = <String>::sse_decode(&mut deserializer);
-            let api_buyer_sig = <String>::sse_decode(&mut deserializer);
+            let api_amount_lamports = <u64>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || async move {
-                        let output_ok = crate::api::simple::mb_send_voucher(
-                            api_storage_path,
+                        let output_ok = crate::api::simple::build_unsigned_transfer_tx(
+                            api_rpc_url,
+                            api_wallet_pubkey_b58,
                             api_merchant_did,
-                            api_order_id,
-                            api_channel_id,
-                            api_seq,
-                            api_amount,
-                            api_buyer_pubkey,
-                            api_buyer_sig,
+                            api_amount_lamports,
                         )
                         .await?;
                         Ok(output_ok)
@@ -2220,6 +2316,24 @@ impl SseDecode for Vec<crate::api::session::SessionKeyEntry> {
     }
 }
 
+impl SseDecode for crate::api::mb_voucher::MbVoucherResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_channelId = <String>::sse_decode(deserializer);
+        let mut var_seq = <u64>::sse_decode(deserializer);
+        let mut var_amount = <u64>::sse_decode(deserializer);
+        let mut var_buyerPubkey = <String>::sse_decode(deserializer);
+        let mut var_buyerSig = <String>::sse_decode(deserializer);
+        return crate::api::mb_voucher::MbVoucherResult {
+            channel_id: var_channelId,
+            seq: var_seq,
+            amount: var_amount,
+            buyer_pubkey: var_buyerPubkey,
+            buyer_sig: var_buyerSig,
+        };
+    }
+}
+
 impl SseDecode for crate::api::session::MerchantPolicy {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2350,6 +2464,7 @@ impl SseDecode for crate::api::channel::PaymentQrData {
         let mut var_hubEndpoint = <String>::sse_decode(deserializer);
         let mut var_timestamp = <i64>::sse_decode(deserializer);
         let mut var_merchantMbPubkey = <String>::sse_decode(deserializer);
+        let mut var_merchantMediatorUrl = <String>::sse_decode(deserializer);
         return crate::api::channel::PaymentQrData {
             merchant_did: var_merchantDid,
             amount: var_amount,
@@ -2358,6 +2473,7 @@ impl SseDecode for crate::api::channel::PaymentQrData {
             hub_endpoint: var_hubEndpoint,
             timestamp: var_timestamp,
             merchant_mb_pubkey: var_merchantMbPubkey,
+            merchant_mediator_url: var_merchantMediatorUrl,
         };
     }
 }
@@ -2574,61 +2690,67 @@ fn pde_ffi_dispatcher_primary_impl(
         27 => {
             wire__crate__api__simple__load_merchant_policy_impl(port, ptr, rust_vec_len, data_len)
         }
-        28 => wire__crate__api__simple__open_channel_impl(port, ptr, rust_vec_len, data_len),
-        29 => {
+        28 => wire__crate__api__simple__mb_get_buyer_pubkey_impl(port, ptr, rust_vec_len, data_len),
+        29 => wire__crate__api__simple__mb_send_voucher_impl(port, ptr, rust_vec_len, data_len),
+        30 => wire__crate__api__simple__mb_sign_voucher_impl(port, ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__simple__open_channel_impl(port, ptr, rust_vec_len, data_len),
+        32 => {
             wire__crate__api__simple__parse_oob_invitation_impl(port, ptr, rust_vec_len, data_len)
         }
-        30 => wire__crate__api__simple__parse_payment_qr_impl(port, ptr, rust_vec_len, data_len),
-        31 => wire__crate__api__simple__pull_messages_impl(port, ptr, rust_vec_len, data_len),
-        32 => {
+        33 => wire__crate__api__simple__parse_payment_qr_impl(port, ptr, rust_vec_len, data_len),
+        34 => wire__crate__api__simple__pull_messages_impl(port, ptr, rust_vec_len, data_len),
+        35 => {
             wire__crate__api__simple__register_device_token_impl(port, ptr, rust_vec_len, data_len)
         }
-        33 => wire__crate__api__session__revoke_session_key_onchain_impl(
+        36 => wire__crate__api__session__revoke_session_key_onchain_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        34 => wire__crate__api__simple__revoke_session_key_onchain_impl(
+        37 => wire__crate__api__simple__revoke_session_key_onchain_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        35 => {
+        38 => {
             wire__crate__api__session__save_merchant_policy_impl(port, ptr, rust_vec_len, data_len)
         }
-        36 => {
+        39 => {
             wire__crate__api__simple__save_merchant_policy_impl(port, ptr, rust_vec_len, data_len)
         }
-        37 => wire__crate__api__simple__send_auth_response_impl(port, ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__simple__send_connection_request_impl(
+        40 => wire__crate__api__simple__send_auth_response_impl(port, ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__simple__send_connection_request_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        39 => wire__crate__api__simple__send_create_channel_request_impl(
+        42 => wire__crate__api__simple__send_create_channel_request_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        40 => wire__crate__api__simple__settle_channel_impl(port, ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__simple__sign_nonce_impl(port, ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__simple__sign_payment_impl(port, ptr, rust_vec_len, data_len),
-        43 => {
+        43 => wire__crate__api__simple__send_qr_payment_request_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        44 => wire__crate__api__simple__settle_channel_impl(port, ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__simple__sign_nonce_impl(port, ptr, rust_vec_len, data_len),
+        46 => wire__crate__api__simple__sign_payment_impl(port, ptr, rust_vec_len, data_len),
+        47 => {
             wire__crate__api__simple__verify_did_signature_impl(port, ptr, rust_vec_len, data_len)
         }
-        44 => {
-            wire__crate__api__simple__mb_get_buyer_pubkey_impl(port, ptr, rust_vec_len, data_len)
-        }
-        45 => {
-            wire__crate__api__simple__mb_sign_voucher_impl(port, ptr, rust_vec_len, data_len)
-        }
-        46 => {
-            wire__crate__api__simple__mb_send_voucher_impl(port, ptr, rust_vec_len, data_len)
-        }
+        48 => wire__crate__api__simple__build_unsigned_transfer_tx_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
         _ => unreachable!(),
     }
 }
@@ -2663,30 +2785,6 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::AuthGrant>
     for crate::api::simple::AuthGrant
 {
     fn into_into_dart(self) -> crate::api::simple::AuthGrant {
-        self
-    }
-}
-// Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for crate::api::mb_voucher::MbVoucherResult {
-    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        [
-            self.channel_id.into_into_dart().into_dart(),
-            self.seq.into_into_dart().into_dart(),
-            self.amount.into_into_dart().into_dart(),
-            self.buyer_pubkey.into_into_dart().into_dart(),
-            self.buyer_sig.into_into_dart().into_dart(),
-        ]
-        .into_dart()
-    }
-}
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
-    for crate::api::mb_voucher::MbVoucherResult
-{
-}
-impl flutter_rust_bridge::IntoIntoDart<crate::api::mb_voucher::MbVoucherResult>
-    for crate::api::mb_voucher::MbVoucherResult
-{
-    fn into_into_dart(self) -> crate::api::mb_voucher::MbVoucherResult {
         self
     }
 }
@@ -2843,6 +2941,30 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::HubInfo>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::mb_voucher::MbVoucherResult {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.channel_id.into_into_dart().into_dart(),
+            self.seq.into_into_dart().into_dart(),
+            self.amount.into_into_dart().into_dart(),
+            self.buyer_pubkey.into_into_dart().into_dart(),
+            self.buyer_sig.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::mb_voucher::MbVoucherResult
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::mb_voucher::MbVoucherResult>
+    for crate::api::mb_voucher::MbVoucherResult
+{
+    fn into_into_dart(self) -> crate::api::mb_voucher::MbVoucherResult {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::session::MerchantPolicy {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -2921,6 +3043,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::channel::PaymentQrData {
             self.order_id.into_into_dart().into_dart(),
             self.hub_endpoint.into_into_dart().into_dart(),
             self.timestamp.into_into_dart().into_dart(),
+            self.merchant_mb_pubkey.into_into_dart().into_dart(),
+            self.merchant_mediator_url.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -3210,6 +3334,17 @@ impl SseEncode for Vec<crate::api::session::SessionKeyEntry> {
     }
 }
 
+impl SseEncode for crate::api::mb_voucher::MbVoucherResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.channel_id, serializer);
+        <u64>::sse_encode(self.seq, serializer);
+        <u64>::sse_encode(self.amount, serializer);
+        <String>::sse_encode(self.buyer_pubkey, serializer);
+        <String>::sse_encode(self.buyer_sig, serializer);
+    }
+}
+
 impl SseEncode for crate::api::session::MerchantPolicy {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3228,35 +3363,6 @@ impl SseEncode for crate::api::simple::OobInvitationData {
         <String>::sse_encode(self.did_doc_json, serializer);
         <String>::sse_encode(self.mediator_ws_url, serializer);
         <String>::sse_encode(self.label, serializer);
-    }
-}
-
-impl SseEncode for crate::api::mb_voucher::MbVoucherResult {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <String>::sse_encode(self.channel_id, serializer);
-        <u64>::sse_encode(self.seq, serializer);
-        <u64>::sse_encode(self.amount, serializer);
-        <String>::sse_encode(self.buyer_pubkey, serializer);
-        <String>::sse_encode(self.buyer_sig, serializer);
-    }
-}
-
-impl SseDecode for crate::api::mb_voucher::MbVoucherResult {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut var_channelId = <String>::sse_decode(deserializer);
-        let mut var_seq = <u64>::sse_decode(deserializer);
-        let mut var_amount = <u64>::sse_decode(deserializer);
-        let mut var_buyerPubkey = <String>::sse_decode(deserializer);
-        let mut var_buyerSig = <String>::sse_decode(deserializer);
-        return crate::api::mb_voucher::MbVoucherResult {
-            channel_id: var_channelId,
-            seq: var_seq,
-            amount: var_amount,
-            buyer_pubkey: var_buyerPubkey,
-            buyer_sig: var_buyerSig,
-        };
     }
 }
 
@@ -3339,6 +3445,7 @@ impl SseEncode for crate::api::channel::PaymentQrData {
         <String>::sse_encode(self.hub_endpoint, serializer);
         <i64>::sse_encode(self.timestamp, serializer);
         <String>::sse_encode(self.merchant_mb_pubkey, serializer);
+        <String>::sse_encode(self.merchant_mediator_url, serializer);
     }
 }
 

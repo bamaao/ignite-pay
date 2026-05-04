@@ -125,6 +125,7 @@ pub async fn send_auth_response(
         daily_tx_count_limit,
         per_tx_limit,
         token_mint: None,
+        payment_method: None,
     };
 
     if let Some(info) = &session_key_info {
@@ -855,6 +856,86 @@ pub fn mb_sign_voucher(
         seq,
         amount,
     )
+}
+
+/// Send a QR payment request to the MCP server.
+/// Called when user scans a merchant QR code, selects payment method, and confirms.
+/// The MCP executes the payment and returns a qr-payment-response.
+pub async fn send_qr_payment_request(
+    storage_path: String,
+    merchant_did: String,
+    amount: u64,
+    description: String,
+    order_id: String,
+    payment_method: String,
+    token: String,
+    merchant_mediator_url: String,
+) -> Result<()> {
+    use ignite_pay_core::didcomm;
+    use crate::api::identity::IdentityManager;
+
+    let mgr = IdentityManager::new(&storage_path)?;
+    let our_did = mgr.did().to_string();
+    let agent = mgr.agent();
+
+    // Resolve the MCP DID from paired connection
+    let db = sled::open(&storage_path)?;
+    let tree = db.open_tree("paired_mcp")?;
+    let mcp_did = String::from_utf8(
+        tree.get("mcp_did")?
+            .ok_or_else(|| anyhow::anyhow!("No paired MCP found"))?
+            .to_vec()
+    )?;
+
+    // Build the qr-payment-request DIDComm message
+    let msg = didcomm::build_qr_payment_request(
+        &our_did,
+        &mcp_did,
+        &merchant_did,
+        amount,
+        &description,
+        &order_id,
+        &payment_method,
+        &token,
+        &merchant_mediator_url,
+    );
+
+    // Encrypt to JWE
+    let agent_guard = agent.lock().await;
+    let jwe = didcomm::pack_encrypted(&agent_guard, &msg, &our_did, &mcp_did)
+        .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
+    drop(agent_guard);
+
+    // Send via WebSocket to the mediator
+    let ws = GLOBAL_WS_CLIENT.lock().await;
+    let ws_client = ws
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("WebSocket not connected"))?;
+    ws_client.send_raw(&jwe).await?;
+
+    tracing::info!(
+        "QR payment request sent: order={} merchant={} amount={} method={}",
+        order_id, merchant_did, amount, payment_method
+    );
+
+    Ok(())
+}
+
+/// Build an unsigned SOL transfer transaction for direct wallet signing.
+/// Bridge wrapper around `session::build_unsigned_transfer_tx`.
+pub async fn build_unsigned_transfer_tx(
+    rpc_url: String,
+    wallet_pubkey_b58: String,
+    merchant_did: String,
+    amount_lamports: u64,
+) -> Result<String> {
+    crate::api::session::build_unsigned_transfer_tx(
+        rpc_url,
+        wallet_pubkey_b58,
+        merchant_did,
+        amount_lamports,
+    )
+    .await
 }
 
 /// Send a signed MB voucher to the merchant via DIDComm.
