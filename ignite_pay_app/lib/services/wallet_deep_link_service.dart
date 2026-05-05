@@ -84,4 +84,41 @@ class WalletDeepLinkService {
     final uri = Uri.parse(callbackUrl);
     return uri.queryParameters['errorCode'] ?? uri.queryParameters['errorMessage'];
   }
+
+  /// Build a Phantom deep link URL for signTransaction (not signAndSendTransaction).
+  /// Returns the signed transaction without broadcasting — used for sponsored payments
+  /// where the relayer broadcasts.
+  String buildPhantomSignTransactionUrl({
+    required String transactionB58,
+    required String redirectScheme,
+    required String redirectPath,
+  }) {
+    final redirect = Uri.encodeFull('$redirectScheme://$redirectPath');
+    return 'https://phantom.app/ul/v1/signTransaction'
+        '?dapp_encryption_public_key=placeholder'
+        '&payload=${Uri.encodeComponent(transactionB58)}'
+        '&redirect_link=$redirect'
+        '&cluster=devnet';
+  }
+
+  /// Build a Solflare deep link URL for signTransaction.
+  String buildSolflareSignTransactionUrl({
+    required String transactionB58,
+    required String redirectScheme,
+    required String redirectPath,
+  }) {
+    final redirect = Uri.encodeFull('$redirectScheme://$redirectPath');
+    return 'solflare://v1/signTransaction'
+        '?dapp_encryption_public_key=placeholder'
+        '&payload=${Uri.encodeComponent(transactionB58)}'
+        '&redirect_link=$redirect'
+        '&cluster=devnet';
+  }
+
+  /// Parse a deep link callback to extract the signed transaction (base58).
+  /// Used for signTransaction callbacks where the wallet returns the signed tx.
+  String? parseCallbackTransaction(String callbackUrl) {
+    final uri = Uri.parse(callbackUrl);
+    return uri.queryParameters['transaction'];
+  }
 }

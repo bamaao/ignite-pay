@@ -70,4 +70,16 @@ impl VoucherStore {
         vouchers.sort_by_key(|v| v.seq);
         Ok(vouchers)
     }
+
+    /// Sum of all outstanding (unsettled) voucher amounts across all channels.
+    pub fn total_outstanding(&self) -> Result<u64> {
+        let tree = self.vouchers_tree()?;
+        let mut total: u64 = 0;
+        for item in tree.iter() {
+            let (_, value) = item?;
+            let v: StoredVoucher = serde_json::from_slice(&value)?;
+            total = total.saturating_add(v.amount);
+        }
+        Ok(total)
+    }
 }

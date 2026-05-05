@@ -20,7 +20,8 @@ pub fn verify_mb_voucher(
     let merchant: Pubkey = merchant_pubkey.parse()
         .map_err(|e| anyhow::anyhow!("Invalid merchant_pubkey: {}", e))?;
 
-    let (channel_pda, _) = pda::derive_channel_pda(&program_id, &buyer, &merchant);
+    let token_mint = Pubkey::default(); // SOL
+    let (channel_pda, _) = pda::derive_channel_pda(&program_id, &buyer, &merchant, &token_mint);
     let channel_id = channel_pda.to_bytes();
 
     // Decode buyer signature

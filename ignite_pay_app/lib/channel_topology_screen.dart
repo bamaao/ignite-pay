@@ -1,9 +1,12 @@
+import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/theme.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
 import 'package:ignite_pay_app/services/channel_service.dart';
+import 'package:ignite_pay_app/services/app_log_service.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
 
 // ---------------------------------------------------------------------------
@@ -38,11 +41,18 @@ class _ChannelTopologyScreenState extends State<ChannelTopologyScreen> {
   bool _isLoading = true;
   String? _error;
   final ChannelService _channelSvc = ChannelService();
+  StreamSubscription<MbDepositResult>? _mbDepositSub;
 
   @override
   void initState() {
     super.initState();
     _loadChannels();
+  }
+
+  @override
+  void dispose() {
+    _mbDepositSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadChannels() async {
@@ -52,6 +62,214 @@ class _ChannelTopologyScreenState extends State<ChannelTopologyScreen> {
     } catch (e) {
       if (mounted) setState(() { _isLoading = false; _error = e.toString(); });
     }
+  }
+
+  void _showDepositSheet() {
+    final amountController = TextEditingController();
+    bool isSubmitting = false;
+    String selectedToken = 'USDC'; // Default to USDC
+
+    const tokenOptions = ['USDC', 'USDT', 'SOL'];
+    const tokenDecimals = {'USDC': 6, 'USDT': 6, 'SOL': 9};
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kSurfaceDark,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: kTextTertiary,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Deposit to MB Vault',
+                      style: GoogleFonts.inter(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: kTextPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Deposit SOL into the MagicBlock shared vault for instant payments.',
+                      style: GoogleFonts.inter(fontSize: 12, color: kTextSecondary),
+                    ),
+                    const SizedBox(height: 16),
+                    // Token selector
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: kBackground,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: kGlassBorder),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: selectedToken,
+                          isExpanded: true,
+                          dropdownColor: kSurfaceDark,
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: kTextPrimary,
+                          ),
+                          items: tokenOptions.map((t) => DropdownMenuItem(
+                            value: t,
+                            child: Text(t),
+                          )).toList(),
+                          onChanged: (v) {
+                            if (v != null) setSheetState(() => selectedToken = v);
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    TextField(
+                      controller: amountController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      style: GoogleFonts.jetBrainsMono(
+                        fontSize: 16,
+                        color: kTextPrimary,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: 'Amount',
+                        labelStyle: GoogleFonts.inter(color: kTextSecondary),
+                        suffixText: selectedToken,
+                        suffixStyle: GoogleFonts.inter(color: kTextTertiary, fontSize: 12),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: kGlassBorder),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: kNeonCyan),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: isSubmitting
+                            ? null
+                            : () async {
+                                final amountStr = amountController.text.trim();
+                                final amountVal = double.tryParse(amountStr);
+                                if (amountVal == null || amountVal <= 0) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      backgroundColor: kDanger,
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(10)),
+                                      content: Text('Enter a valid amount',
+                                          style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                final decimals = tokenDecimals[selectedToken] ?? 9;
+                                // Use correct power-of-10 for decimals
+                                final baseAmount = (amountVal * (pow(10, decimals) as double)).round();
+                                if (baseAmount <= 0) {
+                                  return;
+                                }
+
+                                setSheetState(() => isSubmitting = true);
+
+                                try {
+                                  // Listen for the response
+                                  _mbDepositSub?.cancel();
+                                  _mbDepositSub = DidcommService().mbDepositResults.listen((result) {
+                                    if (!mounted) return;
+                                    Navigator.of(context).maybePop();
+                                    final snackBar = SnackBar(
+                                      backgroundColor: result.success ? kSuccess : kDanger,
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(10)),
+                                      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                                      content: Text(
+                                        result.success
+                                            ? 'Deposited ${(result.depositAmount / 1e9).toStringAsFixed(4)} SOL'
+                                                '${result.totalDeposited != null ? ' (total: ${(result.totalDeposited! / 1e9).toStringAsFixed(4)} SOL)' : ''}'
+                                            : 'Deposit failed: ${result.error ?? "unknown error"}',
+                                        style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                                      ),
+                                      duration: const Duration(seconds: 3),
+                                    );
+                                    ScaffoldMessenger.of(context).showSnackBar(snackBar);
+                                    _loadChannels();
+                                  });
+
+                                  await rust.sendMbDepositRequest(
+                                    storagePath: DidcommService().storagePath,
+                                    amount: BigInt.from(baseAmount),
+                                    token: selectedToken,
+                                  );
+                                  AppLogService().info('MB', 'Deposit request sent: $amountVal $selectedToken');
+                                } catch (e) {
+                                  if (mounted) {
+                                    setSheetState(() => isSubmitting = false);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        backgroundColor: kDanger,
+                                        behavior: SnackBarBehavior.floating,
+                                        shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(10)),
+                                        content: Text('Failed to send deposit: $e',
+                                            style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: kNeonCyan,
+                          foregroundColor: kBackground,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          textStyle: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w700),
+                        ),
+                        child: isSubmitting
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: kBackground,
+                                ),
+                              )
+                            : const Text('Confirm Deposit'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -93,6 +311,28 @@ class _ChannelTopologyScreenState extends State<ChannelTopologyScreen> {
                   closedCount: closedCount,
                 ),
               ),
+              const SizedBox(height: 12),
+
+              // MB Vault deposit button
+              if (DidcommService().isConnected)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _showDepositSheet,
+                      icon: const Icon(LucideIcons.wallet, size: 16),
+                      label: const Text('Deposit to MB Vault'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: kNeonCyan,
+                        side: const BorderSide(color: kNeonCyan),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        textStyle: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
+                ),
               const SizedBox(height: 16),
 
               // Your node card

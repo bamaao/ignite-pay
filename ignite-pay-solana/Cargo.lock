@@ -2237,6 +2237,7 @@ name = "ignite-pay-solana"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "borsh 0.10.4",
  "bs58",
  "light-client",

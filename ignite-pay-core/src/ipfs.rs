@@ -69,6 +69,7 @@ impl IpfsClient for MockIpfsClient {
 #[cfg(feature = "kubo")]
 pub struct KuboIpfsClient {
     base_url: String,
+    client: reqwest::Client,
 }
 
 #[cfg(feature = "kubo")]
@@ -76,6 +77,7 @@ impl KuboIpfsClient {
     pub fn new(base_url: &str) -> Self {
         Self {
             base_url: base_url.to_string(),
+            client: reqwest::Client::new(),
         }
     }
 }
@@ -84,7 +86,6 @@ impl KuboIpfsClient {
 #[async_trait]
 impl IpfsClient for KuboIpfsClient {
     async fn upload(&self, data: &[u8]) -> Result<String, anyhow::Error> {
-        let client = reqwest::Client::new();
         let form = reqwest::multipart::Form::new()
             .part(
                 "file",
@@ -93,7 +94,7 @@ impl IpfsClient for KuboIpfsClient {
                     .mime_str("application/json")?,
             );
 
-        let resp = client
+        let resp = self.client
             .post(format!("{}/api/v0/add", self.base_url))
             .multipart(form)
             .send()
@@ -107,8 +108,7 @@ impl IpfsClient for KuboIpfsClient {
     }
 
     async fn download(&self, cid: &str) -> Result<Vec<u8>, anyhow::Error> {
-        let client = reqwest::Client::new();
-        let resp = client
+        let resp = self.client
             .post(format!("{}/api/v0/cat?arg={}", self.base_url, cid))
             .send()
             .await?;

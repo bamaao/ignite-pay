@@ -26,12 +26,13 @@ fn method_discriminator(method: &str) -> [u8; 8] {
 /// Build an `initialize_global` transaction.
 pub fn build_initialize_global_tx(
     payer: &dyn Signer,
+    token_mint: &Pubkey,
     program_id: &Pubkey,
     recent_blockhash: solana_sdk::hash::Hash,
 ) -> Result<Transaction> {
     let buyer_pubkey = payer.pubkey();
-    let (global_state, _) = pda::derive_global_state_pda(program_id, &buyer_pubkey);
-    let (vault, _) = pda::derive_global_vault_pda(program_id, &buyer_pubkey);
+    let (global_state, _) = pda::derive_global_state_pda(program_id, &buyer_pubkey, token_mint);
+    let (vault, _) = pda::derive_global_vault_pda(program_id, &buyer_pubkey, token_mint);
 
     let disc = method_discriminator("initialize_global");
 
@@ -39,6 +40,7 @@ pub fn build_initialize_global_tx(
         AccountMeta::new(global_state, false),
         AccountMeta::new_readonly(vault, false),
         AccountMeta::new(buyer_pubkey, true),
+        AccountMeta::new_readonly(*token_mint, false),
         AccountMeta::new_readonly(system_program::id(), false),
     ];
 
@@ -60,6 +62,7 @@ pub fn build_initialize_global_tx(
 pub fn build_initialize_channel_tx(
     payer: &dyn Signer,
     merchant: &Pubkey,
+    token_mint: &Pubkey,
     spending_cap: u64,
     challenge_period: i64,
     dispute_period: i64,
@@ -67,8 +70,8 @@ pub fn build_initialize_channel_tx(
     recent_blockhash: solana_sdk::hash::Hash,
 ) -> Result<Transaction> {
     let buyer_pubkey = payer.pubkey();
-    let (global_state, _) = pda::derive_global_state_pda(program_id, &buyer_pubkey);
-    let (channel, _) = pda::derive_channel_pda(program_id, &buyer_pubkey, merchant);
+    let (global_state, _) = pda::derive_global_state_pda(program_id, &buyer_pubkey, token_mint);
+    let (channel, _) = pda::derive_channel_pda(program_id, &buyer_pubkey, merchant, token_mint);
 
     let disc = method_discriminator("initialize_channel");
 
@@ -84,6 +87,7 @@ pub fn build_initialize_channel_tx(
         AccountMeta::new(channel, false),
         AccountMeta::new(buyer_pubkey, true),
         AccountMeta::new_readonly(*merchant, false),
+        AccountMeta::new_readonly(*token_mint, false),
         AccountMeta::new_readonly(system_program::id(), false),
     ];
 
@@ -105,13 +109,14 @@ pub fn build_initialize_channel_tx(
 pub fn build_update_spending_cap_tx(
     payer: &dyn Signer,
     merchant: &Pubkey,
+    token_mint: &Pubkey,
     new_spending_cap: u64,
     program_id: &Pubkey,
     recent_blockhash: solana_sdk::hash::Hash,
 ) -> Result<Transaction> {
     let buyer_pubkey = payer.pubkey();
-    let (global_state, _) = pda::derive_global_state_pda(program_id, &buyer_pubkey);
-    let (channel, _) = pda::derive_channel_pda(program_id, &buyer_pubkey, merchant);
+    let (global_state, _) = pda::derive_global_state_pda(program_id, &buyer_pubkey, token_mint);
+    let (channel, _) = pda::derive_channel_pda(program_id, &buyer_pubkey, merchant, token_mint);
 
     let disc = method_discriminator("update_spending_cap");
 
@@ -142,13 +147,14 @@ pub fn build_update_spending_cap_tx(
 /// Build a `deposit` transaction (to global vault).
 pub fn build_deposit_tx(
     buyer: &dyn Signer,
+    token_mint: &Pubkey,
     amount: u64,
     program_id: &Pubkey,
     recent_blockhash: solana_sdk::hash::Hash,
 ) -> Result<Transaction> {
     let buyer_pubkey = buyer.pubkey();
-    let (global_state, _) = pda::derive_global_state_pda(program_id, &buyer_pubkey);
-    let (vault, _) = pda::derive_global_vault_pda(program_id, &buyer_pubkey);
+    let (global_state, _) = pda::derive_global_state_pda(program_id, &buyer_pubkey, token_mint);
+    let (vault, _) = pda::derive_global_vault_pda(program_id, &buyer_pubkey, token_mint);
 
     let disc = method_discriminator("deposit");
 
@@ -189,6 +195,7 @@ pub fn build_settle_batch_tx(
     buyer_pubkey: &Pubkey,
     channel: &Pubkey,
     escrow: &Pubkey,
+    token_mint: &Pubkey,
     merkle_root: &[u8; 32],
     total_amount: u64,
     buyer_batch_sig: &[u8; 64],
@@ -199,8 +206,8 @@ pub fn build_settle_batch_tx(
 ) -> Result<Transaction> {
     use crate::signing::build_settlement_message;
 
-    let (global_state, _) = pda::derive_global_state_pda(program_id, buyer_pubkey);
-    let (vault, _) = pda::derive_global_vault_pda(program_id, buyer_pubkey);
+    let (global_state, _) = pda::derive_global_state_pda(program_id, buyer_pubkey, token_mint);
+    let (vault, _) = pda::derive_global_vault_pda(program_id, buyer_pubkey, token_mint);
 
     let msg_hash = build_settlement_message(merkle_root, total_amount, &channel.to_bytes(), nonce);
 
@@ -310,6 +317,7 @@ pub fn build_optimistic_settle_tx(
     buyer_pubkey: &Pubkey,
     channel: &Pubkey,
     escrow: &Pubkey,
+    token_mint: &Pubkey,
     merkle_root: &[u8; 32],
     total_amount: u64,
     merchant_batch_sig: &[u8; 64],
@@ -319,8 +327,8 @@ pub fn build_optimistic_settle_tx(
 ) -> Result<Transaction> {
     use crate::signing::build_settlement_message;
 
-    let (global_state, _) = pda::derive_global_state_pda(program_id, buyer_pubkey);
-    let (vault, _) = pda::derive_global_vault_pda(program_id, buyer_pubkey);
+    let (global_state, _) = pda::derive_global_state_pda(program_id, buyer_pubkey, token_mint);
+    let (vault, _) = pda::derive_global_vault_pda(program_id, buyer_pubkey, token_mint);
 
     let msg_hash = build_settlement_message(merkle_root, total_amount, &channel.to_bytes(), nonce);
 
@@ -516,13 +524,14 @@ pub fn build_resolve_dispute_tx(
 /// Build a `withdraw` transaction (from global vault).
 pub fn build_withdraw_tx(
     buyer: &dyn Signer,
+    token_mint: &Pubkey,
     amount: u64,
     program_id: &Pubkey,
     recent_blockhash: solana_sdk::hash::Hash,
 ) -> Result<Transaction> {
     let buyer_pubkey = buyer.pubkey();
-    let (global_state, _) = pda::derive_global_state_pda(program_id, &buyer_pubkey);
-    let (vault, _) = pda::derive_global_vault_pda(program_id, &buyer_pubkey);
+    let (global_state, _) = pda::derive_global_state_pda(program_id, &buyer_pubkey, token_mint);
+    let (vault, _) = pda::derive_global_vault_pda(program_id, &buyer_pubkey, token_mint);
 
     let disc = method_discriminator("withdraw");
 

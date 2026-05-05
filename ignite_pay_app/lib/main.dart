@@ -410,6 +410,21 @@ class _MainNavigatorState extends State<_MainNavigator> {
           signature: signature,
           errorCode: errorCode,
         );
+      case 'sponsored_sign':
+        // Sponsored payment: signTransaction callback — wallet returns signed tx
+        final transaction = uri.queryParameters['transaction'];
+        final errorCode = uri.queryParameters['errorCode'] ??
+            uri.queryParameters['errorMessage'];
+        if (transaction != null) {
+          debugPrint('Sponsored sign callback: transaction received');
+          DirectPaymentService().handleSponsoredSignCallback(transaction);
+        } else {
+          debugPrint('Sponsored sign callback error: $errorCode');
+          DirectPaymentService().handlePaymentCallback(
+            signature: null,
+            errorCode: errorCode ?? 'Sponsored signing failed',
+          );
+        }
     }
   }
 

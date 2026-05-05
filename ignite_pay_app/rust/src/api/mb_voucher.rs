@@ -87,10 +87,12 @@ pub fn sign_mb_voucher(
         .map_err(|e| anyhow::anyhow!("Invalid merchant_mb_pubkey: {}", e))?;
 
     // Derive channel PDA
+    let token_mint = Pubkey::default(); // SOL
     let (channel_pda, _) = pda::derive_channel_pda(
         &program_id_pubkey,
         &kp.pubkey(),
         &merchant_pubkey,
+        &token_mint,
     );
     let channel_id = channel_pda.to_bytes();
 

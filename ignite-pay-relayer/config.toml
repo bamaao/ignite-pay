@@ -1,0 +1,9 @@
+[relayer]
+# Relayer keypair (base58-encoded 64-byte Ed25519 keypair). If empty, generates a new one on startup.
+keypair_b58 = ""
+# Solana RPC URL
+rpc_url = "https://api.devnet.solana.com"
+# Listen address
+listen_addr = "0.0.0.0:3030"
+# Maximum sponsor requests per minute per IP
+rate_limit = 60

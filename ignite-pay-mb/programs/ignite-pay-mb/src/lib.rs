@@ -21,6 +21,7 @@ pub mod ignite_pay_mb {
     pub fn initialize_global(ctx: Context<InitializeGlobal>) -> Result<()> {
         let global_state = &mut ctx.accounts.global_state;
         global_state.buyer = ctx.accounts.buyer.key();
+        global_state.token_mint = ctx.accounts.token_mint.key();
         global_state.total_deposited = 0;
         global_state.total_allocated = 0;
         global_state.bump = ctx.bumps.global_state;
@@ -54,6 +55,7 @@ pub mod ignite_pay_mb {
         let channel = &mut ctx.accounts.channel;
         channel.buyer = buyer;
         channel.merchant = merchant;
+        channel.token_mint = ctx.accounts.global_state.token_mint;
         channel.spending_cap = spending_cap;
         channel.settled_amount = 0;
         channel.nonce = 0;
@@ -94,6 +96,7 @@ pub mod ignite_pay_mb {
     }
 
     pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+        // TODO: SPL token CPI path — for now only SOL transfers are supported
         let transfer_ix = system_instruction::transfer(
             &ctx.accounts.buyer.key(),
             &ctx.accounts.vault.key(),
@@ -187,6 +190,8 @@ pub mod ignite_pay_mb {
         let vault_bump = ctx.bumps.vault;
         let nonce = channel.nonce;
         let channel_merchant = ctx.accounts.channel.merchant;
+        let channel_buyer = channel.buyer;
+        let channel_token_mint = channel.token_mint;
 
         // Update channel state
         let channel = &mut ctx.accounts.channel;
@@ -198,7 +203,8 @@ pub mod ignite_pay_mb {
         // Transfer from global vault -> settlement escrow
         let vault_seeds = &[
             GLOBAL_VAULT_SEED,
-            channel.buyer.as_ref(),
+            channel_buyer.as_ref(),
+            channel_token_mint.as_ref(),
             &[vault_bump],
         ];
         let transfer_ix = system_instruction::transfer(
@@ -220,6 +226,7 @@ pub mod ignite_pay_mb {
         let settlement = &mut ctx.accounts.settlement_escrow;
         settlement.channel = channel_key;
         settlement.merchant = channel_merchant;
+        settlement.token_mint = channel_token_mint;
         settlement.amount = total_amount;
         settlement.merkle_root = merkle_root;
         settlement.nonce = nonce;
@@ -313,6 +320,8 @@ pub mod ignite_pay_mb {
         let vault_bump = ctx.bumps.vault;
         let nonce = channel.nonce;
         let channel_merchant = ctx.accounts.channel.merchant;
+        let channel_buyer = channel.buyer;
+        let channel_token_mint = channel.token_mint;
 
         // Update channel state
         let channel = &mut ctx.accounts.channel;
@@ -324,7 +333,8 @@ pub mod ignite_pay_mb {
         // Transfer from global vault -> settlement escrow
         let vault_seeds = &[
             GLOBAL_VAULT_SEED,
-            channel.buyer.as_ref(),
+            channel_buyer.as_ref(),
+            channel_token_mint.as_ref(),
             &[vault_bump],
         ];
         let transfer_ix = system_instruction::transfer(
@@ -346,6 +356,7 @@ pub mod ignite_pay_mb {
         let settlement = &mut ctx.accounts.settlement_escrow;
         settlement.channel = channel_key;
         settlement.merchant = channel_merchant;
+        settlement.token_mint = channel_token_mint;
         settlement.amount = total_amount;
         settlement.merkle_root = merkle_root;
         settlement.nonce = nonce;
@@ -528,6 +539,7 @@ pub mod ignite_pay_mb {
 
         // Save values for seeds
         let buyer_key = ctx.accounts.global_state.buyer;
+        let token_mint_key = ctx.accounts.global_state.token_mint;
         let vault_bump = ctx.bumps.vault;
 
         // Update global state
@@ -540,6 +552,7 @@ pub mod ignite_pay_mb {
         let vault_seeds = &[
             GLOBAL_VAULT_SEED,
             buyer_key.as_ref(),
+            token_mint_key.as_ref(),
             &[vault_bump],
         ];
         let transfer_ix = system_instruction::transfer(
@@ -569,18 +582,20 @@ pub struct InitializeGlobal<'info> {
         init,
         payer = buyer,
         space = GlobalState::SPACE,
-        seeds = [GLOBAL_STATE_SEED, buyer.key().as_ref()],
+        seeds = [GLOBAL_STATE_SEED, buyer.key().as_ref(), token_mint.key().as_ref()],
         bump,
     )]
     pub global_state: Account<'info, GlobalState>,
     /// CHECK: Global vault PDA — not init'd, stays System Program owned
     #[account(
-        seeds = [GLOBAL_VAULT_SEED, buyer.key().as_ref()],
+        seeds = [GLOBAL_VAULT_SEED, buyer.key().as_ref(), token_mint.key().as_ref()],
         bump,
     )]
     pub vault: UncheckedAccount<'info>,
     #[account(mut)]
     pub buyer: Signer<'info>,
+    /// CHECK: Token mint — Pubkey::default() for SOL, or SPL token mint
+    pub token_mint: SystemAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -590,7 +605,7 @@ pub struct InitializeChannel<'info> {
     #[account(
         mut,
         has_one = buyer,
-        seeds = [GLOBAL_STATE_SEED, buyer.key().as_ref()],
+        seeds = [GLOBAL_STATE_SEED, buyer.key().as_ref(), global_state.token_mint.as_ref()],
         bump = global_state.bump,
     )]
     pub global_state: Account<'info, GlobalState>,
@@ -598,7 +613,7 @@ pub struct InitializeChannel<'info> {
         init,
         payer = buyer,
         space = Channel::SPACE,
-        seeds = [CHANNEL_SEED, buyer.key().as_ref(), merchant.key().as_ref()],
+        seeds = [CHANNEL_SEED, buyer.key().as_ref(), merchant.key().as_ref(), global_state.token_mint.as_ref()],
         bump,
     )]
     pub channel: Account<'info, Channel>,
@@ -615,14 +630,14 @@ pub struct UpdateSpendingCap<'info> {
     #[account(
         mut,
         has_one = buyer,
-        seeds = [GLOBAL_STATE_SEED, buyer.key().as_ref()],
+        seeds = [GLOBAL_STATE_SEED, buyer.key().as_ref(), global_state.token_mint.as_ref()],
         bump = global_state.bump,
     )]
     pub global_state: Account<'info, GlobalState>,
     #[account(
         mut,
         has_one = buyer,
-        seeds = [CHANNEL_SEED, channel.buyer.as_ref(), channel.merchant.as_ref()],
+        seeds = [CHANNEL_SEED, channel.buyer.as_ref(), channel.merchant.as_ref(), channel.token_mint.as_ref()],
         bump = channel.bump,
     )]
     pub channel: Account<'info, Channel>,
@@ -635,14 +650,14 @@ pub struct Deposit<'info> {
     #[account(
         mut,
         has_one = buyer,
-        seeds = [GLOBAL_STATE_SEED, buyer.key().as_ref()],
+        seeds = [GLOBAL_STATE_SEED, buyer.key().as_ref(), global_state.token_mint.as_ref()],
         bump = global_state.bump,
     )]
     pub global_state: Account<'info, GlobalState>,
     /// CHECK: Global vault PDA — seeds bind it to this buyer, owner is System Program
     #[account(
         mut,
-        seeds = [GLOBAL_VAULT_SEED, buyer.key().as_ref()],
+        seeds = [GLOBAL_VAULT_SEED, buyer.key().as_ref(), global_state.token_mint.as_ref()],
         bump,
     )]
     pub vault: UncheckedAccount<'info>,
@@ -655,21 +670,21 @@ pub struct Deposit<'info> {
 pub struct BatchSettle<'info> {
     #[account(
         mut,
-        seeds = [GLOBAL_STATE_SEED, channel.buyer.as_ref()],
+        seeds = [GLOBAL_STATE_SEED, channel.buyer.as_ref(), channel.token_mint.as_ref()],
         bump = global_state.bump,
     )]
     pub global_state: Account<'info, GlobalState>,
     /// CHECK: Global vault PDA bound to buyer, owner is System Program
     #[account(
         mut,
-        seeds = [GLOBAL_VAULT_SEED, channel.buyer.as_ref()],
+        seeds = [GLOBAL_VAULT_SEED, channel.buyer.as_ref(), channel.token_mint.as_ref()],
         bump,
     )]
     pub vault: UncheckedAccount<'info>,
     #[account(
         mut,
         has_one = merchant,
-        seeds = [CHANNEL_SEED, channel.buyer.as_ref(), merchant.key().as_ref()],
+        seeds = [CHANNEL_SEED, channel.buyer.as_ref(), merchant.key().as_ref(), channel.token_mint.as_ref()],
         bump = channel.bump,
     )]
     pub channel: Account<'info, Channel>,
@@ -694,21 +709,21 @@ pub struct BatchSettle<'info> {
 pub struct OptimisticBatchSettle<'info> {
     #[account(
         mut,
-        seeds = [GLOBAL_STATE_SEED, channel.buyer.as_ref()],
+        seeds = [GLOBAL_STATE_SEED, channel.buyer.as_ref(), channel.token_mint.as_ref()],
         bump = global_state.bump,
     )]
     pub global_state: Account<'info, GlobalState>,
     /// CHECK: Global vault PDA bound to buyer, owner is System Program
     #[account(
         mut,
-        seeds = [GLOBAL_VAULT_SEED, channel.buyer.as_ref()],
+        seeds = [GLOBAL_VAULT_SEED, channel.buyer.as_ref(), channel.token_mint.as_ref()],
         bump,
     )]
     pub vault: UncheckedAccount<'info>,
     #[account(
         mut,
         has_one = merchant,
-        seeds = [CHANNEL_SEED, channel.buyer.as_ref(), merchant.key().as_ref()],
+        seeds = [CHANNEL_SEED, channel.buyer.as_ref(), merchant.key().as_ref(), channel.token_mint.as_ref()],
         bump = channel.bump,
     )]
     pub channel: Account<'info, Channel>,
@@ -802,14 +817,14 @@ pub struct Withdraw<'info> {
     #[account(
         mut,
         has_one = buyer,
-        seeds = [GLOBAL_STATE_SEED, buyer.key().as_ref()],
+        seeds = [GLOBAL_STATE_SEED, buyer.key().as_ref(), global_state.token_mint.as_ref()],
         bump = global_state.bump,
     )]
     pub global_state: Account<'info, GlobalState>,
     /// CHECK: Global vault PDA bound to buyer, owner is System Program
     #[account(
         mut,
-        seeds = [GLOBAL_VAULT_SEED, buyer.key().as_ref()],
+        seeds = [GLOBAL_VAULT_SEED, buyer.key().as_ref(), global_state.token_mint.as_ref()],
         bump,
     )]
     pub vault: UncheckedAccount<'info>,

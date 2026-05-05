@@ -42,4 +42,6 @@ pub enum ErrorCode {
     AllocationExceedsDeposit,
     #[msg("Optimistic settlement requires challenge_period > 0.")]
     ChallengePeriodRequired,
+    #[msg("Token mint mismatch.")]
+    TokenMintMismatch,
 }

@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Shared library
-ignite-pay-core = { path = "../ignite-pay-core", features = ["solana"] }
+ignite-pay-core = { path = "../ignite-pay-core", features = ["solana", "kubo"] }
 ignite-pay-solana = { path = "../ignite-pay-solana" }
 ignite-pay-mb-sdk = { path = "../ignite-pay-mb/sdk" }
 

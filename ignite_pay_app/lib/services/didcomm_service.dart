@@ -60,6 +60,25 @@ class QrPaymentResult {
   });
 }
 
+/// An MB deposit response from the MCP server.
+class MbDepositResult {
+  final bool success;
+  final int depositAmount;
+  final int? totalDeposited;
+  final String? txSignature;
+  final String token;
+  final String? error;
+
+  MbDepositResult({
+    required this.success,
+    required this.depositAmount,
+    this.totalDeposited,
+    this.txSignature,
+    required this.token,
+    this.error,
+  });
+}
+
 /// A paired MCP server with its identity info received from connection-response.
 class PairedMcp {
   final String did;
@@ -150,6 +169,8 @@ class DidcommService extends ChangeNotifier {
       StreamController<AuthRequest>.broadcast();
   final StreamController<QrPaymentResult> _qrPaymentResultController =
       StreamController<QrPaymentResult>.broadcast();
+  final StreamController<MbDepositResult> _mbDepositResultController =
+      StreamController<MbDepositResult>.broadcast();
 
   // Getters
   String get did => _did;
@@ -166,6 +187,7 @@ class DidcommService extends ChangeNotifier {
   /// Stream of incoming auth requests.
   Stream<AuthRequest> get authRequests => _authRequestController.stream;
   Stream<QrPaymentResult> get qrPaymentResults => _qrPaymentResultController.stream;
+  Stream<MbDepositResult> get mbDepositResults => _mbDepositResultController.stream;
 
   /// Whether the current user is detected as a Chinese user based on locale.
   /// Chinese users use WebSocket direct push instead of FCM.
@@ -548,6 +570,21 @@ class DidcommService extends ChangeNotifier {
         _qrPaymentResultController.add(qrResult);
       }
 
+      // Check if it's an mb-deposit-response (MCP processed our vault deposit)
+      if (msg.msgType.contains('mb-deposit-response')) {
+        final body = jsonDecode(msg.rawBody) as Map<String, dynamic>;
+        final mbResult = MbDepositResult(
+          success: body['success'] as bool? ?? false,
+          depositAmount: (body['deposit_amount'] as int?) ?? 0,
+          totalDeposited: body['total_deposited'] as int?,
+          txSignature: body['tx_signature'] as String?,
+          token: body['token'] as String? ?? 'SOL',
+          error: body['error'] as String?,
+        );
+        AppLogService().info('DIDComm', 'MB deposit response: success=${mbResult.success} amount=${mbResult.depositAmount}');
+        _mbDepositResultController.add(mbResult);
+      }
+
       notifyListeners();
     } catch (e) {
       // JWE decryption failed — try plaintext JSON fallback for messages
@@ -882,6 +919,7 @@ class DidcommService extends ChangeNotifier {
     _messagePollTimer?.cancel();
     _authRequestController.close();
     _qrPaymentResultController.close();
+    _mbDepositResultController.close();
     super.dispose();
   }
 }

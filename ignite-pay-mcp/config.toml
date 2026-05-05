@@ -24,10 +24,10 @@ did = "did:ignite:zPlatformDIDPlaceholder"
 verifying_key_b64 = ""
 
 [ipfs]
-# IPFS configuration (mock for development)
+# IPFS mode: "mock" (development) or "kubo" (production, requires local Kubo node)
 mode = "mock"
 # Kubo RPC URL (only used when mode = "kubo")
-# kubo_url = "http://127.0.0.1:5001"
+kubo_url = "http://127.0.0.1:5001"
 
 [solana]
 # Solana RPC endpoint
@@ -47,7 +47,7 @@ das_endpoint = ""
 # Payment mode: "self_funded" or "sponsored"
 pay_mode = "self_funded"
 # Relayer URL (only used when pay_mode = "sponsored")
-# relayer_url = ""
+relayer_url = ""
 # Default owner pubkey (base58) for local session lookup
 default_owner = ""
 # Tree authority keypair (base58 64-byte) for admin operations

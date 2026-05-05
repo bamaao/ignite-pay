@@ -1,4 +1,4 @@
-use ignite_pay_mcp::mediator::{MediatorConnection, QrPaymentCommand};
+use ignite_pay_mcp::mediator::{MediatorConnection, MbDepositCommand, QrPaymentCommand};
 use ignite_pay_mcp::payment::{
     execute_mock_payment, AuthResponse, PaymentRequest, PaymentStatus, PendingAuthStore,
 };
@@ -16,6 +16,7 @@ use ignite_pay_mcp::voucher_store::{StoredVoucher, VoucherStore};
 
 use base64::Engine;
 use ignite_pay_core::ipfs::IpfsClient;
+use ignite_pay_core::ipfs::KuboIpfsClient;
 use ignite_pay_core::ipfs::MockIpfsClient;
 use ignite_pay_core::list_store::ListStore;
 use ignite_pay_core::solana_did::SolanaDidBridge;
@@ -59,7 +60,6 @@ struct Config {
     storage: StorageConfig,
     policy: PolicyConfig,
     platform: PlatformConfig,
-    #[allow(dead_code)]
     ipfs: IpfsConfig,
     #[serde(default)]
     solana: SolanaConfig,
@@ -112,9 +112,16 @@ impl PlatformConfig {
 
 #[derive(Debug, serde::Deserialize)]
 struct IpfsConfig {
-    #[allow(dead_code)]
+    /// "mock" or "kubo"
+    #[serde(default = "default_ipfs_mode")]
     mode: String,
+    /// Kubo RPC URL (only used when mode = "kubo")
+    #[serde(default = "default_kubo_url")]
+    kubo_url: String,
 }
+
+fn default_ipfs_mode() -> String { "mock".to_string() }
+fn default_kubo_url() -> String { "http://127.0.0.1:5001".to_string() }
 
 #[derive(Debug, serde::Deserialize, Default)]
 struct SolanaConfig {
@@ -287,37 +294,54 @@ impl std::fmt::Display for PaymentProof {
 }
 
 impl IgnitePayMcpServer {
-    /// Try to pay via MagicBlock payment channel.
+    /// Sign a MagicBlock voucher purely off-chain.
     ///
-    /// Returns Some(proof) if a channel exists with the merchant and the voucher was signed.
-    /// Returns None if no channel exists (caller should fall back to session key).
+    /// No on-chain channel is needed at this point. The channel PDA is derived
+    /// deterministically and used as the channel_id for signing. Vouchers are
+    /// accumulated off-chain and settled on L1 later (via merkle tree batch settlement).
+    /// Returns Some(proof) on success, None on failure (caller should fall back to session key).
     fn try_mb_voucher_payment(&self, merchant_did: &str, amount: u64) -> Option<PaymentProof> {
         // Extract merchant Solana pubkey from DID
         let pk_bytes = ignite_pay_core::identity::extract_pubkey_from_did(merchant_did)?;
         let merchant = Pubkey::new_from_array(pk_bytes);
+        let token_mint = Pubkey::default(); // SOL for now
 
-        // Derive channel PDA
-        let (channel_pda, _) = pda::derive_channel_pda(
+        // Check vault capacity from on-chain GlobalState
+        let (global_pda, _) = pda::derive_global_state_pda(
             &self.mb_program_id,
             &self.mb_buyer_keypair.pubkey(),
-            &merchant,
+            &token_mint,
         );
+        let vault_available = match self.mb_rpc.get_account(&global_pda) {
+            Ok(account) => {
+                let gs = deserialize_global_state(&account.data).ok()?;
+                gs.total_deposited.saturating_sub(gs.total_allocated)
+            }
+            Err(e) => {
+                tracing::warn!("MB global state not found (vault not initialized): {}", e);
+                return None;
+            }
+        };
 
-        // Check if channel exists on-chain
-        let account = self.mb_rpc.get_account(&channel_pda).ok()?;
-        let channel = deserialize_channel(&account.data).ok()?;
-
-        // Check spending cap remaining
-        let remaining = channel.spending_cap.saturating_sub(channel.settled_amount);
-        if remaining < amount {
+        // Check outstanding vouchers don't exceed vault capacity
+        let outstanding = self.mb_voucher_store.total_outstanding().unwrap_or(0);
+        if outstanding.saturating_add(amount) > vault_available {
             tracing::warn!(
-                "MagicBlock channel {} spending cap exceeded: cap={}, settled={}, remaining={}, need={}",
-                channel_pda, channel.spending_cap, channel.settled_amount, remaining, amount
+                "MB vault insufficient: available={}, outstanding={}, requested={}",
+                vault_available, outstanding, amount
             );
             return None;
         }
 
-        // Determine next seq from stored vouchers
+        // Derive channel PDA (deterministic — no on-chain account needed)
+        let (channel_pda, _) = pda::derive_channel_pda(
+            &self.mb_program_id,
+            &self.mb_buyer_keypair.pubkey(),
+            &merchant,
+            &token_mint,
+        );
+
+        // Determine next seq from locally stored vouchers
         let channel_id = channel_pda.to_bytes();
         let next_seq = self.mb_voucher_store
             .get_vouchers_for_channel(&channel_id)
@@ -325,7 +349,7 @@ impl IgnitePayMcpServer {
             .map(|v| v.last().map(|last| last.seq + 1).unwrap_or(1))
             .unwrap_or(1);
 
-        // Sign voucher: SHA256(channel_id || seq || amount)
+        // Sign voucher off-chain: SHA256(channel_id || seq || amount)
         let kp_bytes = self.mb_buyer_keypair.to_bytes();
         let (msg_hash, sig) = signing::sign_voucher(
             &channel_id,
@@ -334,7 +358,7 @@ impl IgnitePayMcpServer {
             &kp_bytes,
         );
 
-        // Store voucher
+        // Store voucher locally
         let voucher = StoredVoucher {
             channel_id,
             merchant: merchant.to_bytes(),
@@ -348,7 +372,7 @@ impl IgnitePayMcpServer {
         }
 
         tracing::info!(
-            "MagicBlock voucher signed: channel={}, seq={}, amount={}",
+            "MagicBlock voucher signed off-chain: channel={}, seq={}, amount={}",
             channel_pda, next_seq, amount
         );
 
@@ -375,7 +399,7 @@ impl IgnitePayMcpServer {
                 // User chose MagicBlock — only use that path
                 match self.try_mb_voucher_payment(&payment.merchant_did, payment.amount) {
                     Some(proof) => Ok(proof),
-                    None => Err("MagicBlock channel not available for this merchant".to_string()),
+                    None => Err("MagicBlock voucher signing failed".to_string()),
                 }
             }
             Some("session_key") => {
@@ -386,7 +410,11 @@ impl IgnitePayMcpServer {
                 }
             }
             Some("relayer") => {
-                Err("Relayer payment method not yet implemented".to_string())
+                // User chose relayer-sponsored payment — session key signs, relayer pays gas
+                match execute_payment(&self.solana_client, payment, session, spl_params).await {
+                    Ok(tx_sig) => Ok(PaymentProof::TxSignature(tx_sig)),
+                    Err(e) => Err(e),
+                }
             }
             _ => {
                 // No preference (auto-approve) or unknown: try MagicBlock first, then session key
@@ -456,6 +484,14 @@ impl IgnitePayMcpServer {
             methods.push(ignite_pay_core::didcomm::PaymentMethod::MagicBlock);
         }
 
+        // Relayer is available when relayer_url is configured
+        if self.solana_client.as_ref()
+            .and_then(|c| c.relayer_url.as_ref())
+            .is_some()
+        {
+            methods.push(ignite_pay_core::didcomm::PaymentMethod::Relayer);
+        }
+
         methods
     }
 
@@ -466,10 +502,12 @@ impl IgnitePayMcpServer {
             None => return false,
         };
         let merchant = Pubkey::new_from_array(pk_bytes);
+        let token_mint = Pubkey::default();
         let (channel_pda, _) = pda::derive_channel_pda(
             &self.mb_program_id,
             &self.mb_buyer_keypair.pubkey(),
             &merchant,
+            &token_mint,
         );
         self.mb_rpc.get_account(&channel_pda).is_ok()
     }
@@ -1451,8 +1489,10 @@ impl IgnitePayMcpServer {
             Err(e) => return format!("Error getting blockhash: {}", e),
         };
 
+        let token_mint = Pubkey::default(); // SOL
         let tx = match transaction::build_initialize_global_tx(
             &*self.mb_buyer_keypair,
+            &token_mint,
             &self.mb_program_id,
             recent_blockhash,
         ) {
@@ -1467,9 +1507,10 @@ impl IgnitePayMcpServer {
     }
 
     #[tool(
-        description = "Deposit SOL into the MagicBlock global vault."
+        description = "Deposit SOL or SPL tokens into the MagicBlock global vault."
     )]
     async fn mb_deposit(&self, Parameters(input): Parameters<MbDepositInput>) -> String {
+        let token_mint = resolve_token_mint(&input.token_mint);
         let recent_blockhash = match self.mb_rpc.get_latest_blockhash() {
             Ok(bh) => bh,
             Err(e) => return format!("Error getting blockhash: {}", e),
@@ -1477,6 +1518,7 @@ impl IgnitePayMcpServer {
 
         let tx = match transaction::build_deposit_tx(
             &*self.mb_buyer_keypair,
+            &token_mint,
             input.amount,
             &self.mb_program_id,
             recent_blockhash,
@@ -1486,7 +1528,7 @@ impl IgnitePayMcpServer {
         };
 
         match self.mb_rpc.send_and_confirm_transaction(&tx) {
-            Ok(sig) => format!("Deposited {} lamports. Signature: {}", input.amount, sig),
+            Ok(sig) => format!("Deposited {} base units (token: {}). Signature: {}", input.amount, token_mint, sig),
             Err(e) => format!("Error sending tx: {}", e),
         }
     }
@@ -1499,6 +1541,7 @@ impl IgnitePayMcpServer {
             Ok(p) => p,
             Err(e) => return format!("Error: Invalid merchant pubkey: {}", e),
         };
+        let token_mint = resolve_token_mint(&input.token_mint);
 
         let recent_blockhash = match self.mb_rpc.get_latest_blockhash() {
             Ok(bh) => bh,
@@ -1508,6 +1551,7 @@ impl IgnitePayMcpServer {
         let tx = match transaction::build_initialize_channel_tx(
             &*self.mb_buyer_keypair,
             &merchant,
+            &token_mint,
             input.spending_cap,
             input.challenge_period,
             input.dispute_period,
@@ -1535,6 +1579,7 @@ impl IgnitePayMcpServer {
             Ok(p) => p,
             Err(e) => return format!("Error: Invalid merchant pubkey: {}", e),
         };
+        let token_mint = resolve_token_mint(&input.token_mint);
 
         let recent_blockhash = match self.mb_rpc.get_latest_blockhash() {
             Ok(bh) => bh,
@@ -1544,6 +1589,7 @@ impl IgnitePayMcpServer {
         let tx = match transaction::build_update_spending_cap_tx(
             &*self.mb_buyer_keypair,
             &merchant,
+            &token_mint,
             input.new_spending_cap,
             &self.mb_program_id,
             recent_blockhash,
@@ -1569,11 +1615,13 @@ impl IgnitePayMcpServer {
             Ok(p) => p,
             Err(e) => return format!("Error: Invalid merchant pubkey: {}", e),
         };
+        let token_mint = resolve_token_mint(&input.token_mint);
 
         let (channel_pda, _bump) = pda::derive_channel_pda(
             &self.mb_program_id,
             &self.mb_buyer_keypair.pubkey(),
             &merchant,
+            &token_mint,
         );
 
         let account = match self.mb_rpc.get_account(&channel_pda) {
@@ -1595,10 +1643,12 @@ impl IgnitePayMcpServer {
     #[tool(
         description = "Get the MagicBlock global state for this buyer."
     )]
-    async fn mb_get_global_state(&self, Parameters(_input): Parameters<MbGetGlobalStateInput>) -> String {
+    async fn mb_get_global_state(&self, Parameters(input): Parameters<MbGetGlobalStateInput>) -> String {
+        let token_mint = resolve_token_mint(&input.token_mint);
         let (global_pda, _bump) = pda::derive_global_state_pda(
             &self.mb_program_id,
             &self.mb_buyer_keypair.pubkey(),
+            &token_mint,
         );
 
         let account = match self.mb_rpc.get_account(&global_pda) {
@@ -1623,11 +1673,13 @@ impl IgnitePayMcpServer {
             Ok(p) => p,
             Err(e) => return format!("Error: Invalid merchant pubkey: {}", e),
         };
+        let token_mint = resolve_token_mint(&input.token_mint);
 
         let (channel_pda, _) = pda::derive_channel_pda(
             &self.mb_program_id,
             &self.mb_buyer_keypair.pubkey(),
             &merchant,
+            &token_mint,
         );
         let channel_id = channel_pda.to_bytes();
 
@@ -1669,6 +1721,7 @@ impl IgnitePayMcpServer {
             Ok(p) => p,
             Err(e) => return format!("Error: Invalid merchant pubkey: {}", e),
         };
+        let token_mint = resolve_token_mint(&input.token_mint);
 
         let merkle_root = match bs58::decode(&input.merkle_root).into_vec() {
             Ok(v) if v.len() == 32 => {
@@ -1683,6 +1736,7 @@ impl IgnitePayMcpServer {
             &self.mb_program_id,
             &self.mb_buyer_keypair.pubkey(),
             &merchant,
+            &token_mint,
         );
         let channel_id = channel_pda.to_bytes();
 
@@ -1749,11 +1803,13 @@ impl IgnitePayMcpServer {
             Ok(p) => p,
             Err(e) => return format!("Error: Invalid merchant pubkey: {}", e),
         };
+        let token_mint = Pubkey::default();
 
         let (channel_pda, _) = pda::derive_channel_pda(
             &self.mb_program_id,
             &self.mb_buyer_keypair.pubkey(),
             &merchant,
+            &token_mint,
         );
         let (escrow_pda, _) = pda::derive_settlement_pda(
             &self.mb_program_id,
@@ -1791,11 +1847,13 @@ impl IgnitePayMcpServer {
             Ok(p) => p,
             Err(e) => return format!("Error: Invalid merchant pubkey: {}", e),
         };
+        let token_mint = Pubkey::default();
 
         let (channel_pda, _) = pda::derive_channel_pda(
             &self.mb_program_id,
             &self.mb_buyer_keypair.pubkey(),
             &merchant,
+            &token_mint,
         );
         let (escrow_pda, _) = pda::derive_settlement_pda(
             &self.mb_program_id,
@@ -1862,6 +1920,7 @@ impl IgnitePayMcpServer {
         description = "Withdraw SOL from the MagicBlock global vault back to the buyer's wallet."
     )]
     async fn mb_withdraw(&self, Parameters(input): Parameters<MbWithdrawInput>) -> String {
+        let token_mint = resolve_token_mint(&input.token_mint);
         let recent_blockhash = match self.mb_rpc.get_latest_blockhash() {
             Ok(bh) => bh,
             Err(e) => return format!("Error getting blockhash: {}", e),
@@ -1869,6 +1928,7 @@ impl IgnitePayMcpServer {
 
         let tx = match transaction::build_withdraw_tx(
             &*self.mb_buyer_keypair,
+            &token_mint,
             input.amount,
             &self.mb_program_id,
             recent_blockhash,
@@ -1878,7 +1938,7 @@ impl IgnitePayMcpServer {
         };
 
         match self.mb_rpc.send_and_confirm_transaction(&tx) {
-            Ok(sig) => format!("Withdrew {} lamports. Signature: {}", input.amount, sig),
+            Ok(sig) => format!("Withdrew {} base units (token: {}). Signature: {}", input.amount, token_mint, sig),
             Err(e) => format!("Error sending tx: {}", e),
         }
     }
@@ -2058,6 +2118,7 @@ impl IgnitePayMcpServer {
 struct ChannelAccount {
     buyer: Pubkey,
     merchant: Pubkey,
+    token_mint: Pubkey,
     spending_cap: u64,
     settled_amount: u64,
     nonce: u64,
@@ -2068,6 +2129,7 @@ struct ChannelAccount {
 
 struct GlobalStateAccount {
     buyer: Pubkey,
+    token_mint: Pubkey,
     total_deposited: u64,
     total_allocated: u64,
     _bump: u8,
@@ -2075,32 +2137,36 @@ struct GlobalStateAccount {
 
 fn deserialize_channel(data: &[u8]) -> anyhow::Result<ChannelAccount> {
     // Anchor: 8-byte discriminator + data
-    if data.len() < 8 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 1 {
+    // Layout: buyer(32) + merchant(32) + token_mint(32) + spending_cap(8) + settled_amount(8) + nonce(8) + challenge_period(8) + dispute_period(8) + bump(1)
+    if data.len() < 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 1 {
         return Err(anyhow::anyhow!("Channel account data too short"));
     }
     let d = &data[8..];
     Ok(ChannelAccount {
         buyer: Pubkey::try_from(&d[0..32])?,
         merchant: Pubkey::try_from(&d[32..64])?,
-        spending_cap: u64::from_le_bytes(d[64..72].try_into()?),
-        settled_amount: u64::from_le_bytes(d[72..80].try_into()?),
-        nonce: u64::from_le_bytes(d[80..88].try_into()?),
-        challenge_period: i64::from_le_bytes(d[88..96].try_into()?),
-        dispute_period: i64::from_le_bytes(d[96..104].try_into()?),
-        _bump: d[104],
+        token_mint: Pubkey::try_from(&d[64..96])?,
+        spending_cap: u64::from_le_bytes(d[96..104].try_into()?),
+        settled_amount: u64::from_le_bytes(d[104..112].try_into()?),
+        nonce: u64::from_le_bytes(d[112..120].try_into()?),
+        challenge_period: i64::from_le_bytes(d[120..128].try_into()?),
+        dispute_period: i64::from_le_bytes(d[128..136].try_into()?),
+        _bump: d[136],
     })
 }
 
 fn deserialize_global_state(data: &[u8]) -> anyhow::Result<GlobalStateAccount> {
-    if data.len() < 8 + 32 + 8 + 8 + 1 {
+    // Layout: buyer(32) + token_mint(32) + total_deposited(8) + total_allocated(8) + bump(1)
+    if data.len() < 8 + 32 + 32 + 8 + 8 + 1 {
         return Err(anyhow::anyhow!("Global state data too short"));
     }
     let d = &data[8..];
     Ok(GlobalStateAccount {
         buyer: Pubkey::try_from(&d[0..32])?,
-        total_deposited: u64::from_le_bytes(d[32..40].try_into()?),
-        total_allocated: u64::from_le_bytes(d[40..48].try_into()?),
-        _bump: d[48],
+        token_mint: Pubkey::try_from(&d[32..64])?,
+        total_deposited: u64::from_le_bytes(d[64..72].try_into()?),
+        total_allocated: u64::from_le_bytes(d[72..80].try_into()?),
+        _bump: d[80],
     })
 }
 
@@ -2120,6 +2186,38 @@ impl ServerHandler for IgnitePayMcpServer {
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
+
+/// Resolve an optional token_mint string into a Pubkey.
+/// Defaults to Pubkey::default() (all zeros) for SOL.
+fn resolve_token_mint(token_mint: &Option<String>) -> Pubkey {
+    token_mint
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .and_then(|s| s.parse::<Pubkey>().ok())
+        .unwrap_or_default()
+}
+
+/// Send an MB deposit error response to the phone.
+async fn send_mb_deposit_error(
+    server: &IgnitePayMcpServer,
+    phone_did: &str,
+    amount: u64,
+    token: &str,
+    error: &str,
+) -> anyhow::Result<()> {
+    let response = ignite_pay_core::didcomm::build_mb_deposit_response(
+        &server.mediator.our_did(),
+        phone_did,
+        false,
+        amount,
+        None,
+        None,
+        token,
+        Some(error),
+    );
+    server.mediator.send_to_phone(&response, phone_did).await?;
+    Ok(())
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -2265,8 +2363,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Connect to mediator (spawns background task with pending auth handling)
     let (qr_payment_tx, mut qr_payment_rx) = tokio::sync::mpsc::unbounded_channel::<QrPaymentCommand>();
+    let (mb_deposit_tx, mut mb_deposit_rx) = tokio::sync::mpsc::unbounded_channel::<MbDepositCommand>();
     mediator
-        .connect(Arc::clone(&pending), None, Some(qr_payment_tx))
+        .connect(Arc::clone(&pending), None, Some(mb_deposit_tx), Some(qr_payment_tx))
         .await?;
     tracing::info!("Connecting to mediator at {}...", config.mediator.ws_url);
 
@@ -2345,7 +2444,19 @@ async fn main() -> anyhow::Result<()> {
         platform_verifying_key: config.platform.verifying_key_bytes(),
         solana_client,
         solana_bridge,
-        ipfs_client: Arc::new(Box::new(MockIpfsClient::new())),
+        ipfs_client: {
+            let ipfs_client: Arc<Box<dyn IpfsClient>> = match config.ipfs.mode.as_str() {
+                "kubo" => {
+                    tracing::info!("Using Kubo IPFS client: {}", config.ipfs.kubo_url);
+                    Arc::new(Box::new(KuboIpfsClient::new(&config.ipfs.kubo_url)))
+                }
+                _ => {
+                    tracing::info!("Using Mock IPFS client");
+                    Arc::new(Box::new(MockIpfsClient::new()))
+                }
+            };
+            ipfs_client
+        },
         audit,
         default_owner,
         did_service,
@@ -2464,6 +2575,120 @@ async fn main() -> anyhow::Result<()> {
                             "Failed to notify merchant MCP (non-fatal): {}", e
                         ),
                     }
+                }
+            }
+        });
+    }
+
+    // Spawn MB deposit handler background task
+    // When the phone sends an mb-deposit-request, the mediator forwards it here.
+    {
+        let server = server.clone();
+        tokio::spawn(async move {
+            while let Some(cmd) = mb_deposit_rx.recv().await {
+                tracing::info!(
+                    "Processing MB deposit: phone={} amount={} token={}",
+                    cmd.phone_did, cmd.amount, cmd.token
+                );
+
+                // Resolve token mint
+                let token_mint = cmd.token.parse::<Pubkey>()
+                    .unwrap_or_else(|_| Pubkey::default());
+
+                // 1. Check if global state exists; if not, init_global first
+                let (global_pda, _) = pda::derive_global_state_pda(
+                    &server.mb_program_id,
+                    &server.mb_buyer_keypair.pubkey(),
+                    &token_mint,
+                );
+                let global_exists = server.mb_rpc.get_account(&global_pda).is_ok();
+
+                if !global_exists {
+                    tracing::info!("MB global state not found, initializing...");
+                    let bh = match server.mb_rpc.get_latest_blockhash() {
+                        Ok(bh) => bh,
+                        Err(e) => {
+                            tracing::error!("MB deposit: failed to get blockhash: {}", e);
+                            let _ = send_mb_deposit_error(&server, &cmd.phone_did, cmd.amount, &cmd.token, &format!("Blockhash error: {}", e)).await;
+                            continue;
+                        }
+                    };
+                    let init_tx = match transaction::build_initialize_global_tx(
+                        &*server.mb_buyer_keypair,
+                        &token_mint,
+                        &server.mb_program_id,
+                        bh,
+                    ) {
+                        Ok(tx) => tx,
+                        Err(e) => {
+                            tracing::error!("MB deposit: failed to build init_global tx: {}", e);
+                            let _ = send_mb_deposit_error(&server, &cmd.phone_did, cmd.amount, &cmd.token, &format!("Init global error: {}", e)).await;
+                            continue;
+                        }
+                    };
+                    if let Err(e) = server.mb_rpc.send_and_confirm_transaction(&init_tx) {
+                        tracing::error!("MB deposit: init_global tx failed: {}", e);
+                        let _ = send_mb_deposit_error(&server, &cmd.phone_did, cmd.amount, &cmd.token, &format!("Init global tx failed: {}", e)).await;
+                        continue;
+                    }
+                    tracing::info!("MB global state initialized");
+                }
+
+                // 2. Deposit
+                let bh = match server.mb_rpc.get_latest_blockhash() {
+                    Ok(bh) => bh,
+                    Err(e) => {
+                        tracing::error!("MB deposit: failed to get blockhash: {}", e);
+                        let _ = send_mb_deposit_error(&server, &cmd.phone_did, cmd.amount, &cmd.token, &format!("Blockhash error: {}", e)).await;
+                        continue;
+                    }
+                };
+                let deposit_tx = match transaction::build_deposit_tx(
+                    &*server.mb_buyer_keypair,
+                    &token_mint,
+                    cmd.amount,
+                    &server.mb_program_id,
+                    bh,
+                ) {
+                    Ok(tx) => tx,
+                    Err(e) => {
+                        tracing::error!("MB deposit: failed to build deposit tx: {}", e);
+                        let _ = send_mb_deposit_error(&server, &cmd.phone_did, cmd.amount, &cmd.token, &format!("Build deposit error: {}", e)).await;
+                        continue;
+                    }
+                };
+                let tx_sig = match server.mb_rpc.send_and_confirm_transaction(&deposit_tx) {
+                    Ok(sig) => {
+                        tracing::info!("MB deposit confirmed: {} lamports, sig: {}", cmd.amount, sig);
+                        sig.to_string()
+                    }
+                    Err(e) => {
+                        tracing::error!("MB deposit tx failed: {}", e);
+                        let _ = send_mb_deposit_error(&server, &cmd.phone_did, cmd.amount, &cmd.token, &format!("Deposit tx failed: {}", e)).await;
+                        continue;
+                    }
+                };
+
+                // 3. Get updated global state for total_deposited
+                let total_deposited = server.mb_rpc.get_account(&global_pda)
+                    .ok()
+                    .and_then(|a| deserialize_global_state(&a.data).ok())
+                    .map(|gs| gs.total_deposited);
+
+                // 4. Send success response
+                let response = ignite_pay_core::didcomm::build_mb_deposit_response(
+                    &server.mediator.our_did(),
+                    &cmd.phone_did,
+                    true,
+                    cmd.amount,
+                    total_deposited,
+                    Some(&tx_sig),
+                    &cmd.token,
+                    None,
+                );
+                match server.mediator.send_to_phone(&response, &cmd.phone_did).await {
+                    Ok(_) => tracing::info!("MB deposit response sent to phone"),
+                    Err(e) => tracing::error!("Failed to send MB deposit response: {}", e),
                 }
             }
         });

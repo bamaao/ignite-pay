@@ -12,6 +12,9 @@ idl-build = ["anchor-lang/idl-build"]
 
 [dependencies]
 anchor-lang = "1.0.1"
+# TODO: Add spl-token and spl-associated-token-account when implementing SPL CPI path
+# spl-token = "4"
+# spl-associated-token-account = "3"
 solana-hash = "4"
 solana-sha256-hasher = "3.1"
 solana-instruction = "3"

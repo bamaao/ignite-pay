@@ -47,6 +47,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _treeAddrController = TextEditingController();
   final _treeAuthController = TextEditingController();
   final _dasController = TextEditingController();
+  final _relayerUrlController = TextEditingController();
   String _payMode = 'self_funded';
   String _network = 'devnet';
 
@@ -64,6 +65,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _treeAddrController.text = prefs.getString('tree_address') ?? '';
         _treeAuthController.text = prefs.getString('tree_authority') ?? '';
         _dasController.text = prefs.getString('das_endpoint') ?? '';
+        _relayerUrlController.text = prefs.getString('relayer_url') ?? 'http://localhost:3030';
         _payMode = prefs.getString('pay_mode') ?? 'self_funded';
         _network = prefs.getString('network') ?? 'devnet';
       });
@@ -161,6 +163,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _treeAddrController.dispose();
     _treeAuthController.dispose();
     _dasController.dispose();
+    _relayerUrlController.dispose();
     super.dispose();
   }
 
@@ -350,6 +353,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _saveSetting('pay_mode', v);
                 },
               ),
+              if (_payMode == 'sponsored') ...[
+                const SizedBox(height: 8),
+                _ConfigField(
+                  label: 'Relayer URL',
+                  controller: _relayerUrlController,
+                  placeholder: 'http://localhost:3030',
+                  onChanged: (v) => _saveSetting('relayer_url', v),
+                ),
+              ],
               const SizedBox(height: 24),
 
               // Storage

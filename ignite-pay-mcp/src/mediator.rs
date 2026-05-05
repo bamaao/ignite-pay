@@ -45,6 +45,16 @@ pub struct QrPaymentCommand {
     pub merchant_mediator_url: String,
 }
 
+/// Command sent when an mb-deposit-request is received from the phone app.
+/// The MCP deposits into the MagicBlock shared vault and sends a response back.
+#[derive(Debug)]
+pub struct MbDepositCommand {
+    pub phone_did: String,
+    pub amount: u64,
+    /// Token identifier: "SOL" or SPL token mint address (base58).
+    pub token: String,
+}
+
 /// Encapsulates the WebSocket connection to the DIDComm mediator.
 pub struct MediatorConnection {
     agent: Arc<Mutex<DIDCommAgent>>,
@@ -231,6 +241,7 @@ impl MediatorConnection {
         &self,
         pending: Arc<PendingAuthStore>,
         create_channel_tx: Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+        mb_deposit_tx: Option<mpsc::UnboundedSender<MbDepositCommand>>,
         qr_payment_tx: Option<mpsc::UnboundedSender<QrPaymentCommand>>,
     ) -> Result<()> {
         let agent = self.agent.clone();
@@ -266,6 +277,7 @@ impl MediatorConnection {
                 pending_phone,
                 phone_mediator_http_url,
                 create_channel_tx,
+                mb_deposit_tx,
                 qr_payment_tx,
                 &signing_private,
                 &db,
@@ -589,6 +601,7 @@ async fn real_ws_client(
     pending_phone: Arc<tokio::sync::Mutex<Option<String>>>,
     phone_mediator_http_url: Arc<tokio::sync::Mutex<Option<String>>>,
     create_channel_tx: Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+    mb_deposit_tx: Option<mpsc::UnboundedSender<MbDepositCommand>>,
     qr_payment_tx: Option<mpsc::UnboundedSender<QrPaymentCommand>>,
     signing_private: &[u8; 32],
     db: &sled::Db,
@@ -605,6 +618,7 @@ async fn real_ws_client(
             &pending_phone,
             &phone_mediator_http_url,
             &create_channel_tx,
+            &mb_deposit_tx,
             &qr_payment_tx,
             signing_private,
             db,
@@ -634,6 +648,7 @@ async fn connect_and_run(
     pending_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
     phone_mediator_http_url: &Arc<tokio::sync::Mutex<Option<String>>>,
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+    mb_deposit_tx: &Option<mpsc::UnboundedSender<MbDepositCommand>>,
     qr_payment_tx: &Option<mpsc::UnboundedSender<QrPaymentCommand>>,
     signing_private: &[u8; 32],
     db: &sled::Db,
@@ -801,7 +816,7 @@ async fn connect_and_run(
                                     for entry in messages {
                                         if let Some(jwe) = entry.get("message").and_then(|m| m.as_str()) {
                                             handle_incoming_message(
-                                                jwe, agent, pending, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, qr_payment_tx, db, our_did, did_doc, ws_url, signing_private,
+                                                jwe, agent, pending, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, mb_deposit_tx, qr_payment_tx, db, our_did, did_doc, ws_url, signing_private,
                                             )
                                             .await;
                                         }
@@ -840,7 +855,7 @@ async fn connect_and_run(
             msg = ws.next() => {
                 match msg {
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
-                        handle_incoming_message(&text, agent, pending, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, qr_payment_tx, db, our_did, did_doc, ws_url, signing_private).await;
+                        handle_incoming_message(&text, agent, pending, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, mb_deposit_tx, qr_payment_tx, db, our_did, did_doc, ws_url, signing_private).await;
                     }
                     Some(Ok(_)) => {}
                     Some(Err(e)) => return Err(e.into()),
@@ -947,6 +962,7 @@ async fn handle_incoming_message(
     pending_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
     phone_mediator_http_url: &Arc<tokio::sync::Mutex<Option<String>>>,
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+    mb_deposit_tx: &Option<mpsc::UnboundedSender<MbDepositCommand>>,
     qr_payment_tx: &Option<mpsc::UnboundedSender<QrPaymentCommand>>,
     db: &sled::Db,
     our_did: &str,
@@ -960,7 +976,7 @@ async fn handle_incoming_message(
         match didcomm::unpack_message(&agent_guard, text, None) {
             Ok(msg) => {
                 drop(agent_guard);
-                process_inner_message(&msg, pending, paired_phone, pending_phone, phone_mediator_http_url, agent, create_channel_tx, qr_payment_tx, db, our_did, did_doc, mcp_ws_url, signing_private).await;
+                process_inner_message(&msg, pending, paired_phone, pending_phone, phone_mediator_http_url, agent, create_channel_tx, mb_deposit_tx, qr_payment_tx, db, our_did, did_doc, mcp_ws_url, signing_private).await;
                 return;
             }
             Err(e) => {
@@ -1209,6 +1225,7 @@ async fn process_inner_message(
     phone_mediator_http_url: &Arc<tokio::sync::Mutex<Option<String>>>,
     agent: &Arc<Mutex<DIDCommAgent>>,
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
+    mb_deposit_tx: &Option<mpsc::UnboundedSender<MbDepositCommand>>,
     qr_payment_tx: &Option<mpsc::UnboundedSender<QrPaymentCommand>>,
     db: &sled::Db,
     our_did: &str,
@@ -1492,6 +1509,34 @@ async fn process_inner_message(
             }
         } else {
             tracing::warn!("No create_channel_tx available, ignoring create-channel-request");
+        }
+    } else if msg.typ.contains("mb-deposit-request") {
+        // Handle MB deposit request from phone (deposit into shared vault)
+        let phone_did = msg.from.clone().unwrap_or_default();
+        let amount = msg.body.get("amount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let token = msg.body.get("token")
+            .and_then(|v| v.as_str())
+            .unwrap_or("SOL")
+            .to_string();
+
+        tracing::info!(
+            "Received mb-deposit-request from phone {}: amount={} token={}",
+            phone_did, amount, token
+        );
+
+        if let Some(tx) = mb_deposit_tx {
+            let cmd = MbDepositCommand {
+                phone_did,
+                amount,
+                token,
+            };
+            if let Err(e) = tx.send(cmd) {
+                tracing::error!("Failed to send MbDepositCommand: {}", e);
+            }
+        } else {
+            tracing::warn!("No mb_deposit_tx available, ignoring mb-deposit-request");
         }
     } else if msg.typ.contains("qr-payment-request") {
         // Handle QR payment request from phone (user scanned merchant QR code)

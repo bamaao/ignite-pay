@@ -47,6 +47,9 @@ pub enum SolanaError {
     #[error("BS58 decode error: {0}")]
     Bs58Error(#[from] bs58::decode::Error),
 
+    #[error("Relayer error: {0}")]
+    RelayerError(String),
+
     #[error("{0}")]
     Other(#[from] anyhow::Error),
 }

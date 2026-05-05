@@ -140,8 +140,11 @@ pub struct VerifyMerchantInput {
 /// Input for the `mb_deposit` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MbDepositInput {
-    /// Amount to deposit in lamports.
+    /// Amount to deposit in base units (lamports for SOL, smallest unit for SPL tokens).
     pub amount: u64,
+    /// Token mint address (base58). Defaults to SOL if empty.
+    #[serde(default)]
+    pub token_mint: Option<String>,
 }
 
 /// Input for the `mb_create_channel` tool.
@@ -157,8 +160,11 @@ fn default_dispute_period() -> i64 {
 pub struct MbCreateChannelInput {
     /// Merchant pubkey (base58).
     pub merchant_pubkey: String,
-    /// Maximum spending cap in lamports.
+    /// Maximum spending cap in base units.
     pub spending_cap: u64,
+    /// Token mint address (base58). Defaults to SOL if empty.
+    #[serde(default)]
+    pub token_mint: Option<String>,
     /// Challenge period in slots (default 21600 ~ 1 day).
     #[serde(default = "default_challenge_period")]
     pub challenge_period: i64,
@@ -172,8 +178,11 @@ pub struct MbCreateChannelInput {
 pub struct MbUpdateSpendingCapInput {
     /// Merchant pubkey (base58).
     pub merchant_pubkey: String,
-    /// New spending cap in lamports.
+    /// New spending cap in base units.
     pub new_spending_cap: u64,
+    /// Token mint address (base58). Defaults to SOL if empty.
+    #[serde(default)]
+    pub token_mint: Option<String>,
 }
 
 /// Input for the `mb_sign_voucher` tool.
@@ -183,8 +192,11 @@ pub struct MbSignVoucherInput {
     pub merchant_pubkey: String,
     /// Voucher sequence number.
     pub seq: u64,
-    /// Payment amount in lamports.
+    /// Payment amount in base units.
     pub amount: u64,
+    /// Token mint address (base58). Defaults to SOL if empty.
+    #[serde(default)]
+    pub token_mint: Option<String>,
 }
 
 /// Input for the `mb_sign_settlement` tool.
@@ -194,10 +206,13 @@ pub struct MbSignSettlementInput {
     pub merchant_pubkey: String,
     /// Merkle root hash (base58).
     pub merkle_root: String,
-    /// Total amount to settle in lamports.
+    /// Total amount to settle in base units.
     pub total_amount: u64,
     /// Batch nonce (must match channel nonce).
     pub batch_nonce: u64,
+    /// Token mint address (base58). Defaults to SOL if empty.
+    #[serde(default)]
+    pub token_mint: Option<String>,
 }
 
 /// Input for the `mb_get_channel` tool.
@@ -205,11 +220,18 @@ pub struct MbSignSettlementInput {
 pub struct MbGetChannelInput {
     /// Merchant pubkey (base58).
     pub merchant_pubkey: String,
+    /// Token mint address (base58). Defaults to SOL if empty.
+    #[serde(default)]
+    pub token_mint: Option<String>,
 }
 
 /// Input for the `mb_get_global_state` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct MbGetGlobalStateInput {}
+pub struct MbGetGlobalStateInput {
+    /// Token mint address (base58). Defaults to SOL if empty.
+    #[serde(default)]
+    pub token_mint: Option<String>,
+}
 
 /// Input for the `mb_dispute` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -234,8 +256,11 @@ pub struct MbResolveDisputeInput {
 /// Input for the `mb_withdraw` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MbWithdrawInput {
-    /// Amount to withdraw in lamports.
+    /// Amount to withdraw in base units.
     pub amount: u64,
+    /// Token mint address (base58). Defaults to SOL if empty.
+    #[serde(default)]
+    pub token_mint: Option<String>,
 }
 
 #[cfg(test)]

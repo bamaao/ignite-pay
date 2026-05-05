@@ -289,7 +289,7 @@ pub fn build_authorization_request(
     description: &str,
 ) -> Message {
     build_authorization_request_inner(
-        from_did, to_did, payment_id, merchant_did, amount, description, None, None,
+        from_did, to_did, payment_id, merchant_did, amount, description, None, None, None, None,
     )
 }
 
@@ -306,7 +306,7 @@ pub fn build_authorization_request_with_session_key(
     new_session_key: &NewSessionKeyRequest,
 ) -> Message {
     build_authorization_request_inner(
-        from_did, to_did, payment_id, merchant_did, amount, description, Some(new_session_key), None,
+        from_did, to_did, payment_id, merchant_did, amount, description, Some(new_session_key), None, None, None,
     )
 }
 
@@ -322,7 +322,25 @@ pub fn build_authorization_request_with_methods(
     available_payment_methods: &[PaymentMethod],
 ) -> Message {
     build_authorization_request_inner(
-        from_did, to_did, payment_id, merchant_did, amount, description, new_session_key, Some(available_payment_methods),
+        from_did, to_did, payment_id, merchant_did, amount, description, new_session_key, Some(available_payment_methods), None, None,
+    )
+}
+
+/// Build a payment authorization request with session key, payment methods, and relayer info.
+pub fn build_authorization_request_with_relayer(
+    from_did: &str,
+    to_did: &str,
+    payment_id: &str,
+    merchant_did: &str,
+    amount: u64,
+    description: &str,
+    new_session_key: Option<&NewSessionKeyRequest>,
+    available_payment_methods: &[PaymentMethod],
+    relayer_pubkey: &str,
+    relayer_url: &str,
+) -> Message {
+    build_authorization_request_inner(
+        from_did, to_did, payment_id, merchant_did, amount, description, new_session_key, Some(available_payment_methods), Some(relayer_pubkey), Some(relayer_url),
     )
 }
 
@@ -335,6 +353,8 @@ fn build_authorization_request_inner(
     description: &str,
     new_session_key: Option<&NewSessionKeyRequest>,
     available_payment_methods: Option<&[PaymentMethod]>,
+    relayer_pubkey: Option<&str>,
+    relayer_url: Option<&str>,
 ) -> Message {
     let mut body = json!({
         "payment_id": payment_id,
@@ -362,6 +382,11 @@ fn build_authorization_request_inner(
         body["available_payment_methods"] = json!(
             methods.iter().map(|m| m.as_str()).collect::<Vec<_>>()
         );
+    }
+
+    if let (Some(pk), Some(url)) = (relayer_pubkey, relayer_url) {
+        body["relayer_pubkey"] = json!(pk);
+        body["relayer_url"] = json!(url);
     }
 
     Message::new(
@@ -725,6 +750,59 @@ pub fn build_create_channel_response(
     }
     Message::new(
         "https://didcomm.org/ignite-pay/1.0/create-channel-response",
+        body,
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build an MB deposit request message.
+/// Sent from the App to the MCP server to deposit into the MagicBlock shared vault.
+pub fn build_mb_deposit_request(
+    from_did: &str,
+    to_did: &str,
+    amount: u64,
+    token: &str,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/mb-deposit-request",
+        json!({
+            "amount": amount,
+            "token": token,
+        }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build an MB deposit response message.
+/// Sent from MCP back to the App after deposit attempt.
+pub fn build_mb_deposit_response(
+    from_did: &str,
+    to_did: &str,
+    success: bool,
+    deposit_amount: u64,
+    total_deposited: Option<u64>,
+    tx_signature: Option<&str>,
+    token: &str,
+    error: Option<&str>,
+) -> Message {
+    let mut body = json!({
+        "success": success,
+        "deposit_amount": deposit_amount,
+        "token": token,
+    });
+    if let Some(total) = total_deposited {
+        body["total_deposited"] = json!(total);
+    }
+    if let Some(sig) = tx_signature {
+        body["tx_signature"] = json!(sig);
+    }
+    if let Some(err) = error {
+        body["error"] = json!(err);
+    }
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/mb-deposit-response",
         body,
     )
     .from(from_did.to_string())
