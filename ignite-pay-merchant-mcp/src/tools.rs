@@ -119,3 +119,32 @@ pub struct RegisterMerchantInput {
 /// Input for the `verify_merchant_did` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct VerifyMerchantDidInput {}
+
+// Agent x402 payment tools
+
+/// Input for the `list_products` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListProductsInput {}
+
+/// Input for the `create_order` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateOrderInput {
+    /// Product ID from list_products (optional, if provided uses product price).
+    #[serde(default)]
+    pub product_id: Option<String>,
+    /// Amount in lamports (required if no product_id).
+    #[serde(default)]
+    pub amount: Option<u64>,
+    /// Order description (optional).
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// Input for the `verify_payment` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct VerifyPaymentInput {
+    /// Order ID returned by create_order.
+    pub order_id: String,
+    /// Payment proof string from buyer MCP (e.g. "Tx: <base58_sig>" or voucher format).
+    pub payment_proof: String,
+}

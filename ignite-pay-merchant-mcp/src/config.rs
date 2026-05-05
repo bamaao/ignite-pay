@@ -1,4 +1,15 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ProductConfig {
+    pub id: String,
+    pub name: String,
+    pub price: u64,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub category: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -13,6 +24,8 @@ pub struct Config {
     pub magicblock: MagicBlockConfig,
     #[serde(default)]
     pub did_registry: DidRegistryConfig,
+    #[serde(default)]
+    pub products: Vec<ProductConfig>,
 }
 
 #[derive(Debug, Deserialize, Default)]

@@ -37,3 +37,15 @@ provider_pubkey = ""
 [did_registry]
 # DID Registry service URL for VC issuance and on-chain ZK DID registration
 url = "http://localhost:8081"
+
+[[products]]
+id = "coffee"
+name = "Coffee"
+price = 100000
+description = "A cup of coffee"
+
+[[products]]
+id = "sandwich"
+name = "Sandwich"
+price = 250000
+description = "Fresh sandwich"
