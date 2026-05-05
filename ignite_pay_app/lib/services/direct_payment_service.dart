@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart' as bridge;
 import 'package:ignite_pay_app/services/wallet_deep_link_service.dart';
@@ -97,6 +98,9 @@ class DirectPaymentService extends ChangeNotifier {
     required String rpcUrl,
     required String merchantDid,
     required int amountLamports,
+    String token = 'SOL',
+    String tokenMint = '',
+    String? merchantWallet,
   }) async {
     if (_walletPubkey == null) {
       return DirectPaymentResult.failure(error: 'Wallet not connected');
@@ -107,13 +111,26 @@ class DirectPaymentService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Build unsigned transfer tx via Rust
-      final unsignedTx = await bridge.buildUnsignedTransferTx(
-        rpcUrl: rpcUrl,
-        walletPubkeyB58: _walletPubkey!,
-        merchantDid: merchantDid,
-        amountLamports: BigInt.from(amountLamports),
-      );
+      final String unsignedTx;
+      if (token != 'SOL' && tokenMint.isNotEmpty) {
+        // SPL Token transfer
+        final merchantAddr = merchantWallet ?? merchantDid;
+        unsignedTx = await bridge.buildUnsignedSplTransferTx(
+          rpcUrl: rpcUrl,
+          walletPubkeyB58: _walletPubkey!,
+          merchantWalletB58: merchantAddr,
+          amount: BigInt.from(amountLamports),
+          tokenMintB58: tokenMint,
+        );
+      } else {
+        // SOL transfer
+        unsignedTx = await bridge.buildUnsignedTransferTx(
+          rpcUrl: rpcUrl,
+          walletPubkeyB58: _walletPubkey!,
+          merchantDid: merchantDid,
+          amountLamports: BigInt.from(amountLamports),
+        );
+      }
 
       // Open wallet sign-and-send deep link
       final String url;
@@ -176,8 +193,123 @@ class DirectPaymentService extends ChangeNotifier {
     if (_paymentCompleter != null && !_paymentCompleter!.isCompleted) {
       _paymentCompleter!.completeError('reset');
     }
+    if (_sponsoredSignCompleter != null && !_sponsoredSignCompleter!.isCompleted) {
+      _sponsoredSignCompleter!.completeError('reset');
+    }
     _connectCompleter = null;
     _paymentCompleter = null;
+    _sponsoredSignCompleter = null;
     notifyListeners();
+  }
+
+  // ── Sponsored Payment ────────────────────────────────────────────────
+
+  /// Completer bridging the signTransaction deep link callback.
+  Completer<String>? _sponsoredSignCompleter;
+
+  /// Execute a sponsored payment: build tx → wallet signTransaction → relayer broadcast.
+  Future<DirectPaymentResult> executeSponsoredPayment({
+    required String rpcUrl,
+    required String merchantDid,
+    required int amountLamports,
+    required String relayerUrl,
+    String token = 'SOL',
+    String tokenMint = '',
+    String? merchantWallet,
+  }) async {
+    if (_walletPubkey == null) {
+      return DirectPaymentResult.failure(error: 'Wallet not connected');
+    }
+
+    _isPaying = true;
+    _sponsoredSignCompleter = Completer<String>();
+    notifyListeners();
+
+    try {
+      // 1. Fetch relayer pubkey
+      final relayerPubkey = await bridge.fetchRelayerPubkey(
+        relayerUrl: relayerUrl,
+      );
+
+      // 2. Build unsigned sponsored tx
+      final String unsignedTx;
+      if (token != 'SOL' && tokenMint.isNotEmpty) {
+        // SPL Token sponsored transfer
+        final merchantAddr = merchantWallet ?? merchantDid;
+        unsignedTx = await bridge.buildUnsignedSponsoredSplTransferTx(
+          rpcUrl: rpcUrl,
+          walletPubkeyB58: _walletPubkey!,
+          merchantWalletB58: merchantAddr,
+          amount: BigInt.from(amountLamports),
+          tokenMintB58: tokenMint,
+          relayerPubkeyB58: relayerPubkey,
+        );
+      } else {
+        // SOL sponsored transfer
+        unsignedTx = await bridge.buildUnsignedSponsoredTransferTx(
+          rpcUrl: rpcUrl,
+          walletPubkeyB58: _walletPubkey!,
+          merchantDid: merchantDid,
+          amountLamports: BigInt.from(amountLamports),
+          relayerPubkeyB58: relayerPubkey,
+        );
+      }
+
+      // 3. Open wallet signTransaction deep link
+      final String url;
+      if (_walletType == 'phantom') {
+        url = _deepLink.buildPhantomSignTransactionUrl(
+          transactionB58: unsignedTx,
+          redirectScheme: 'ignitepay',
+          redirectPath: 'sponsored_sign',
+        );
+      } else {
+        url = _deepLink.buildSolflareSignTransactionUrl(
+          transactionB58: unsignedTx,
+          redirectScheme: 'ignitepay',
+          redirectPath: 'sponsored_sign',
+        );
+      }
+
+      await _deepLink.openWalletUrl(url);
+
+      // 4. Wait for signTransaction callback with the signed tx
+      final signedTx = await _sponsoredSignCompleter!.future;
+
+      // 5. Send to relayer for fee-payer signature and broadcast
+      final sponsorUrl = relayerUrl.replaceAll(RegExp(r'/sponsor$'), '').replaceAll(RegExp(r'/$'), '');
+      final dio = Dio();
+      final response = await dio.post(
+        '$sponsorUrl/sponsor',
+        data: {'transaction': signedTx},
+      );
+
+      if (response.statusCode != 200) {
+        return DirectPaymentResult.failure(
+          error: 'Relayer error: ${response.statusCode} ${response.data}',
+        );
+      }
+
+      final result = response.data;
+      final signature = result['signature'] as String?;
+
+      if (signature == null) {
+        return DirectPaymentResult.failure(error: 'No signature in relayer response');
+      }
+
+      return DirectPaymentResult.success(signature: signature);
+    } catch (e) {
+      return DirectPaymentResult.failure(error: e.toString());
+    } finally {
+      _isPaying = false;
+      notifyListeners();
+    }
+  }
+
+  /// Called from the deep link handler when the wallet returns a signed transaction.
+  void handleSponsoredSignCallback(String signedTransaction) {
+    if (_sponsoredSignCompleter != null && !_sponsoredSignCompleter!.isCompleted) {
+      _sponsoredSignCompleter!.complete(signedTransaction);
+    }
   }
 }

@@ -836,6 +836,58 @@ pub async fn send_create_channel_request(
 
 // ── MB Voucher Bridge Wrappers ──────────────────────────────────────────
 
+/// Send an MB deposit request to the MCP server.
+/// The MCP deposits into the MagicBlock shared vault and returns mb-deposit-response.
+pub async fn send_mb_deposit_request(
+    storage_path: String,
+    amount: u64,
+    token: String,
+) -> Result<()> {
+    use ignite_pay_core::didcomm;
+    use crate::api::identity::IdentityManager;
+
+    let mgr = IdentityManager::new(&storage_path)?;
+    let our_did = mgr.did().to_string();
+    let agent = mgr.agent();
+
+    // Resolve the MCP DID from paired connection
+    let db = sled::open(&storage_path)?;
+    let tree = db.open_tree("paired_mcp")?;
+    let mcp_did = String::from_utf8(
+        tree.get("mcp_did")?
+            .ok_or_else(|| anyhow::anyhow!("No paired MCP found"))?
+            .to_vec()
+    )?;
+
+    // Build the mb-deposit-request DIDComm message
+    let msg = didcomm::build_mb_deposit_request(
+        &our_did,
+        &mcp_did,
+        amount,
+        &token,
+    );
+
+    // Encrypt to JWE
+    let agent_guard = agent.lock().await;
+    let jwe = didcomm::pack_encrypted(&agent_guard, &msg, &our_did, &mcp_did)
+        .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
+    drop(agent_guard);
+
+    // Send via WebSocket to the mediator
+    let ws = GLOBAL_WS_CLIENT.lock().await;
+    let ws_client = ws
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("WebSocket not connected"))?;
+    ws_client.send_raw(&jwe).await?;
+
+    tracing::info!(
+        "MB deposit request sent: amount={} lamports",
+        amount
+    );
+
+    Ok(())
+}
+
 /// Get or generate the buyer MB keypair, return base58 pubkey.
 pub fn mb_get_buyer_pubkey(storage_path: String) -> Result<String> {
     crate::api::mb_voucher::get_mb_buyer_pubkey(storage_path)
@@ -967,4 +1019,70 @@ pub async fn mb_send_voucher(
     ws_client.send_raw(&jwe).await?;
 
     Ok(())
+}
+
+// ── Sponsored (Relayer) Payment Bridge Wrappers ─────────────────────────
+
+/// Fetch the relayer's fee-payer public key from GET /info.
+pub async fn fetch_relayer_pubkey(relayer_url: String) -> Result<String> {
+    crate::api::session::fetch_relayer_pubkey(relayer_url).await
+}
+
+/// Build an unsigned sponsored SOL transfer transaction for direct wallet signing.
+/// Bridge wrapper around `session::build_unsigned_sponsored_transfer_tx`.
+pub async fn build_unsigned_sponsored_transfer_tx(
+    rpc_url: String,
+    wallet_pubkey_b58: String,
+    merchant_did: String,
+    amount_lamports: u64,
+    relayer_pubkey_b58: String,
+) -> Result<String> {
+    crate::api::session::build_unsigned_sponsored_transfer_tx(
+        rpc_url,
+        wallet_pubkey_b58,
+        merchant_did,
+        amount_lamports,
+        relayer_pubkey_b58,
+    )
+    .await
+}
+
+/// Build an unsigned SPL Token transfer transaction for direct wallet signing.
+/// Bridge wrapper around `session::build_unsigned_spl_transfer_tx`.
+pub async fn build_unsigned_spl_transfer_tx(
+    rpc_url: String,
+    wallet_pubkey_b58: String,
+    merchant_wallet_b58: String,
+    amount: u64,
+    token_mint_b58: String,
+) -> Result<String> {
+    crate::api::session::build_unsigned_spl_transfer_tx(
+        rpc_url,
+        wallet_pubkey_b58,
+        merchant_wallet_b58,
+        amount,
+        token_mint_b58,
+    )
+    .await
+}
+
+/// Build an unsigned sponsored SPL Token transfer transaction for direct wallet signing.
+/// Bridge wrapper around `session::build_unsigned_sponsored_spl_transfer_tx`.
+pub async fn build_unsigned_sponsored_spl_transfer_tx(
+    rpc_url: String,
+    wallet_pubkey_b58: String,
+    merchant_wallet_b58: String,
+    amount: u64,
+    token_mint_b58: String,
+    relayer_pubkey_b58: String,
+) -> Result<String> {
+    crate::api::session::build_unsigned_sponsored_spl_transfer_tx(
+        rpc_url,
+        wallet_pubkey_b58,
+        merchant_wallet_b58,
+        amount,
+        token_mint_b58,
+        relayer_pubkey_b58,
+    )
+    .await
 }

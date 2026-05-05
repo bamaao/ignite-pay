@@ -11,6 +11,8 @@ class PaymentQrData {
   final int timestamp;
   final String merchantMbPubkey;
   final String merchantMediatorUrl;
+  final String merchantWallet;
+  final List<String> acceptTokens;
 
   PaymentQrData({
     required this.merchantDid,
@@ -21,6 +23,8 @@ class PaymentQrData {
     required this.timestamp,
     this.merchantMbPubkey = '',
     this.merchantMediatorUrl = '',
+    this.merchantWallet = '',
+    this.acceptTokens = const [],
   });
 }
 
@@ -89,6 +93,8 @@ class ChannelService extends ChangeNotifier {
       timestamp: result.timestamp,
       merchantMbPubkey: result.merchantMbPubkey,
       merchantMediatorUrl: result.merchantMediatorUrl,
+      merchantWallet: result.merchantWallet,
+      acceptTokens: result.acceptTokens,
     );
     setPendingPayment(data);
     return data;

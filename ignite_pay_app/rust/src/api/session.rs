@@ -1034,3 +1034,393 @@ pub async fn build_unsigned_transfer_tx(
 
     Ok(bs58::encode(&tx).into_string())
 }
+
+// ── SPL Token Transfer ──────────────────────────────────────────────────
+
+/// Derive the Associated Token Account address for a owner + mint pair.
+/// ATA program ID: ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL
+/// Seeds: [owner, token_program, mint]
+fn derive_ata(owner: &[u8; 32], mint: &[u8; 32]) -> [u8; 32] {
+    let ata_program: [u8; 32] = bs58::decode("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+        .into_vec()
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let token_program: [u8; 32] = bs58::decode("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+        .into_vec()
+        .unwrap()
+        .try_into()
+        .unwrap();
+
+    for nonce in (0u8..=255u8).rev() {
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(owner);
+        hasher.update(&token_program);
+        hasher.update(mint);
+        hasher.update(&ata_program);
+        hasher.update(&[nonce]);
+        let hash = hasher.finalize();
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&hash);
+        if !is_on_curve(&arr) {
+            return arr;
+        }
+    }
+    [0u8; 32]
+}
+
+/// Build an unsigned SPL Token transfer transaction for direct wallet signing.
+///
+/// Constructs a legacy Solana transaction with a Token Program Transfer instruction.
+/// Uses ATA derivation locally (no RPC needed for ATA lookup).
+///
+/// Account ordering:
+/// 0: wallet (signer, writable)
+/// 1: wallet_ata (writable, non-signer) — source ATA
+/// 2: merchant_ata (writable, non-signer) — destination ATA
+/// 3: token_program (readonly, non-signer)
+pub async fn build_unsigned_spl_transfer_tx(
+    rpc_url: String,
+    wallet_pubkey_b58: String,
+    merchant_wallet_b58: String,
+    amount: u64,
+    token_mint_b58: String,
+) -> Result<String> {
+    // Decode keys
+    let wallet_pubkey = bs58::decode(&wallet_pubkey_b58)
+        .into_vec()
+        .map_err(|_| anyhow::anyhow!("Invalid wallet pubkey base58"))?;
+    if wallet_pubkey.len() != 32 {
+        return Err(anyhow::anyhow!("Wallet pubkey must be 32 bytes"));
+    }
+    let wallet_pubkey_arr: [u8; 32] = wallet_pubkey.try_into().unwrap();
+
+    let merchant_pubkey = bs58::decode(&merchant_wallet_b58)
+        .into_vec()
+        .map_err(|_| anyhow::anyhow!("Invalid merchant wallet base58"))?;
+    if merchant_pubkey.len() != 32 {
+        return Err(anyhow::anyhow!("Merchant wallet must be 32 bytes"));
+    }
+    let merchant_pubkey_arr: [u8; 32] = merchant_pubkey.try_into().unwrap();
+
+    let mint_bytes = bs58::decode(&token_mint_b58)
+        .into_vec()
+        .map_err(|_| anyhow::anyhow!("Invalid token mint base58"))?;
+    if mint_bytes.len() != 32 {
+        return Err(anyhow::anyhow!("Token mint must be 32 bytes"));
+    }
+    let mint_arr: [u8; 32] = mint_bytes.try_into().unwrap();
+
+    // Derive ATAs
+    let wallet_ata = derive_ata(&wallet_pubkey_arr, &mint_arr);
+    let merchant_ata = derive_ata(&merchant_pubkey_arr, &mint_arr);
+
+    // Token program address
+    let token_program: [u8; 32] = bs58::decode("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+        .into_vec()
+        .unwrap()
+        .try_into()
+        .unwrap();
+
+    // Fetch recent blockhash
+    let client = reqwest::Client::new();
+    let blockhash = get_recent_blockhash(&client, &rpc_url).await?;
+    let blockhash_bytes = bs58::decode(&blockhash).into_vec()?;
+    if blockhash_bytes.len() != 32 {
+        return Err(anyhow::anyhow!("Invalid blockhash"));
+    }
+    let blockhash_arr: [u8; 32] = blockhash_bytes.try_into().unwrap();
+
+    // Account keys
+    let account_keys: Vec<[u8; 32]> = vec![
+        wallet_pubkey_arr,  // 0: wallet (signer, writable)
+        wallet_ata,         // 1: source ATA (writable)
+        merchant_ata,       // 2: dest ATA (writable)
+        token_program,      // 3: token program (readonly)
+    ];
+
+    // Build message
+    let mut message = Vec::new();
+    message.push(1); // num_required_signatures = 1 (wallet)
+    message.push(0); // num_readonly_signed = 0
+    message.push(1); // num_readonly_unsigned = 1 (token_program)
+
+    compact_u64_encode(&mut message, account_keys.len() as u64);
+    for key in &account_keys {
+        message.extend_from_slice(key);
+    }
+
+    message.extend_from_slice(&blockhash_arr);
+
+    // 1 instruction: Token Transfer
+    compact_u64_encode(&mut message, 1);
+
+    // program_id_index = 3 (token_program)
+    message.push(3);
+
+    // Account indices: [source(1), dest(2), authority(0)]
+    let ix_accounts: Vec<u8> = vec![1, 2, 0];
+    compact_u64_encode(&mut message, ix_accounts.len() as u64);
+    message.extend_from_slice(&ix_accounts);
+
+    // Token Transfer instruction data: 1-byte discriminant (12) + 8-byte LE amount = 9 bytes
+    // Note: SPL Token Transfer discriminant is 12 (from anchor-discriminator style, but actually
+    // the Token program uses: 1st byte = instruction index. Transfer = 3 for Token program.
+    // Actually: Token Program instruction layout:
+    //   Transfer: 4-byte LE discriminant (3) + 8-byte LE amount
+    let mut ix_data = Vec::with_capacity(12);
+    ix_data.extend_from_slice(&3u32.to_le_bytes()); // Transfer discriminant
+    ix_data.extend_from_slice(&amount.to_le_bytes());
+    compact_u64_encode(&mut message, ix_data.len() as u64);
+    message.extend_from_slice(&ix_data);
+
+    // Build transaction: placeholder signature + message
+    let mut tx = Vec::new();
+    compact_u64_encode(&mut tx, 1);
+    tx.extend_from_slice(&[0u8; 64]);
+    tx.extend_from_slice(&message);
+
+    Ok(bs58::encode(&tx).into_string())
+}
+
+/// Build an unsigned sponsored SPL Token transfer transaction for direct wallet signing.
+///
+/// Has 2 signature slots:
+/// - slot 0: relayer (fee payer, placeholder)
+/// - slot 1: wallet (signer, placeholder)
+///
+/// Account ordering:
+/// 0: relayer (signer, writable — fee payer)
+/// 1: wallet (signer, writable)
+/// 2: wallet_ata (writable, non-signer) — source
+/// 3: merchant_ata (writable, non-signer) — dest
+/// 4: token_program (readonly, non-signer)
+pub async fn build_unsigned_sponsored_spl_transfer_tx(
+    rpc_url: String,
+    wallet_pubkey_b58: String,
+    merchant_wallet_b58: String,
+    amount: u64,
+    token_mint_b58: String,
+    relayer_pubkey_b58: String,
+) -> Result<String> {
+    // Decode keys
+    let wallet_pubkey = bs58::decode(&wallet_pubkey_b58)
+        .into_vec()
+        .map_err(|_| anyhow::anyhow!("Invalid wallet pubkey base58"))?;
+    if wallet_pubkey.len() != 32 {
+        return Err(anyhow::anyhow!("Wallet pubkey must be 32 bytes"));
+    }
+    let wallet_pubkey_arr: [u8; 32] = wallet_pubkey.try_into().unwrap();
+
+    let merchant_pubkey = bs58::decode(&merchant_wallet_b58)
+        .into_vec()
+        .map_err(|_| anyhow::anyhow!("Invalid merchant wallet base58"))?;
+    if merchant_pubkey.len() != 32 {
+        return Err(anyhow::anyhow!("Merchant wallet must be 32 bytes"));
+    }
+    let merchant_pubkey_arr: [u8; 32] = merchant_pubkey.try_into().unwrap();
+
+    let relayer_pubkey = bs58::decode(&relayer_pubkey_b58)
+        .into_vec()
+        .map_err(|_| anyhow::anyhow!("Invalid relayer pubkey base58"))?;
+    if relayer_pubkey.len() != 32 {
+        return Err(anyhow::anyhow!("Relayer pubkey must be 32 bytes"));
+    }
+    let relayer_pubkey_arr: [u8; 32] = relayer_pubkey.try_into().unwrap();
+
+    let mint_bytes = bs58::decode(&token_mint_b58)
+        .into_vec()
+        .map_err(|_| anyhow::anyhow!("Invalid token mint base58"))?;
+    if mint_bytes.len() != 32 {
+        return Err(anyhow::anyhow!("Token mint must be 32 bytes"));
+    }
+    let mint_arr: [u8; 32] = mint_bytes.try_into().unwrap();
+
+    // Derive ATAs
+    let wallet_ata = derive_ata(&wallet_pubkey_arr, &mint_arr);
+    let merchant_ata = derive_ata(&merchant_pubkey_arr, &mint_arr);
+
+    // Token program
+    let token_program: [u8; 32] = bs58::decode("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+        .into_vec()
+        .unwrap()
+        .try_into()
+        .unwrap();
+
+    // Fetch blockhash
+    let client = reqwest::Client::new();
+    let blockhash = get_recent_blockhash(&client, &rpc_url).await?;
+    let blockhash_bytes = bs58::decode(&blockhash).into_vec()?;
+    let blockhash_arr: [u8; 32] = blockhash_bytes.try_into().unwrap();
+
+    // Account keys
+    let account_keys: Vec<[u8; 32]> = vec![
+        relayer_pubkey_arr, // 0: relayer (signer, writable — fee payer)
+        wallet_pubkey_arr,  // 1: wallet (signer, writable)
+        wallet_ata,         // 2: source ATA (writable)
+        merchant_ata,       // 3: dest ATA (writable)
+        token_program,      // 4: token program (readonly)
+    ];
+
+    let mut message = Vec::new();
+    message.push(2); // num_required_signatures = 2 (relayer + wallet)
+    message.push(0); // num_readonly_signed = 0
+    message.push(1); // num_readonly_unsigned = 1 (token_program)
+
+    compact_u64_encode(&mut message, account_keys.len() as u64);
+    for key in &account_keys {
+        message.extend_from_slice(key);
+    }
+
+    message.extend_from_slice(&blockhash_arr);
+
+    compact_u64_encode(&mut message, 1);
+
+    // program_id_index = 4 (token_program)
+    message.push(4);
+
+    // Account indices: [source(2), dest(3), authority(1)]
+    let ix_accounts: Vec<u8> = vec![2, 3, 1];
+    compact_u64_encode(&mut message, ix_accounts.len() as u64);
+    message.extend_from_slice(&ix_accounts);
+
+    // Token Transfer instruction data
+    let mut ix_data = Vec::with_capacity(12);
+    ix_data.extend_from_slice(&3u32.to_le_bytes());
+    ix_data.extend_from_slice(&amount.to_le_bytes());
+    compact_u64_encode(&mut message, ix_data.len() as u64);
+    message.extend_from_slice(&ix_data);
+
+    // Build transaction: 2 placeholder signatures + message
+    let mut tx = Vec::new();
+    compact_u64_encode(&mut tx, 2);
+    tx.extend_from_slice(&[0u8; 64]); // placeholder for relayer signature
+    tx.extend_from_slice(&[0u8; 64]); // placeholder for wallet signature
+    tx.extend_from_slice(&message);
+
+    Ok(bs58::encode(&tx).into_string())
+}
+
+// ── Sponsored (Relayer) Payment ─────────────────────────────────────────
+
+/// Fetch the relayer's fee-payer public key from GET /info.
+pub async fn fetch_relayer_pubkey(relayer_url: String) -> Result<String> {
+    let info_url = format!("{}/info", relayer_url.trim_end_matches('/'));
+    let resp: serde_json::Value = reqwest::get(&info_url).await?.json().await?;
+    let pubkey = resp["pubkey"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Missing 'pubkey' in relayer /info response"))?;
+    Ok(pubkey.to_string())
+}
+
+/// Build an unsigned sponsored SOL transfer transaction for direct wallet signing.
+///
+/// Unlike `build_unsigned_transfer_tx`, this has 2 signature slots:
+/// - slot 0: relayer (fee payer, placeholder — relayer will sign)
+/// - slot 1: wallet (signer, placeholder — wallet will sign via signTransaction)
+///
+/// Account ordering:
+/// 0: relayer (signer, writable — fee payer)
+/// 1: wallet (signer, writable)
+/// 2: merchant (writable, non-signer)
+/// 3: system_program (readonly, non-signer)
+pub async fn build_unsigned_sponsored_transfer_tx(
+    rpc_url: String,
+    wallet_pubkey_b58: String,
+    merchant_did: String,
+    amount_lamports: u64,
+    relayer_pubkey_b58: String,
+) -> Result<String> {
+    // 1. Extract merchant Solana address from DID
+    let merchant_pubkey = ignite_pay_core::identity::extract_pubkey_from_did(&merchant_did)
+        .ok_or_else(|| anyhow::anyhow!("Cannot extract Solana pubkey from merchant DID: {}", merchant_did))?;
+
+    // 2. Decode wallet pubkey
+    let wallet_pubkey = bs58::decode(&wallet_pubkey_b58)
+        .into_vec()
+        .map_err(|_| anyhow::anyhow!("Invalid wallet pubkey base58"))?;
+    if wallet_pubkey.len() != 32 {
+        return Err(anyhow::anyhow!("Wallet pubkey must be 32 bytes"));
+    }
+    let wallet_pubkey_arr: [u8; 32] = wallet_pubkey.try_into().unwrap();
+
+    // 3. Decode relayer pubkey
+    let relayer_pubkey = bs58::decode(&relayer_pubkey_b58)
+        .into_vec()
+        .map_err(|_| anyhow::anyhow!("Invalid relayer pubkey base58"))?;
+    if relayer_pubkey.len() != 32 {
+        return Err(anyhow::anyhow!("Relayer pubkey must be 32 bytes"));
+    }
+    let relayer_pubkey_arr: [u8; 32] = relayer_pubkey.try_into().unwrap();
+
+    // 4. Fetch recent blockhash
+    let client = reqwest::Client::new();
+    let blockhash = get_recent_blockhash(&client, &rpc_url).await?;
+    let blockhash_bytes = bs58::decode(&blockhash).into_vec()?;
+    if blockhash_bytes.len() != 32 {
+        return Err(anyhow::anyhow!("Invalid blockhash"));
+    }
+    let blockhash_arr: [u8; 32] = blockhash_bytes.try_into().unwrap();
+
+    // 5. System program address
+    let system_program: [u8; 32] = [
+        0x06, 0x9b, 0x88, 0x64, 0xd1, 0x6a, 0xed, 0x71, 0x48, 0xb5, 0xd0, 0x40, 0xb1, 0x3e, 0xa0,
+        0x17, 0x42, 0xaf, 0x28, 0x37, 0xa0, 0xc8, 0x72, 0x21, 0x53, 0x25, 0x04, 0xb2, 0x5d, 0x2d,
+        0x5e, 0x06,
+    ];
+
+    // Account ordering:
+    // 0: relayer (signer, writable — fee payer)
+    // 1: wallet (signer, writable)
+    // 2: merchant (writable, non-signer)
+    // 3: system_program (readonly, non-signer)
+    let account_keys: Vec<[u8; 32]> = vec![
+        relayer_pubkey_arr,
+        wallet_pubkey_arr,
+        merchant_pubkey,
+        system_program,
+    ];
+
+    // Build message
+    let mut message = Vec::new();
+    message.push(2); // num_required_signatures = 2 (relayer + wallet)
+    message.push(0); // num_readonly_signed = 0
+    message.push(1); // num_readonly_unsigned = 1 (system_program)
+
+    // Account keys compact-array
+    compact_u64_encode(&mut message, account_keys.len() as u64);
+    for key in &account_keys {
+        message.extend_from_slice(key);
+    }
+
+    // Recent blockhash
+    message.extend_from_slice(&blockhash_arr);
+
+    // Instructions compact-array (1 instruction)
+    compact_u64_encode(&mut message, 1);
+
+    // Instruction 0: SystemProgram Transfer
+    // program_id_index = 3 (system_program)
+    message.push(3);
+
+    // Account indices: [wallet(1), merchant(2)]
+    let ix_accounts: Vec<u8> = vec![1, 2];
+    compact_u64_encode(&mut message, ix_accounts.len() as u64);
+    message.extend_from_slice(&ix_accounts);
+
+    // Transfer instruction data: 4-byte LE discriminant (0) + 8-byte LE amount = 12 bytes
+    let mut ix_data = Vec::with_capacity(12);
+    ix_data.extend_from_slice(&0u32.to_le_bytes()); // Transfer discriminant
+    ix_data.extend_from_slice(&amount_lamports.to_le_bytes());
+    compact_u64_encode(&mut message, ix_data.len() as u64);
+    message.extend_from_slice(&ix_data);
+
+    // Build transaction: 2 placeholder signatures + message
+    let mut tx = Vec::new();
+    compact_u64_encode(&mut tx, 2); // 2 signatures
+    tx.extend_from_slice(&[0u8; 64]); // placeholder for relayer signature
+    tx.extend_from_slice(&[0u8; 64]); // placeholder for wallet signature
+    tx.extend_from_slice(&message);
+
+    Ok(bs58::encode(&tx).into_string())
+}

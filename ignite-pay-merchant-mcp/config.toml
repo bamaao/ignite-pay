@@ -11,6 +11,10 @@ did = ""
 hub_endpoint = "http://localhost:3003"
 # Hub WebSocket endpoint
 hub_ws_url = "ws://localhost:3003/ws"
+# Merchant Solana wallet address for receiving payments (base58)
+wallet = ""
+# Accepted tokens for QR payments
+accept_tokens = ["USDC"]
 
 [mediator]
 # DIDComm mediator WebSocket URL

@@ -12,6 +12,9 @@ pub struct GeneratePaymentQrInput {
     /// Optional order ID. If not provided, a UUID will be generated.
     #[serde(default)]
     pub order_id: Option<String>,
+    /// Override the default accept_tokens list from config.
+    #[serde(default)]
+    pub accept_tokens: Option<Vec<String>>,
 }
 
 /// Input for the `check_payment` tool.

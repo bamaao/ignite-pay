@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -412,6 +411,8 @@ class _MockRustLibApi extends RustLibApi {
         timestamp: 0,
         merchantMbPubkey: '',
         merchantMediatorUrl: '',
+        merchantWallet: '',
+        acceptTokens: [],
       );
 
   @override
@@ -493,6 +494,46 @@ class _MockRustLibApi extends RustLibApi {
     required String merchantDid,
     required BigInt amountLamports,
   }) async => 'unsigned_tx_b58_mock';
+
+  @override
+  Future<String> crateApiSimpleFetchRelayerPubkey({
+    required String relayerUrl,
+  }) async => 'mockRelayerPubkey11111111111111111111111111111111';
+
+  @override
+  Future<String> crateApiSimpleBuildUnsignedSponsoredTransferTx({
+    required String rpcUrl,
+    required String walletPubkeyB58,
+    required String merchantDid,
+    required BigInt amountLamports,
+    required String relayerPubkeyB58,
+  }) async => 'unsigned_sponsored_tx_b58_mock';
+
+  @override
+  Future<void> crateApiSimpleSendMbDepositRequest({
+    required String storagePath,
+    required BigInt amount,
+    required String token,
+  }) async {}
+
+  @override
+  Future<String> crateApiSimpleBuildUnsignedSplTransferTx({
+    required String rpcUrl,
+    required String walletPubkeyB58,
+    required String merchantWalletB58,
+    required BigInt amount,
+    required String tokenMintB58,
+  }) async => 'unsigned_spl_tx_b58_mock';
+
+  @override
+  Future<String> crateApiSimpleBuildUnsignedSponsoredSplTransferTx({
+    required String rpcUrl,
+    required String walletPubkeyB58,
+    required String merchantWalletB58,
+    required BigInt amount,
+    required String tokenMintB58,
+    required String relayerPubkeyB58,
+  }) async => 'unsigned_sponsored_spl_tx_b58_mock';
 }
 
 void main() {

@@ -114,6 +114,9 @@ struct MerchantMcpServer {
     mb_merchant_keypair: Arc<MbKeypair>,
     mb_voucher_store: Arc<MerchantVoucherStore>,
     mb_settlement_store: Arc<SettlementStore>,
+    // QR payment config
+    merchant_wallet: String,
+    default_accept_tokens: Vec<String>,
 }
 
 #[tool_router]
@@ -127,6 +130,9 @@ impl MerchantMcpServer {
             .order_id
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
+        let accept_tokens = input.accept_tokens
+            .unwrap_or_else(|| self.default_accept_tokens.clone());
+
         let qr_data = PaymentQrData {
             qr_type: "ignite-pay-request".to_string(),
             version: 1,
@@ -137,6 +143,8 @@ impl MerchantMcpServer {
             hub_endpoint: self.mb_merchant_keypair.pubkey().to_string(),
             timestamp: chrono::Utc::now().timestamp(),
             merchant_mb_pubkey: self.mb_merchant_keypair.pubkey().to_string(),
+            merchant_wallet: self.merchant_wallet.clone(),
+            accept_tokens,
         };
 
         let order = PaymentOrder {
@@ -243,10 +251,12 @@ impl MerchantMcpServer {
             Err(e) => return format!("Error: Invalid buyer pubkey: {}", e),
         };
 
+        let token_mint = Pubkey::default();
         let (channel_pda, _) = pda::derive_channel_pda(
             &self.mb_program_id,
             &buyer,
             &self.mb_merchant_keypair.pubkey(),
+            &token_mint,
         );
 
         let account = match self.mb_rpc.get_account(&channel_pda) {
@@ -283,10 +293,12 @@ impl MerchantMcpServer {
             _ => return "Error: Invalid buyer_sig (must be 64 bytes, base58)".to_string(),
         };
 
+        let token_mint = Pubkey::default();
         let (channel_pda, _) = pda::derive_channel_pda(
             &self.mb_program_id,
             &buyer,
             &self.mb_merchant_keypair.pubkey(),
+            &token_mint,
         );
         let channel_id = channel_pda.to_bytes();
 
@@ -349,10 +361,12 @@ impl MerchantMcpServer {
             _ => return "Error: Invalid buyer_batch_sig (must be 64 bytes, base58)".to_string(),
         };
 
+        let token_mint = Pubkey::default();
         let (channel_pda, _) = pda::derive_channel_pda(
             &self.mb_program_id,
             &buyer,
             &self.mb_merchant_keypair.pubkey(),
+            &token_mint,
         );
         let channel_id = channel_pda.to_bytes();
 
@@ -405,11 +419,13 @@ impl MerchantMcpServer {
             Err(e) => return format!("Error getting blockhash: {}", e),
         };
 
+        let token_mint = Pubkey::default();
         let tx = match transaction::build_settle_batch_tx(
             &*self.mb_merchant_keypair,
             &buyer,
             &channel_pda,
             &escrow_pda,
+            &token_mint,
             &merkle_root,
             total_amount,
             &buyer_batch_sig,
@@ -456,10 +472,12 @@ impl MerchantMcpServer {
             Err(e) => return format!("Error: Invalid buyer pubkey: {}", e),
         };
 
+        let token_mint = Pubkey::default();
         let (channel_pda, _) = pda::derive_channel_pda(
             &self.mb_program_id,
             &buyer,
             &self.mb_merchant_keypair.pubkey(),
+            &token_mint,
         );
         let channel_id = channel_pda.to_bytes();
 
@@ -508,11 +526,13 @@ impl MerchantMcpServer {
             Err(e) => return format!("Error getting blockhash: {}", e),
         };
 
+        let token_mint = Pubkey::default();
         let tx = match transaction::build_optimistic_settle_tx(
             &*self.mb_merchant_keypair,
             &buyer,
             &channel_pda,
             &escrow_pda,
+            &token_mint,
             &merkle_root,
             total_amount,
             &merchant_batch_sig,
@@ -540,10 +560,12 @@ impl MerchantMcpServer {
             Err(e) => return format!("Error: Invalid buyer pubkey: {}", e),
         };
 
+        let token_mint = Pubkey::default();
         let (channel_pda, _) = pda::derive_channel_pda(
             &self.mb_program_id,
             &buyer,
             &self.mb_merchant_keypair.pubkey(),
+            &token_mint,
         );
         let (escrow_pda, _) = pda::derive_settlement_pda(
             &self.mb_program_id,
@@ -574,10 +596,12 @@ impl MerchantMcpServer {
             Err(e) => return format!("Error: Invalid buyer pubkey: {}", e),
         };
 
+        let token_mint = Pubkey::default();
         let (channel_pda, _) = pda::derive_channel_pda(
             &self.mb_program_id,
             &buyer,
             &self.mb_merchant_keypair.pubkey(),
+            &token_mint,
         );
         let (escrow_pda, _) = pda::derive_settlement_pda(
             &self.mb_program_id,
@@ -614,10 +638,12 @@ impl MerchantMcpServer {
             Err(e) => return format!("Error: Invalid buyer pubkey: {}", e),
         };
 
+        let token_mint = Pubkey::default();
         let (channel_pda, _) = pda::derive_channel_pda(
             &self.mb_program_id,
             &buyer,
             &self.mb_merchant_keypair.pubkey(),
+            &token_mint,
         );
         let (escrow_pda, _) = pda::derive_settlement_pda(
             &self.mb_program_id,
@@ -764,6 +790,8 @@ async fn main() -> anyhow::Result<()> {
         mb_merchant_keypair: mb_merchant_keypair.clone(),
         mb_voucher_store: mb_voucher_store.clone(),
         mb_settlement_store: mb_settlement_store.clone(),
+        merchant_wallet: cfg.merchant.wallet.clone(),
+        default_accept_tokens: cfg.merchant.accept_tokens.clone(),
     };
 
     // Set up MB voucher channel: mediator forwards received vouchers to this handler
@@ -801,10 +829,12 @@ async fn main() -> anyhow::Result<()> {
                     }
                 };
 
+                let token_mint = Pubkey::default();
                 let (channel_pda, _) = pda::derive_channel_pda(
                     &mb_program_id_val,
                     &buyer,
                     &mb_merchant_keypair.pubkey(),
+                    &token_mint,
                 );
                 let channel_id = channel_pda.to_bytes();
 

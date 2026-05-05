@@ -377,6 +377,18 @@ Future<MbVoucherResult> mbSignVoucher({
   amount: amount,
 );
 
+/// Send an MB deposit request to the MCP server.
+/// The MCP deposits into the MagicBlock shared vault and returns mb-deposit-response.
+Future<void> sendMbDepositRequest({
+  required String storagePath,
+  required BigInt amount,
+  required String token,
+}) => RustLib.instance.api.crateApiSimpleSendMbDepositRequest(
+  storagePath: storagePath,
+  amount: amount,
+  token: token,
+);
+
 /// Send a QR payment request to the MCP server.
 /// Called when user scans a merchant QR code, selects payment method, and confirms.
 /// The MCP executes the payment and returns a qr-payment-response.
@@ -433,6 +445,63 @@ Future<String> buildUnsignedTransferTx({
   walletPubkeyB58: walletPubkeyB58,
   merchantDid: merchantDid,
   amountLamports: amountLamports,
+);
+
+/// Fetch the relayer's fee-payer public key from GET /info.
+Future<String> fetchRelayerPubkey({
+  required String relayerUrl,
+}) => RustLib.instance.api.crateApiSimpleFetchRelayerPubkey(
+  relayerUrl: relayerUrl,
+);
+
+/// Build an unsigned sponsored SOL transfer transaction for direct wallet signing.
+/// Bridge wrapper around `session::build_unsigned_sponsored_transfer_tx`.
+Future<String> buildUnsignedSponsoredTransferTx({
+  required String rpcUrl,
+  required String walletPubkeyB58,
+  required String merchantDid,
+  required BigInt amountLamports,
+  required String relayerPubkeyB58,
+}) => RustLib.instance.api.crateApiSimpleBuildUnsignedSponsoredTransferTx(
+  rpcUrl: rpcUrl,
+  walletPubkeyB58: walletPubkeyB58,
+  merchantDid: merchantDid,
+  amountLamports: amountLamports,
+  relayerPubkeyB58: relayerPubkeyB58,
+);
+
+/// Build an unsigned SPL Token transfer transaction for direct wallet signing.
+/// Bridge wrapper around `session::build_unsigned_spl_transfer_tx`.
+Future<String> buildUnsignedSplTransferTx({
+  required String rpcUrl,
+  required String walletPubkeyB58,
+  required String merchantWalletB58,
+  required BigInt amount,
+  required String tokenMintB58,
+}) => RustLib.instance.api.crateApiSimpleBuildUnsignedSplTransferTx(
+  rpcUrl: rpcUrl,
+  walletPubkeyB58: walletPubkeyB58,
+  merchantWalletB58: merchantWalletB58,
+  amount: amount,
+  tokenMintB58: tokenMintB58,
+);
+
+/// Build an unsigned sponsored SPL Token transfer transaction for direct wallet signing.
+/// Bridge wrapper around `session::build_unsigned_sponsored_spl_transfer_tx`.
+Future<String> buildUnsignedSponsoredSplTransferTx({
+  required String rpcUrl,
+  required String walletPubkeyB58,
+  required String merchantWalletB58,
+  required BigInt amount,
+  required String tokenMintB58,
+  required String relayerPubkeyB58,
+}) => RustLib.instance.api.crateApiSimpleBuildUnsignedSponsoredSplTransferTx(
+  rpcUrl: rpcUrl,
+  walletPubkeyB58: walletPubkeyB58,
+  merchantWalletB58: merchantWalletB58,
+  amount: amount,
+  tokenMintB58: tokenMintB58,
+  relayerPubkeyB58: relayerPubkeyB58,
 );
 
 /// Auth grant returned from payment signing.

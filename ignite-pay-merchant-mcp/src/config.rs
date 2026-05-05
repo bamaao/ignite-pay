@@ -25,6 +25,14 @@ pub struct MerchantConfig {
     pub did: String,
     pub hub_endpoint: String,
     pub hub_ws_url: String,
+    #[serde(default)]
+    pub wallet: String,
+    #[serde(default = "default_accept_tokens")]
+    pub accept_tokens: Vec<String>,
+}
+
+fn default_accept_tokens() -> Vec<String> {
+    vec!["USDC".to_string()]
 }
 
 #[derive(Debug, Deserialize)]

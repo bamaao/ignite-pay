@@ -1850,6 +1850,49 @@ fn wire__crate__api__simple__send_qr_payment_request_impl(
         },
     )
 }
+fn wire__crate__api__simple__send_mb_deposit_request_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "send_mb_deposit_request",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_amount = <u64>::sse_decode(&mut deserializer);
+            let api_token = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::send_mb_deposit_request(
+                            api_storage_path,
+                            api_amount,
+                            api_token,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__simple__settle_channel_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2045,6 +2088,192 @@ fn wire__crate__api__simple__build_unsigned_transfer_tx_impl(
                             api_wallet_pubkey_b58,
                             api_merchant_did,
                             api_amount_lamports,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+
+fn wire__crate__api__simple__fetch_relayer_pubkey_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "fetch_relayer_pubkey",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_relayer_url = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::fetch_relayer_pubkey(
+                            api_relayer_url,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+
+fn wire__crate__api__simple__build_unsigned_sponsored_transfer_tx_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "build_unsigned_sponsored_transfer_tx",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_rpc_url = <String>::sse_decode(&mut deserializer);
+            let api_wallet_pubkey_b58 = <String>::sse_decode(&mut deserializer);
+            let api_merchant_did = <String>::sse_decode(&mut deserializer);
+            let api_amount_lamports = <u64>::sse_decode(&mut deserializer);
+            let api_relayer_pubkey_b58 = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::build_unsigned_sponsored_transfer_tx(
+                            api_rpc_url,
+                            api_wallet_pubkey_b58,
+                            api_merchant_did,
+                            api_amount_lamports,
+                            api_relayer_pubkey_b58,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+
+fn wire__crate__api__simple__build_unsigned_spl_transfer_tx_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "build_unsigned_spl_transfer_tx",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_rpc_url = <String>::sse_decode(&mut deserializer);
+            let api_wallet_pubkey_b58 = <String>::sse_decode(&mut deserializer);
+            let api_merchant_wallet_b58 = <String>::sse_decode(&mut deserializer);
+            let api_amount = <u64>::sse_decode(&mut deserializer);
+            let api_token_mint_b58 = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::build_unsigned_spl_transfer_tx(
+                            api_rpc_url,
+                            api_wallet_pubkey_b58,
+                            api_merchant_wallet_b58,
+                            api_amount,
+                            api_token_mint_b58,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+
+fn wire__crate__api__simple__build_unsigned_sponsored_spl_transfer_tx_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "build_unsigned_sponsored_spl_transfer_tx",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_rpc_url = <String>::sse_decode(&mut deserializer);
+            let api_wallet_pubkey_b58 = <String>::sse_decode(&mut deserializer);
+            let api_merchant_wallet_b58 = <String>::sse_decode(&mut deserializer);
+            let api_amount = <u64>::sse_decode(&mut deserializer);
+            let api_token_mint_b58 = <String>::sse_decode(&mut deserializer);
+            let api_relayer_pubkey_b58 = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::build_unsigned_sponsored_spl_transfer_tx(
+                            api_rpc_url,
+                            api_wallet_pubkey_b58,
+                            api_merchant_wallet_b58,
+                            api_amount,
+                            api_token_mint_b58,
+                            api_relayer_pubkey_b58,
                         )
                         .await?;
                         Ok(output_ok)
@@ -2465,6 +2694,8 @@ impl SseDecode for crate::api::channel::PaymentQrData {
         let mut var_timestamp = <i64>::sse_decode(deserializer);
         let mut var_merchantMbPubkey = <String>::sse_decode(deserializer);
         let mut var_merchantMediatorUrl = <String>::sse_decode(deserializer);
+        let mut var_merchantWallet = <String>::sse_decode(deserializer);
+        let mut var_acceptTokens = <Vec<String>>::sse_decode(deserializer);
         return crate::api::channel::PaymentQrData {
             merchant_did: var_merchantDid,
             amount: var_amount,
@@ -2474,6 +2705,8 @@ impl SseDecode for crate::api::channel::PaymentQrData {
             timestamp: var_timestamp,
             merchant_mb_pubkey: var_merchantMbPubkey,
             merchant_mediator_url: var_merchantMediatorUrl,
+            merchant_wallet: var_merchantWallet,
+            accept_tokens: var_acceptTokens,
         };
     }
 }
@@ -2746,6 +2979,36 @@ fn pde_ffi_dispatcher_primary_impl(
             wire__crate__api__simple__verify_did_signature_impl(port, ptr, rust_vec_len, data_len)
         }
         48 => wire__crate__api__simple__build_unsigned_transfer_tx_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        49 => wire__crate__api__simple__fetch_relayer_pubkey_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        50 => wire__crate__api__simple__build_unsigned_sponsored_transfer_tx_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        51 => wire__crate__api__simple__send_mb_deposit_request_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        52 => wire__crate__api__simple__build_unsigned_spl_transfer_tx_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        53 => wire__crate__api__simple__build_unsigned_sponsored_spl_transfer_tx_impl(
             port,
             ptr,
             rust_vec_len,
@@ -3446,6 +3709,8 @@ impl SseEncode for crate::api::channel::PaymentQrData {
         <i64>::sse_encode(self.timestamp, serializer);
         <String>::sse_encode(self.merchant_mb_pubkey, serializer);
         <String>::sse_encode(self.merchant_mediator_url, serializer);
+        <String>::sse_encode(self.merchant_wallet, serializer);
+        <Vec<String>>::sse_encode(self.accept_tokens, serializer);
     }
 }
 

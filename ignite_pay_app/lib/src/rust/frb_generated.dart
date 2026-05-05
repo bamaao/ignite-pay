@@ -243,6 +243,35 @@ abstract class RustLibApi extends BaseApi {
     required BigInt amountLamports,
   });
 
+  Future<String> crateApiSimpleFetchRelayerPubkey({
+    required String relayerUrl,
+  });
+
+  Future<String> crateApiSimpleBuildUnsignedSponsoredTransferTx({
+    required String rpcUrl,
+    required String walletPubkeyB58,
+    required String merchantDid,
+    required BigInt amountLamports,
+    required String relayerPubkeyB58,
+  });
+
+  Future<String> crateApiSimpleBuildUnsignedSplTransferTx({
+    required String rpcUrl,
+    required String walletPubkeyB58,
+    required String merchantWalletB58,
+    required BigInt amount,
+    required String tokenMintB58,
+  });
+
+  Future<String> crateApiSimpleBuildUnsignedSponsoredSplTransferTx({
+    required String rpcUrl,
+    required String walletPubkeyB58,
+    required String merchantWalletB58,
+    required BigInt amount,
+    required String tokenMintB58,
+    required String relayerPubkeyB58,
+  });
+
   Future<MbVoucherResult> crateApiSimpleMbSignVoucher({
     required String storagePath,
     required String programId,
@@ -349,6 +378,12 @@ abstract class RustLibApi extends BaseApi {
     required String paymentMethod,
     required String token,
     required String merchantMediatorUrl,
+  });
+
+  Future<void> crateApiSimpleSendMbDepositRequest({
+    required String storagePath,
+    required BigInt amount,
+    required String token,
   });
 
   Future<String> crateApiSimpleSettleChannel({
@@ -1530,6 +1565,202 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<String> crateApiSimpleFetchRelayerPubkey({
+    required String relayerUrl,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(relayerUrl, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 49,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleFetchRelayerPubkeyConstMeta,
+        argValues: [relayerUrl],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleFetchRelayerPubkeyConstMeta =>
+      const TaskConstMeta(
+        debugName: "fetch_relayer_pubkey",
+        argNames: ["relayerUrl"],
+      );
+
+  @override
+  Future<String> crateApiSimpleBuildUnsignedSponsoredTransferTx({
+    required String rpcUrl,
+    required String walletPubkeyB58,
+    required String merchantDid,
+    required BigInt amountLamports,
+    required String relayerPubkeyB58,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(rpcUrl, serializer);
+          sse_encode_String(walletPubkeyB58, serializer);
+          sse_encode_String(merchantDid, serializer);
+          sse_encode_u_64(amountLamports, serializer);
+          sse_encode_String(relayerPubkeyB58, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 50,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleBuildUnsignedSponsoredTransferTxConstMeta,
+        argValues: [
+          rpcUrl,
+          walletPubkeyB58,
+          merchantDid,
+          amountLamports,
+          relayerPubkeyB58,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleBuildUnsignedSponsoredTransferTxConstMeta =>
+      const TaskConstMeta(
+        debugName: "build_unsigned_sponsored_transfer_tx",
+        argNames: [
+          "rpcUrl",
+          "walletPubkeyB58",
+          "merchantDid",
+          "amountLamports",
+          "relayerPubkeyB58",
+        ],
+      );
+
+  @override
+  Future<String> crateApiSimpleBuildUnsignedSplTransferTx({
+    required String rpcUrl,
+    required String walletPubkeyB58,
+    required String merchantWalletB58,
+    required BigInt amount,
+    required String tokenMintB58,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(rpcUrl, serializer);
+          sse_encode_String(walletPubkeyB58, serializer);
+          sse_encode_String(merchantWalletB58, serializer);
+          sse_encode_u_64(amount, serializer);
+          sse_encode_String(tokenMintB58, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 52,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleBuildUnsignedSplTransferTxConstMeta,
+        argValues: [
+          rpcUrl,
+          walletPubkeyB58,
+          merchantWalletB58,
+          amount,
+          tokenMintB58,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleBuildUnsignedSplTransferTxConstMeta =>
+      const TaskConstMeta(
+        debugName: "build_unsigned_spl_transfer_tx",
+        argNames: [
+          "rpcUrl",
+          "walletPubkeyB58",
+          "merchantWalletB58",
+          "amount",
+          "tokenMintB58",
+        ],
+      );
+
+  @override
+  Future<String> crateApiSimpleBuildUnsignedSponsoredSplTransferTx({
+    required String rpcUrl,
+    required String walletPubkeyB58,
+    required String merchantWalletB58,
+    required BigInt amount,
+    required String tokenMintB58,
+    required String relayerPubkeyB58,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(rpcUrl, serializer);
+          sse_encode_String(walletPubkeyB58, serializer);
+          sse_encode_String(merchantWalletB58, serializer);
+          sse_encode_u_64(amount, serializer);
+          sse_encode_String(tokenMintB58, serializer);
+          sse_encode_String(relayerPubkeyB58, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 53,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleBuildUnsignedSponsoredSplTransferTxConstMeta,
+        argValues: [
+          rpcUrl,
+          walletPubkeyB58,
+          merchantWalletB58,
+          amount,
+          tokenMintB58,
+          relayerPubkeyB58,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleBuildUnsignedSponsoredSplTransferTxConstMeta =>
+      const TaskConstMeta(
+        debugName: "build_unsigned_sponsored_spl_transfer_tx",
+        argNames: [
+          "rpcUrl",
+          "walletPubkeyB58",
+          "merchantWalletB58",
+          "amount",
+          "tokenMintB58",
+          "relayerPubkeyB58",
+        ],
+      );
+
+  @override
   Future<MbVoucherResult> crateApiSimpleMbSignVoucher({
     required String storagePath,
     required String programId,
@@ -2202,6 +2433,51 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiSimpleSendMbDepositRequest({
+    required String storagePath,
+    required BigInt amount,
+    required String token,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_u_64(amount, serializer);
+          sse_encode_String(token, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 51,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleSendMbDepositRequestConstMeta,
+        argValues: [
+          storagePath,
+          amount,
+          token,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleSendMbDepositRequestConstMeta =>
+      const TaskConstMeta(
+        debugName: "send_mb_deposit_request",
+        argNames: [
+          "storagePath",
+          "amount",
+          "token",
+        ],
+      );
+
+  @override
   Future<String> crateApiSimpleSettleChannel({
     required String storagePath,
     required String channelId,
@@ -2647,8 +2923,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   PaymentQrData dco_decode_payment_qr_data(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 8)
-      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    if (arr.length != 10)
+      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
     return PaymentQrData(
       merchantDid: dco_decode_String(arr[0]),
       amount: dco_decode_u_64(arr[1]),
@@ -2658,6 +2934,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       timestamp: dco_decode_i_64(arr[5]),
       merchantMbPubkey: dco_decode_String(arr[6]),
       merchantMediatorUrl: dco_decode_String(arr[7]),
+      merchantWallet: dco_decode_String(arr[8]),
+      acceptTokens: dco_decode_list_String(arr[9]),
     );
   }
 
@@ -3173,6 +3451,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_timestamp = sse_decode_i_64(deserializer);
     var var_merchantMbPubkey = sse_decode_String(deserializer);
     var var_merchantMediatorUrl = sse_decode_String(deserializer);
+    var var_merchantWallet = sse_decode_String(deserializer);
+    var var_acceptTokens = sse_decode_list_String(deserializer);
     return PaymentQrData(
       merchantDid: var_merchantDid,
       amount: var_amount,
@@ -3182,6 +3462,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       timestamp: var_timestamp,
       merchantMbPubkey: var_merchantMbPubkey,
       merchantMediatorUrl: var_merchantMediatorUrl,
+      merchantWallet: var_merchantWallet,
+      acceptTokens: var_acceptTokens,
     );
   }
 
@@ -3643,6 +3925,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_64(self.timestamp, serializer);
     sse_encode_String(self.merchantMbPubkey, serializer);
     sse_encode_String(self.merchantMediatorUrl, serializer);
+    sse_encode_String(self.merchantWallet, serializer);
+    sse_encode_list_String(self.acceptTokens, serializer);
   }
 
   @protected

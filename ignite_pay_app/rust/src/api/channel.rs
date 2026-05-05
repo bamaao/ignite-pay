@@ -17,6 +17,8 @@ pub struct PaymentQrData {
     pub timestamp: i64,
     pub merchant_mb_pubkey: String,
     pub merchant_mediator_url: String,
+    pub merchant_wallet: String,
+    pub accept_tokens: Vec<String>,
 }
 
 /// Result of a channel payment.
@@ -67,6 +69,10 @@ pub fn parse_payment_qr(qr_data: String) -> Result<PaymentQrData> {
         merchant_mb_pubkey: String,
         #[serde(default)]
         merchant_mediator_url: String,
+        #[serde(default)]
+        merchant_wallet: String,
+        #[serde(default)]
+        accept_tokens: Vec<String>,
     }
 
     let json_str = if qr_data.starts_with("ignite://pay?d=") {
@@ -98,6 +104,8 @@ pub fn parse_payment_qr(qr_data: String) -> Result<PaymentQrData> {
         timestamp: data.timestamp,
         merchant_mb_pubkey: data.merchant_mb_pubkey,
         merchant_mediator_url: data.merchant_mediator_url,
+        merchant_wallet: data.merchant_wallet,
+        accept_tokens: data.accept_tokens,
     })
 }
 

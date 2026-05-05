@@ -16,6 +16,10 @@ pub struct PaymentQrData {
     pub timestamp: i64,
     #[serde(default)]
     pub merchant_mb_pubkey: String,
+    #[serde(default)]
+    pub merchant_wallet: String,
+    #[serde(default)]
+    pub accept_tokens: Vec<String>,
 }
 
 /// Parsed result of scanning a payment QR code.
@@ -28,6 +32,8 @@ pub struct ParsedPaymentQr {
     pub hub_endpoint: String,
     pub timestamp: i64,
     pub merchant_mb_pubkey: String,
+    pub merchant_wallet: String,
+    pub accept_tokens: Vec<String>,
 }
 
 /// Generate a payment QR string from payment data.
@@ -101,6 +107,8 @@ pub fn parse_payment_qr(qr_data: &str) -> Result<ParsedPaymentQr, anyhow::Error>
         hub_endpoint: data.hub_endpoint,
         timestamp: data.timestamp,
         merchant_mb_pubkey: data.merchant_mb_pubkey,
+        merchant_wallet: data.merchant_wallet,
+        accept_tokens: data.accept_tokens,
     })
 }
 
@@ -120,6 +128,8 @@ mod tests {
             hub_endpoint: "https://hub.example.com".to_string(),
             timestamp: 1700000000,
             merchant_mb_pubkey: "MBPubkey123".to_string(),
+            merchant_wallet: "MerchantWalletAddr123".to_string(),
+            accept_tokens: vec!["USDC".to_string(), "SOL".to_string()],
         };
 
         let text = generate_payment_qr_text(&data);
@@ -133,6 +143,8 @@ mod tests {
         assert_eq!(parsed.hub_endpoint, "https://hub.example.com");
         assert_eq!(parsed.timestamp, 1700000000);
         assert_eq!(parsed.merchant_mb_pubkey, "MBPubkey123");
+        assert_eq!(parsed.merchant_wallet, "MerchantWalletAddr123");
+        assert_eq!(parsed.accept_tokens, vec!["USDC", "SOL"]);
     }
 
     #[test]
@@ -147,6 +159,8 @@ mod tests {
             hub_endpoint: "http://localhost:3003".to_string(),
             timestamp: 1000,
             merchant_mb_pubkey: String::new(),
+            merchant_wallet: String::new(),
+            accept_tokens: vec![],
         };
 
         let ascii = generate_qr_ascii(&data).unwrap();

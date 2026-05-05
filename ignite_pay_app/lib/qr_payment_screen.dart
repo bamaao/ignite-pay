@@ -45,9 +45,18 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
     _PaymentMethodOption('session_key', 'Session Key', '链上直接转账', Icons.key),
     _PaymentMethodOption('magicblock', 'MagicBlock', '链下 Voucher 支付', Icons.bolt),
     _PaymentMethodOption('local_wallet', 'Local Wallet', '本地钱包直接转账', Icons.account_balance_wallet),
+    _PaymentMethodOption('sponsored', 'Sponsored', '代付模式 Gas 由 Relayer 支付', Icons.receipt_long),
   ];
 
+  /// Token mint address mapping for common SPL tokens.
+  static const _tokenMintMap = {
+    'USDC': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    'USDT': 'Es9vMFrzaCERmGJgLVCesjWxagAanRn4CJr6YcxEPfBe',
+    'SOL': '',
+  };
+
   String _selectedMethod = 'session_key';
+  String _selectedToken = 'SOL';
   StreamSubscription<QrPaymentResult>? _qrResultSub;
   final _directPaySvc = DirectPaymentService();
 
@@ -57,6 +66,10 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
     // If merchant provides MB pubkey, default to MagicBlock
     if (widget.paymentData.merchantMbPubkey.isNotEmpty) {
       _selectedMethod = 'magicblock';
+    }
+    // Set default token from merchant's accepted tokens
+    if (widget.paymentData.acceptTokens.isNotEmpty) {
+      _selectedToken = widget.paymentData.acceptTokens.first;
     }
     // Listen for qr-payment-response from MCP
     _qrResultSub = DidcommService().qrPaymentResults.listen(_onQrPaymentResult);
@@ -136,6 +149,12 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
                 ),
               ),
               const SizedBox(height: 24),
+
+              // Token selector (only show when multiple tokens available)
+              if (widget.paymentData.acceptTokens.length > 1) ...[
+                _buildTokenSelector(),
+                const SizedBox(height: 16),
+              ],
 
               // Payment method selector
               _buildPaymentMethodSelector(),
@@ -314,6 +333,61 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
                   ),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTokenSelector() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: glassDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '币种选择',
+            style: GoogleFonts.inter(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: kTextTertiary,
+              letterSpacing: 1.5,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: widget.paymentData.acceptTokens.map((token) {
+                final isSelected = _selectedToken == token;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: GestureDetector(
+                    onTap: _isProcessing ? null : () => setState(() => _selectedToken = token),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: isSelected ? kNeonCyan.withValues(alpha: 0.1) : kSurfaceMid.withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: isSelected ? kNeonCyan : kGlassBorder,
+                          width: isSelected ? 1.5 : 1,
+                        ),
+                      ),
+                      child: Text(
+                        token,
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: isSelected ? kNeonCyan : kTextPrimary,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
             ),
           ),
         ],
@@ -530,6 +604,11 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
         return;
       }
 
+      if (_selectedMethod == 'sponsored') {
+        await _onConfirmSponsoredPayment();
+        return;
+      }
+
       if (_selectedMethod == 'magicblock' && widget.paymentData.merchantMbPubkey.isNotEmpty) {
         // MB direct path: sign voucher locally and send to merchant
         await _onConfirmMbPayment();
@@ -544,7 +623,7 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
         description: widget.paymentData.description,
         orderId: widget.paymentData.orderId,
         paymentMethod: _selectedMethod,
-        token: 'SOL',
+        token: _selectedToken,
         merchantMediatorUrl: widget.paymentData.merchantMediatorUrl,
       );
 
@@ -562,11 +641,17 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
 
   Future<void> _onConfirmDirectPayment() async {
     const rpcUrl = String.fromEnvironment('SOLANA_RPC_URL', defaultValue: 'https://api.devnet.solana.com');
+    final tokenMint = _tokenMintMap[_selectedToken] ?? '';
 
     final result = await _directPaySvc.executePayment(
       rpcUrl: rpcUrl,
       merchantDid: widget.paymentData.merchantDid,
       amountLamports: widget.paymentData.amount,
+      token: _selectedToken,
+      tokenMint: tokenMint,
+      merchantWallet: widget.paymentData.merchantWallet.isNotEmpty
+          ? widget.paymentData.merchantWallet
+          : null,
     );
 
     if (!mounted) return;
@@ -578,6 +663,36 @@ class _QrPaymentScreenState extends State<QrPaymentScreen> {
         _paymentProof = result.signature;
       } else {
         _errorMessage = result.error ?? 'Direct payment failed';
+      }
+    });
+  }
+
+  Future<void> _onConfirmSponsoredPayment() async {
+    const rpcUrl = String.fromEnvironment('SOLANA_RPC_URL', defaultValue: 'https://api.devnet.solana.com');
+    const relayerUrl = String.fromEnvironment('RELAYER_URL', defaultValue: 'http://localhost:3030');
+    final tokenMint = _tokenMintMap[_selectedToken] ?? '';
+
+    final result = await _directPaySvc.executeSponsoredPayment(
+      rpcUrl: rpcUrl,
+      merchantDid: widget.paymentData.merchantDid,
+      amountLamports: widget.paymentData.amount,
+      relayerUrl: relayerUrl,
+      token: _selectedToken,
+      tokenMint: tokenMint,
+      merchantWallet: widget.paymentData.merchantWallet.isNotEmpty
+          ? widget.paymentData.merchantWallet
+          : null,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _isProcessing = false;
+      if (result.success) {
+        _isSuccess = true;
+        _paymentProof = result.signature;
+      } else {
+        _errorMessage = result.error ?? 'Sponsored payment failed';
       }
     });
   }
