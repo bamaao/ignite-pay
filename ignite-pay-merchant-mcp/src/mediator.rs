@@ -406,6 +406,11 @@ impl MerchantMediator {
         let mut guard = self.mb_voucher_tx.lock().await;
         *guard = Some(tx);
     }
+
+    /// Sign a message with the DID's Ed25519 signing key. Returns base64-no-pad signature.
+    pub fn sign(&self, message: &[u8]) -> String {
+        ignite_pay_core::sign_message(&self.signing_private, message)
+    }
 }
 
 /// Forward a message to a phone's mediator via HTTP POST.

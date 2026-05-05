@@ -33,3 +33,7 @@ program_id = ""
 token_mint = ""
 # Provider public key (Hub's pubkey, set to match the Hub you connect to)
 provider_pubkey = ""
+
+[did_registry]
+# DID Registry service URL for VC issuance and on-chain ZK DID registration
+url = "http://localhost:8081"

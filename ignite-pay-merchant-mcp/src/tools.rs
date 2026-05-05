@@ -103,3 +103,19 @@ pub struct MbForceReleaseInput {
     /// Batch nonce.
     pub batch_nonce: u64,
 }
+
+// DID Registry tools
+
+/// Input for the `register_merchant` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RegisterMerchantInput {
+    /// Merchant display name.
+    pub merchant_name: String,
+    /// Merchant category (e.g., "retail", "food").
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
+/// Input for the `verify_merchant_did` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct VerifyMerchantDidInput {}

@@ -8,7 +8,7 @@ use ignite_pay_merchant_mcp::tools::{
     CheckPaymentInput, GeneratePaymentQrInput, GetPaymentHistoryInput,
     MbForceReleaseInput, MbGetChannelInput, MbGetSettlementInput,
     MbOptimisticSettleInput, MbReceiveVoucherInput, MbReleaseSettlementInput,
-    MbSettleBatchInput,
+    MbSettleBatchInput, RegisterMerchantInput, VerifyMerchantDidInput,
 };
 use ignite_pay_merchant_mcp::voucher_store::{CollectedVoucher, MerchantVoucherStore};
 
@@ -117,6 +117,8 @@ struct MerchantMcpServer {
     // QR payment config
     merchant_wallet: String,
     default_accept_tokens: Vec<String>,
+    // DID Registry
+    did_registry_url: String,
 }
 
 #[tool_router]
@@ -672,6 +674,146 @@ impl MerchantMcpServer {
             Err(e) => format!("Error sending tx: {}", e),
         }
     }
+
+    // ── DID Registry Tools ──────────────────────────────────────────────
+
+    #[tool(description = "Register merchant identity: obtain platform VC and register on-chain via ZK Compression")]
+    async fn register_merchant(&self, Parameters(input): Parameters<RegisterMerchantInput>) -> String {
+        let registry_url = &self.did_registry_url;
+        if registry_url.is_empty() {
+            return "Error: did_registry.url not configured. Add [did_registry] section to config.toml.".to_string();
+        }
+
+        let merchant_did = self.mediator.our_did().to_string();
+        let client = reqwest::Client::new();
+
+        // Step 1: GET /v1/auth/nonce
+        let nonce_resp = match client.get(format!("{}/v1/auth/nonce", registry_url)).send().await {
+            Ok(r) => r,
+            Err(e) => return format!("Error fetching nonce: {}", e),
+        };
+        let nonce_body: serde_json::Value = match nonce_resp.json().await {
+            Ok(v) => v,
+            Err(e) => return format!("Error parsing nonce response: {}", e),
+        };
+        let nonce = match nonce_body["nonce"].as_str() {
+            Some(n) => n.to_string(),
+            None => return format!("Error: missing nonce in response: {:?}", nonce_body),
+        };
+
+        // Step 2: Sign "issue_vc:{did}:{name}:{nonce}"
+        let vc_msg = format!("issue_vc:{}:{}:{}", merchant_did, input.merchant_name, nonce);
+        let vc_sig = self.mediator.sign(vc_msg.as_bytes());
+
+        // Step 3: POST /v1/vc/issue
+        let mut vc_body = serde_json::json!({
+            "merchant_did": merchant_did,
+            "merchant_name": input.merchant_name,
+            "nonce": nonce,
+            "did_signature": vc_sig,
+        });
+        if let Some(ref cat) = input.category {
+            vc_body["category"] = serde_json::Value::String(cat.clone());
+        }
+
+        let vc_resp = match client
+            .post(format!("{}/v1/vc/issue", registry_url))
+            .json(&vc_body)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return format!("Error requesting VC: {}", e),
+        };
+        let vc_result: serde_json::Value = match vc_resp.json().await {
+            Ok(v) => v,
+            Err(e) => return format!("Error parsing VC response: {}", e),
+        };
+        let vc_hash = match vc_result["vc_hash"].as_str() {
+            Some(h) => h.to_string(),
+            None => return format!("Error: missing vc_hash in VC response: {:?}", vc_result),
+        };
+
+        // Step 4: GET /v1/auth/nonce (fresh nonce for register)
+        let nonce_resp2 = match client.get(format!("{}/v1/auth/nonce", registry_url)).send().await {
+            Ok(r) => r,
+            Err(e) => return format!("Error fetching second nonce: {}", e),
+        };
+        let nonce_body2: serde_json::Value = match nonce_resp2.json().await {
+            Ok(v) => v,
+            Err(e) => return format!("Error parsing second nonce response: {}", e),
+        };
+        let nonce2 = match nonce_body2["nonce"].as_str() {
+            Some(n) => n.to_string(),
+            None => return format!("Error: missing nonce in second response: {:?}", nonce_body2),
+        };
+
+        // Step 5: Sign "register:{did}:{active_pubkey}:{vc_hash}:{nonce}"
+        let active_pubkey = self.mb_merchant_keypair.pubkey().to_string();
+        let reg_msg = format!("register:{}:{}:{}:{}", merchant_did, active_pubkey, vc_hash, nonce2);
+        let reg_sig = self.mediator.sign(reg_msg.as_bytes());
+
+        // Step 6: POST /v1/merchants/register
+        let reg_body = serde_json::json!({
+            "merchant_did": merchant_did,
+            "active_pubkey": active_pubkey,
+            "platform_vc_hash": vc_hash,
+            "did_signature": reg_sig,
+            "nonce": nonce2,
+            "mode": "sponsored",
+        });
+
+        let reg_resp = match client
+            .post(format!("{}/v1/merchants/register", registry_url))
+            .json(&reg_body)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return format!("Error registering merchant: {}", e),
+        };
+        let reg_result: serde_json::Value = match reg_resp.json().await {
+            Ok(v) => v,
+            Err(e) => return format!("Error parsing register response: {}", e),
+        };
+
+        format!(
+            "Merchant registered.\nDID: {}\nVC hash: {}\nRegister response: {}",
+            merchant_did,
+            vc_hash,
+            serde_json::to_string_pretty(&reg_result).unwrap_or_else(|_| reg_result.to_string())
+        )
+    }
+
+    #[tool(description = "Check if the merchant DID is registered on-chain")]
+    async fn verify_merchant_did(&self, Parameters(_input): Parameters<VerifyMerchantDidInput>) -> String {
+        let registry_url = &self.did_registry_url;
+        if registry_url.is_empty() {
+            return "Error: did_registry.url not configured. Add [did_registry] section to config.toml.".to_string();
+        }
+
+        let merchant_did = self.mediator.our_did().to_string();
+        let client = reqwest::Client::new();
+
+        let resp = match client
+            .get(format!("{}/v1/merchants/verify/{}", registry_url, merchant_did))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return format!("Error verifying DID: {}", e),
+        };
+        let result: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => return format!("Error parsing verify response: {}", e),
+        };
+
+        format!(
+            "DID verification for {}:\n{}",
+            merchant_did,
+            serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string())
+        )
+    }
 }
 
 #[tool_handler]
@@ -792,6 +934,7 @@ async fn main() -> anyhow::Result<()> {
         mb_settlement_store: mb_settlement_store.clone(),
         merchant_wallet: cfg.merchant.wallet.clone(),
         default_accept_tokens: cfg.merchant.accept_tokens.clone(),
+        did_registry_url: cfg.did_registry.url.clone(),
     };
 
     // Set up MB voucher channel: mediator forwards received vouchers to this handler

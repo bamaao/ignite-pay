@@ -11,6 +11,8 @@ pub struct Config {
     pub hub: HubConfig,
     #[serde(default)]
     pub magicblock: MagicBlockConfig,
+    #[serde(default)]
+    pub did_registry: DidRegistryConfig,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -75,6 +77,12 @@ fn default_mb_program_id() -> String {
 
 fn default_rpc_url() -> String {
     "https://api.devnet.solana.com".to_string()
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct DidRegistryConfig {
+    #[serde(default)]
+    pub url: String,
 }
 
 pub fn load_config() -> anyhow::Result<Config> {
