@@ -80,8 +80,7 @@ pub struct InitializeDid<'info> {
         payer = signer,
         space = 153,
         seeds = [b"merchant-did", signer.key().as_ref()],
-        bump,
-        constraint = signer.key() == credential_subject_pk @ DidError::VcSubjectMismatch
+        bump
     )]
     pub merchant_did: Account<'info, MerchantDidAccount>,
     #[account(
