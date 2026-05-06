@@ -350,6 +350,24 @@ abstract class RustLibApi extends BaseApi {
     String? tokenMint,
   });
 
+  Future<void> crateApiSimpleSendSessionFundResponse({
+    required String storagePath,
+    required String mcpDid,
+    required String sessionKeyPubkey,
+    required bool funded,
+    required BigInt newBalance,
+    required String? txSignature,
+  });
+
+  Future<void> crateApiSimpleSendSessionRenewResponse({
+    required String storagePath,
+    required String mcpDid,
+    required String oldSessionKeyPubkey,
+    required String newSessionKeyPubkey,
+    required bool renewed,
+    required String? txSignature,
+  });
+
   Future<void> crateApiSimpleSendConnectionRequest({
     required String storagePath,
     required String mcpDid,
@@ -406,6 +424,43 @@ abstract class RustLibApi extends BaseApi {
     required String did,
     required String message,
     required String signatureB64,
+  });
+
+  Future<SessionKeyInfo> crateApiSimpleRegisterExternalSessionKey({
+    required String storagePath,
+    required String rpcUrl,
+    required String ownerSecretKey,
+    required String ephemeralPubkey,
+    required String ephemeralSecretKey,
+    required String targetProgram,
+    required List<String> scopes,
+    required BigInt spendingLimit,
+    required int durationSecs,
+    String? tokenMint,
+  });
+
+  Future<List<String>> crateApiSimpleFundSessionKey({
+    required String rpcUrl,
+    required String ownerSecretKey,
+    required String ephemeralPubkey,
+    required BigInt solAmount,
+    String? splTokenMint,
+    BigInt? splAmount,
+  });
+
+  Future<SessionKeyInfo> crateApiSimpleRegisterAndFundSessionKey({
+    required String storagePath,
+    required String rpcUrl,
+    required String ownerSecretKey,
+    required String ephemeralPubkey,
+    required String ephemeralSecretKey,
+    required String targetProgram,
+    required List<String> scopes,
+    required BigInt spendingLimit,
+    required int durationSecs,
+    String? tokenMint,
+    required BigInt solFunding,
+    BigInt? tokenFunding,
   });
 }
 
@@ -2250,6 +2305,92 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiSimpleSendSessionFundResponse({
+    required String storagePath,
+    required String mcpDid,
+    required String sessionKeyPubkey,
+    required bool funded,
+    required BigInt newBalance,
+    required String? txSignature,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(mcpDid, serializer);
+          sse_encode_String(sessionKeyPubkey, serializer);
+          sse_encode_bool(funded, serializer);
+          sse_encode_u_64(newBalance, serializer);
+          sse_encode_opt_String(txSignature, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 60,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleSendSessionFundResponseConstMeta,
+        argValues: [storagePath, mcpDid, sessionKeyPubkey, funded, newBalance, txSignature],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleSendSessionFundResponseConstMeta =>
+      const TaskConstMeta(
+        debugName: "send_session_fund_response",
+        argNames: ["storagePath", "mcpDid", "sessionKeyPubkey", "funded", "newBalance", "txSignature"],
+      );
+
+  @override
+  Future<void> crateApiSimpleSendSessionRenewResponse({
+    required String storagePath,
+    required String mcpDid,
+    required String oldSessionKeyPubkey,
+    required String newSessionKeyPubkey,
+    required bool renewed,
+    required String? txSignature,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(mcpDid, serializer);
+          sse_encode_String(oldSessionKeyPubkey, serializer);
+          sse_encode_String(newSessionKeyPubkey, serializer);
+          sse_encode_bool(renewed, serializer);
+          sse_encode_opt_String(txSignature, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 61,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleSendSessionRenewResponseConstMeta,
+        argValues: [storagePath, mcpDid, oldSessionKeyPubkey, newSessionKeyPubkey, renewed, txSignature],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleSendSessionRenewResponseConstMeta =>
+      const TaskConstMeta(
+        debugName: "send_session_renew_response",
+        argNames: ["storagePath", "mcpDid", "oldSessionKeyPubkey", "newSessionKeyPubkey", "renewed", "txSignature"],
+      );
+
+  @override
   Future<void> crateApiSimpleSendConnectionRequest({
     required String storagePath,
     required String mcpDid,
@@ -2619,6 +2760,217 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         argNames: ["did", "message", "signatureB64"],
       );
 
+  @override
+  Future<SessionKeyInfo> crateApiSimpleRegisterExternalSessionKey({
+    required String storagePath,
+    required String rpcUrl,
+    required String ownerSecretKey,
+    required String ephemeralPubkey,
+    required String ephemeralSecretKey,
+    required String targetProgram,
+    required List<String> scopes,
+    required BigInt spendingLimit,
+    required int durationSecs,
+    String? tokenMint,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(rpcUrl, serializer);
+          sse_encode_String(ownerSecretKey, serializer);
+          sse_encode_String(ephemeralPubkey, serializer);
+          sse_encode_String(ephemeralSecretKey, serializer);
+          sse_encode_String(targetProgram, serializer);
+          sse_encode_list_String(scopes, serializer);
+          sse_encode_u_64(spendingLimit, serializer);
+          sse_encode_i_64(durationSecs, serializer);
+          sse_encode_opt_String(tokenMint, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 55,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_session_key_info,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleRegisterExternalSessionKeyConstMeta,
+        argValues: [
+          storagePath,
+          rpcUrl,
+          ownerSecretKey,
+          ephemeralPubkey,
+          ephemeralSecretKey,
+          targetProgram,
+          scopes,
+          spendingLimit,
+          durationSecs,
+          tokenMint,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleRegisterExternalSessionKeyConstMeta =>
+      const TaskConstMeta(
+        debugName: "register_external_session_key",
+        argNames: [
+          "storagePath",
+          "rpcUrl",
+          "ownerSecretKey",
+          "ephemeralPubkey",
+          "ephemeralSecretKey",
+          "targetProgram",
+          "scopes",
+          "spendingLimit",
+          "durationSecs",
+          "tokenMint",
+        ],
+      );
+
+  @override
+  Future<List<String>> crateApiSimpleFundSessionKey({
+    required String rpcUrl,
+    required String ownerSecretKey,
+    required String ephemeralPubkey,
+    required BigInt solAmount,
+    String? splTokenMint,
+    BigInt? splAmount,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(rpcUrl, serializer);
+          sse_encode_String(ownerSecretKey, serializer);
+          sse_encode_String(ephemeralPubkey, serializer);
+          sse_encode_u_64(solAmount, serializer);
+          sse_encode_opt_String(splTokenMint, serializer);
+          sse_encode_opt_u_64(splAmount, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 57,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleFundSessionKeyConstMeta,
+        argValues: [
+          rpcUrl,
+          ownerSecretKey,
+          ephemeralPubkey,
+          solAmount,
+          splTokenMint,
+          splAmount,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleFundSessionKeyConstMeta =>
+      const TaskConstMeta(
+        debugName: "fund_session_key",
+        argNames: [
+          "rpcUrl",
+          "ownerSecretKey",
+          "ephemeralPubkey",
+          "solAmount",
+          "splTokenMint",
+          "splAmount",
+        ],
+      );
+
+  @override
+  Future<SessionKeyInfo> crateApiSimpleRegisterAndFundSessionKey({
+    required String storagePath,
+    required String rpcUrl,
+    required String ownerSecretKey,
+    required String ephemeralPubkey,
+    required String ephemeralSecretKey,
+    required String targetProgram,
+    required List<String> scopes,
+    required BigInt spendingLimit,
+    required int durationSecs,
+    String? tokenMint,
+    required BigInt solFunding,
+    BigInt? tokenFunding,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(rpcUrl, serializer);
+          sse_encode_String(ownerSecretKey, serializer);
+          sse_encode_String(ephemeralPubkey, serializer);
+          sse_encode_String(ephemeralSecretKey, serializer);
+          sse_encode_String(targetProgram, serializer);
+          sse_encode_list_String(scopes, serializer);
+          sse_encode_u_64(spendingLimit, serializer);
+          sse_encode_i_64(durationSecs, serializer);
+          sse_encode_opt_String(tokenMint, serializer);
+          sse_encode_u_64(solFunding, serializer);
+          sse_encode_opt_u_64(tokenFunding, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 59,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_session_key_info,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleRegisterAndFundSessionKeyConstMeta,
+        argValues: [
+          storagePath,
+          rpcUrl,
+          ownerSecretKey,
+          ephemeralPubkey,
+          ephemeralSecretKey,
+          targetProgram,
+          scopes,
+          spendingLimit,
+          durationSecs,
+          tokenMint,
+          solFunding,
+          tokenFunding,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleRegisterAndFundSessionKeyConstMeta =>
+      const TaskConstMeta(
+        debugName: "register_and_fund_session_key",
+        argNames: [
+          "storagePath",
+          "rpcUrl",
+          "ownerSecretKey",
+          "ephemeralPubkey",
+          "ephemeralSecretKey",
+          "targetProgram",
+          "scopes",
+          "spendingLimit",
+          "durationSecs",
+          "tokenMint",
+          "solFunding",
+          "tokenFunding",
+        ],
+      );
+
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -2719,8 +3071,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DecryptedMessage dco_decode_decrypted_message(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 11)
-      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
+    if (arr.length != 30)
+      throw Exception('unexpected arr length: expect 30 but see ${arr.length}');
     return DecryptedMessage(
       msgType: dco_decode_String(arr[0]),
       paymentId: dco_decode_opt_String(arr[1]),
@@ -2733,6 +3085,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       rawBody: dco_decode_String(arr[8]),
       listType: dco_decode_opt_String(arr[9]),
       label: dco_decode_opt_String(arr[10]),
+      newSessionKeyPubkey: dco_decode_opt_String(arr[11]),
+      newSessionKeySecretKey: dco_decode_opt_String(arr[12]),
+      newSessionKeySpendingLimit: dco_decode_opt_box_autoadd_u_64(arr[13]),
+      newSessionKeyDurationSecs: dco_decode_opt_box_autoadd_i_64(arr[14]),
+      newSessionKeyScopes: dco_decode_opt_List_String(arr[15]),
+      newSessionKeyTokenMint: dco_decode_opt_String(arr[16]),
+      newSessionKeySuggestedSolFunding: dco_decode_opt_box_autoadd_u_64(arr[17]),
+      newSessionKeySuggestedTokenFunding: dco_decode_opt_box_autoadd_u_64(arr[18]),
+      availablePaymentMethods: dco_decode_opt_List_String(arr[19]),
+      sessionFundRequiredAmount: dco_decode_opt_box_autoadd_u_64(arr[20]),
+      sessionFundCurrentBalance: dco_decode_opt_box_autoadd_u_64(arr[21]),
+      sessionFundSpendingLimitRemaining: dco_decode_opt_box_autoadd_u_64(arr[22]),
+      sessionFundTokenMint: dco_decode_opt_String(arr[23]),
+      sessionFundReason: dco_decode_opt_String(arr[24]),
+      balanceNotificationBalance: dco_decode_opt_box_autoadd_u_64(arr[25]),
+      balanceNotificationThreshold: dco_decode_opt_box_autoadd_u_64(arr[26]),
+      balanceNotificationSpendingLimitRemaining: dco_decode_opt_box_autoadd_u_64(arr[27]),
+      oldSessionKeyPubkey: dco_decode_opt_String(arr[28]),
+      sessionRenewExpiresAt: dco_decode_opt_box_autoadd_i_64(arr[29]),
     );
   }
 
@@ -2917,6 +3288,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_u_64(raw);
+  }
+
+  @protected
+  int? dco_decode_opt_box_autoadd_i_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_i_64(raw);
+  }
+
+  @protected
+  List<String>? dco_decode_opt_List_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_list_String(raw);
   }
 
   @protected
@@ -3156,6 +3539,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_rawBody = sse_decode_String(deserializer);
     var var_listType = sse_decode_opt_String(deserializer);
     var var_label = sse_decode_opt_String(deserializer);
+    var var_newSessionKeyPubkey = sse_decode_opt_String(deserializer);
+    var var_newSessionKeySecretKey = sse_decode_opt_String(deserializer);
+    var var_newSessionKeySpendingLimit = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_newSessionKeyDurationSecs = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_newSessionKeyScopes = sse_decode_opt_List_String(deserializer);
+    var var_newSessionKeyTokenMint = sse_decode_opt_String(deserializer);
+    var var_newSessionKeySuggestedSolFunding = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_newSessionKeySuggestedTokenFunding = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_availablePaymentMethods = sse_decode_opt_List_String(deserializer);
+    var var_sessionFundRequiredAmount = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_sessionFundCurrentBalance = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_sessionFundSpendingLimitRemaining = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_sessionFundTokenMint = sse_decode_opt_String(deserializer);
+    var var_sessionFundReason = sse_decode_opt_String(deserializer);
+    var var_balanceNotificationBalance = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_balanceNotificationThreshold = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_balanceNotificationSpendingLimitRemaining = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_oldSessionKeyPubkey = sse_decode_opt_String(deserializer);
+    var var_sessionRenewExpiresAt = sse_decode_opt_box_autoadd_i_64(deserializer);
     return DecryptedMessage(
       msgType: var_msgType,
       paymentId: var_paymentId,
@@ -3168,6 +3570,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       rawBody: var_rawBody,
       listType: var_listType,
       label: var_label,
+      newSessionKeyPubkey: var_newSessionKeyPubkey,
+      newSessionKeySecretKey: var_newSessionKeySecretKey,
+      newSessionKeySpendingLimit: var_newSessionKeySpendingLimit,
+      newSessionKeyDurationSecs: var_newSessionKeyDurationSecs,
+      newSessionKeyScopes: var_newSessionKeyScopes,
+      newSessionKeyTokenMint: var_newSessionKeyTokenMint,
+      newSessionKeySuggestedSolFunding: var_newSessionKeySuggestedSolFunding,
+      newSessionKeySuggestedTokenFunding: var_newSessionKeySuggestedTokenFunding,
+      availablePaymentMethods: var_availablePaymentMethods,
+      sessionFundRequiredAmount: var_sessionFundRequiredAmount,
+      sessionFundCurrentBalance: var_sessionFundCurrentBalance,
+      sessionFundSpendingLimitRemaining: var_sessionFundSpendingLimitRemaining,
+      sessionFundTokenMint: var_sessionFundTokenMint,
+      sessionFundReason: var_sessionFundReason,
+      balanceNotificationBalance: var_balanceNotificationBalance,
+      balanceNotificationThreshold: var_balanceNotificationThreshold,
+      balanceNotificationSpendingLimitRemaining: var_balanceNotificationSpendingLimitRemaining,
+      oldSessionKeyPubkey: var_oldSessionKeyPubkey,
+      sessionRenewExpiresAt: var_sessionRenewExpiresAt,
     );
   }
 
@@ -3441,6 +3862,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  int? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_i_64(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  List<String>? sse_decode_opt_List_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_list_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   PaymentQrData sse_decode_payment_qr_data(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_merchantDid = sse_decode_String(deserializer);
@@ -3685,6 +4128,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.rawBody, serializer);
     sse_encode_opt_String(self.listType, serializer);
     sse_encode_opt_String(self.label, serializer);
+    sse_encode_opt_String(self.newSessionKeyPubkey, serializer);
+    sse_encode_opt_String(self.newSessionKeySecretKey, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.newSessionKeySpendingLimit, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.newSessionKeyDurationSecs, serializer);
+    sse_encode_opt_list_String(self.newSessionKeyScopes, serializer);
+    sse_encode_opt_String(self.newSessionKeyTokenMint, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.newSessionKeySuggestedSolFunding, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.newSessionKeySuggestedTokenFunding, serializer);
+    sse_encode_opt_list_String(self.availablePaymentMethods, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.sessionFundRequiredAmount, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.sessionFundCurrentBalance, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.sessionFundSpendingLimitRemaining, serializer);
+    sse_encode_opt_String(self.sessionFundTokenMint, serializer);
+    sse_encode_opt_String(self.sessionFundReason, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.balanceNotificationBalance, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.balanceNotificationThreshold, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.balanceNotificationSpendingLimitRemaining, serializer);
+    sse_encode_opt_String(self.oldSessionKeyPubkey, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.sessionRenewExpiresAt, serializer);
   }
 
   @protected

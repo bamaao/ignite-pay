@@ -253,9 +253,154 @@ pub fn decrypt_message(storage_path: String, jwe: String) -> Result<DecryptedMes
             .get("list_label")
             .and_then(|v| v.as_str())
             .map(String::from),
+        // F2: extract new_session_key fields from nested object
+        new_session_key_pubkey: msg
+            .body
+            .get("new_session_key")
+            .and_then(|sk| sk.get("session_key_pubkey"))
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        new_session_key_secret_key: msg
+            .body
+            .get("new_session_key")
+            .and_then(|sk| sk.get("ephemeral_secret_key"))
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        new_session_key_spending_limit: msg
+            .body
+            .get("new_session_key")
+            .and_then(|sk| sk.get("spending_limit"))
+            .and_then(|v| v.as_u64()),
+        new_session_key_duration_secs: msg
+            .body
+            .get("new_session_key")
+            .and_then(|sk| sk.get("duration_secs"))
+            .and_then(|v| v.as_i64()),
+        new_session_key_scopes: msg
+            .body
+            .get("new_session_key")
+            .and_then(|sk| sk.get("scopes"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            }),
+        new_session_key_token_mint: msg
+            .body
+            .get("new_session_key")
+            .and_then(|sk| sk.get("token_mint"))
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        new_session_key_suggested_sol_funding: msg
+            .body
+            .get("new_session_key")
+            .and_then(|sk| sk.get("suggested_sol_funding"))
+            .and_then(|v| v.as_u64()),
+        new_session_key_suggested_token_funding: msg
+            .body
+            .get("new_session_key")
+            .and_then(|sk| sk.get("suggested_token_funding"))
+            .and_then(|v| v.as_u64()),
+        available_payment_methods: msg
+            .body
+            .get("available_payment_methods")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            }),
+        // F3/F7: session-fund-request fields
+        session_fund_required_amount: msg.body.get("required_amount").and_then(|v| v.as_u64()),
+        session_fund_current_balance: msg.body.get("current_balance").and_then(|v| v.as_u64()),
+        session_fund_spending_limit_remaining: msg.body.get("spending_limit_remaining").and_then(|v| v.as_u64()),
+        session_fund_token_mint: msg.body.get("token_mint").and_then(|v| v.as_str()).map(String::from),
+        session_fund_reason: msg.body.get("reason").and_then(|v| v.as_str()).map(String::from),
+        // F13: balance-notification fields
+        balance_notification_balance: msg.body.get("balance").and_then(|v| v.as_u64()),
+        balance_notification_threshold: msg.body.get("threshold").and_then(|v| v.as_u64()),
+        balance_notification_spending_limit_remaining: msg.body.get("spending_limit_remaining").and_then(|v| v.as_u64()),
+        // F14: session-renew-request fields
+        old_session_key_pubkey: msg.body.get("old_session_key_pubkey").and_then(|v| v.as_str()).map(String::from),
+        session_renew_expires_at: msg.body.get("expires_at").and_then(|v| v.as_i64()),
     };
 
     Ok(decrypted)
+}
+
+/// Send a session fund response back to the MCP server.
+pub async fn send_session_fund_response(
+    _storage_path: String,
+    mcp_did: String,
+    session_key_pubkey: String,
+    funded: bool,
+    new_balance: u64,
+    tx_signature: Option<String>,
+) -> Result<()> {
+    let global = GLOBAL_WS_CLIENT.lock().await;
+    let client = global
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Not connected to mediator"))?;
+
+    let mgr = IdentityManager::new(&_storage_path)?;
+    let our_did = mgr.did().to_string();
+    let agent = mgr.agent();
+
+    let msg = ignite_pay_core::didcomm::build_session_fund_response(
+        &our_did,
+        &mcp_did,
+        &session_key_pubkey,
+        funded,
+        new_balance,
+        tx_signature.as_deref(),
+    );
+
+    let jwe = {
+        let agent_guard = agent.lock().await;
+        ignite_pay_core::didcomm::pack_encrypted(&agent_guard, &msg, &our_did, &mcp_did)
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?
+    };
+
+    client.send_raw(&jwe).await?;
+    Ok(())
+}
+
+/// Send a session renew response back to the MCP server.
+pub async fn send_session_renew_response(
+    _storage_path: String,
+    mcp_did: String,
+    old_session_key_pubkey: String,
+    new_session_key_pubkey: String,
+    renewed: bool,
+    tx_signature: Option<String>,
+) -> Result<()> {
+    let global = GLOBAL_WS_CLIENT.lock().await;
+    let client = global
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Not connected to mediator"))?;
+
+    let mgr = IdentityManager::new(&_storage_path)?;
+    let our_did = mgr.did().to_string();
+    let agent = mgr.agent();
+
+    let msg = ignite_pay_core::didcomm::build_session_renew_response(
+        &our_did,
+        &mcp_did,
+        &old_session_key_pubkey,
+        &new_session_key_pubkey,
+        renewed,
+        tx_signature.as_deref(),
+    );
+
+    let jwe = {
+        let agent_guard = agent.lock().await;
+        ignite_pay_core::didcomm::pack_encrypted(&agent_guard, &msg, &our_did, &mcp_did)
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?
+    };
+
+    client.send_raw(&jwe).await?;
+    Ok(())
 }
 
 /// Mock payment signing (placeholder for real signing).
@@ -516,6 +661,86 @@ pub async fn revoke_session_key_onchain(
 /// Delete a session key from local storage only.
 pub fn delete_session_key_local(storage_path: String, session_pubkey: String) -> Result<()> {
     crate::api::session::delete_session_key_local(storage_path, session_pubkey)
+}
+
+/// Register an externally-provided session key on-chain (MCP created the keypair).
+pub async fn register_external_session_key(
+    storage_path: String,
+    rpc_url: String,
+    owner_secret_key: String,
+    ephemeral_pubkey: String,
+    ephemeral_secret_key: String,
+    target_program: String,
+    scopes: Vec<String>,
+    spending_limit: u64,
+    duration_secs: i64,
+    token_mint: Option<String>,
+) -> Result<SessionKeyInfo> {
+    crate::api::session::register_external_session_key(
+        storage_path,
+        rpc_url,
+        owner_secret_key,
+        ephemeral_pubkey,
+        ephemeral_secret_key,
+        target_program,
+        scopes,
+        spending_limit,
+        duration_secs,
+        token_mint,
+    )
+    .await
+}
+
+/// Fund a session key by transferring SOL (and optionally SPL token) from the owner.
+pub async fn fund_session_key(
+    rpc_url: String,
+    owner_secret_key: String,
+    ephemeral_pubkey: String,
+    sol_amount: u64,
+    spl_token_mint: Option<String>,
+    spl_amount: Option<u64>,
+) -> Result<Vec<String>> {
+    crate::api::session::fund_session_key(
+        rpc_url,
+        owner_secret_key,
+        ephemeral_pubkey,
+        sol_amount,
+        spl_token_mint,
+        spl_amount,
+    )
+    .await
+}
+
+/// Register an externally-provided session key and fund it in one operation.
+pub async fn register_and_fund_session_key(
+    storage_path: String,
+    rpc_url: String,
+    owner_secret_key: String,
+    ephemeral_pubkey: String,
+    ephemeral_secret_key: String,
+    target_program: String,
+    scopes: Vec<String>,
+    spending_limit: u64,
+    duration_secs: i64,
+    token_mint: Option<String>,
+    sol_funding: u64,
+    token_funding: Option<u64>,
+) -> Result<SessionKeyInfo> {
+    crate::api::session::register_and_fund_session_key(
+        storage_path,
+        rpc_url,
+        owner_secret_key,
+        ephemeral_pubkey,
+        ephemeral_secret_key,
+        target_program,
+        scopes,
+        spending_limit,
+        duration_secs,
+        token_mint,
+        sol_funding,
+        token_funding,
+    )
+    .await
 }
 
 /// Parsed OOB invitation data.

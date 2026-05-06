@@ -43,6 +43,63 @@ class DecryptedMessage {
   /// User-assigned label for the merchant.
   final String? label;
 
+  /// F2: MCP-provided ephemeral public key for session key registration.
+  final String? newSessionKeyPubkey;
+
+  /// F2: MCP-provided ephemeral secret key (64-byte keypair, base58) for session key registration.
+  final String? newSessionKeySecretKey;
+
+  /// F2: Spending limit in lamports for the MCP-provided session key.
+  final BigInt? newSessionKeySpendingLimit;
+
+  /// F2: Session duration in seconds for the MCP-provided session key.
+  final PlatformInt64? newSessionKeyDurationSecs;
+
+  /// F2: Permission scopes for the MCP-provided session key.
+  final List<String>? newSessionKeyScopes;
+
+  /// F2: SPL Token mint address (base58).
+  final String? newSessionKeyTokenMint;
+
+  /// F2: Suggested SOL funding amount (lamports).
+  final BigInt? newSessionKeySuggestedSolFunding;
+
+  /// F2: Suggested token funding amount.
+  final BigInt? newSessionKeySuggestedTokenFunding;
+
+  /// F2: Available payment methods (e.g., ["session_key", "magicblock"]).
+  final List<String>? availablePaymentMethods;
+
+  /// F3/F7: Required funding amount for session key.
+  final BigInt? sessionFundRequiredAmount;
+
+  /// F3/F7: Current balance of the session key.
+  final BigInt? sessionFundCurrentBalance;
+
+  /// F3/F7: Remaining spending limit.
+  final BigInt? sessionFundSpendingLimitRemaining;
+
+  /// F3/F7: Token mint address.
+  final String? sessionFundTokenMint;
+
+  /// F3/F7: Reason for fund request.
+  final String? sessionFundReason;
+
+  /// F13: Current session balance in balance notification.
+  final BigInt? balanceNotificationBalance;
+
+  /// F13: Threshold that triggered notification.
+  final BigInt? balanceNotificationThreshold;
+
+  /// F13: Remaining spending limit in notification.
+  final BigInt? balanceNotificationSpendingLimitRemaining;
+
+  /// F14: Old session key pubkey being renewed.
+  final String? oldSessionKeyPubkey;
+
+  /// F14: Expiry timestamp of the old session key.
+  final PlatformInt64? sessionRenewExpiresAt;
+
   const DecryptedMessage({
     required this.msgType,
     this.paymentId,
@@ -55,6 +112,25 @@ class DecryptedMessage {
     required this.rawBody,
     this.listType,
     this.label,
+    this.newSessionKeyPubkey,
+    this.newSessionKeySecretKey,
+    this.newSessionKeySpendingLimit,
+    this.newSessionKeyDurationSecs,
+    this.newSessionKeyScopes,
+    this.newSessionKeyTokenMint,
+    this.newSessionKeySuggestedSolFunding,
+    this.newSessionKeySuggestedTokenFunding,
+    this.availablePaymentMethods,
+    this.sessionFundRequiredAmount,
+    this.sessionFundCurrentBalance,
+    this.sessionFundSpendingLimitRemaining,
+    this.sessionFundTokenMint,
+    this.sessionFundReason,
+    this.balanceNotificationBalance,
+    this.balanceNotificationThreshold,
+    this.balanceNotificationSpendingLimitRemaining,
+    this.oldSessionKeyPubkey,
+    this.sessionRenewExpiresAt,
   });
 
   @override
@@ -69,7 +145,26 @@ class DecryptedMessage {
       targetDid.hashCode ^
       rawBody.hashCode ^
       listType.hashCode ^
-      label.hashCode;
+      label.hashCode ^
+      newSessionKeyPubkey.hashCode ^
+      newSessionKeySecretKey.hashCode ^
+      newSessionKeySpendingLimit.hashCode ^
+      newSessionKeyDurationSecs.hashCode ^
+      newSessionKeyScopes.hashCode ^
+      newSessionKeyTokenMint.hashCode ^
+      newSessionKeySuggestedSolFunding.hashCode ^
+      newSessionKeySuggestedTokenFunding.hashCode ^
+      availablePaymentMethods.hashCode ^
+      sessionFundRequiredAmount.hashCode ^
+      sessionFundCurrentBalance.hashCode ^
+      sessionFundSpendingLimitRemaining.hashCode ^
+      sessionFundTokenMint.hashCode ^
+      sessionFundReason.hashCode ^
+      balanceNotificationBalance.hashCode ^
+      balanceNotificationThreshold.hashCode ^
+      balanceNotificationSpendingLimitRemaining.hashCode ^
+      oldSessionKeyPubkey.hashCode ^
+      sessionRenewExpiresAt.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -86,7 +181,30 @@ class DecryptedMessage {
           targetDid == other.targetDid &&
           rawBody == other.rawBody &&
           listType == other.listType &&
-          label == other.label;
+          label == other.label &&
+          newSessionKeyPubkey == other.newSessionKeyPubkey &&
+          newSessionKeySecretKey == other.newSessionKeySecretKey &&
+          newSessionKeySpendingLimit == other.newSessionKeySpendingLimit &&
+          newSessionKeyDurationSecs == other.newSessionKeyDurationSecs &&
+          newSessionKeyScopes == other.newSessionKeyScopes &&
+          newSessionKeyTokenMint == other.newSessionKeyTokenMint &&
+          newSessionKeySuggestedSolFunding ==
+              other.newSessionKeySuggestedSolFunding &&
+          newSessionKeySuggestedTokenFunding ==
+              other.newSessionKeySuggestedTokenFunding &&
+          availablePaymentMethods == other.availablePaymentMethods &&
+          sessionFundRequiredAmount == other.sessionFundRequiredAmount &&
+          sessionFundCurrentBalance == other.sessionFundCurrentBalance &&
+          sessionFundSpendingLimitRemaining ==
+              other.sessionFundSpendingLimitRemaining &&
+          sessionFundTokenMint == other.sessionFundTokenMint &&
+          sessionFundReason == other.sessionFundReason &&
+          balanceNotificationBalance == other.balanceNotificationBalance &&
+          balanceNotificationThreshold == other.balanceNotificationThreshold &&
+          balanceNotificationSpendingLimitRemaining ==
+              other.balanceNotificationSpendingLimitRemaining &&
+          oldSessionKeyPubkey == other.oldSessionKeyPubkey &&
+          sessionRenewExpiresAt == other.sessionRenewExpiresAt;
 }
 
 /// A DIDComm message envelope (before decryption).

@@ -278,6 +278,10 @@ pub struct NewSessionKeyRequest {
     pub suggested_sol_funding: u64,
     /// Suggested stablecoin funding amount (smallest unit) if applicable.
     pub suggested_token_funding: Option<u64>,
+    /// Base58-encoded 64-byte ephemeral keypair (secret key).
+    /// Sent via DIDComm JWE (authcrypt) so it's end-to-end encrypted.
+    /// The phone needs this to sign the on-chain register_session_key instruction.
+    pub ephemeral_secret_key: Option<String>,
 }
 
 pub fn build_authorization_request(
@@ -364,17 +368,21 @@ fn build_authorization_request_inner(
     });
 
     if let Some(sk) = new_session_key {
+        let mut sk_obj = json!({
+            "session_key_pubkey": sk.session_key_pubkey,
+            "spending_limit": sk.spending_limit,
+            "duration_secs": sk.duration_secs,
+            "scopes": sk.scopes,
+            "token_mint": sk.token_mint,
+            "suggested_sol_funding": sk.suggested_sol_funding,
+            "suggested_token_funding": sk.suggested_token_funding,
+        });
+        if let Some(ref secret_key) = sk.ephemeral_secret_key {
+            sk_obj["ephemeral_secret_key"] = json!(secret_key);
+        }
         body.as_object_mut().unwrap().insert(
             "new_session_key".to_string(),
-            json!({
-                "session_key_pubkey": sk.session_key_pubkey,
-                "spending_limit": sk.spending_limit,
-                "duration_secs": sk.duration_secs,
-                "scopes": sk.scopes,
-                "token_mint": sk.token_mint,
-                "suggested_sol_funding": sk.suggested_sol_funding,
-                "suggested_token_funding": sk.suggested_token_funding,
-            }),
+            sk_obj,
         );
     }
 
@@ -832,6 +840,142 @@ pub fn build_list_sync_notification(
     .to(vec![to_did.to_string()])
 }
 
+/// Build a session fund request message.
+/// Sent from MCP to phone when session key balance is insufficient for a pending payment.
+pub fn build_session_fund_request(
+    from_did: &str,
+    to_did: &str,
+    session_key_pubkey: &str,
+    required_amount: u64,
+    current_balance: u64,
+    spending_limit_remaining: u64,
+    token_mint: &str,
+    reason: &str,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/session-fund-request",
+        json!({
+            "session_key_pubkey": session_key_pubkey,
+            "required_amount": required_amount,
+            "current_balance": current_balance,
+            "spending_limit_remaining": spending_limit_remaining,
+            "token_mint": token_mint,
+            "reason": reason,
+        }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build a session fund response message.
+/// Sent from phone to MCP after funding the session key.
+pub fn build_session_fund_response(
+    from_did: &str,
+    to_did: &str,
+    session_key_pubkey: &str,
+    funded: bool,
+    new_balance: u64,
+    tx_signature: Option<&str>,
+) -> Message {
+    let mut body = json!({
+        "session_key_pubkey": session_key_pubkey,
+        "funded": funded,
+        "new_balance": new_balance,
+    });
+    if let Some(sig) = tx_signature {
+        body["tx_signature"] = json!(sig);
+    }
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/session-fund-response",
+        body,
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build a balance notification message.
+/// Sent from MCP to phone when session balance drops below threshold.
+pub fn build_balance_notification(
+    from_did: &str,
+    to_did: &str,
+    session_key_pubkey: &str,
+    balance: u64,
+    threshold: u64,
+    spending_limit_remaining: u64,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/balance-notification",
+        json!({
+            "session_key_pubkey": session_key_pubkey,
+            "balance": balance,
+            "threshold": threshold,
+            "spending_limit_remaining": spending_limit_remaining,
+        }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build a session renew request message.
+/// Sent from MCP to phone when session key is near expiry.
+pub fn build_session_renew_request(
+    from_did: &str,
+    to_did: &str,
+    old_session_key_pubkey: &str,
+    expires_at: i64,
+    new_session_key: &NewSessionKeyRequest,
+) -> Message {
+    let mut sk_obj = json!({
+        "session_key_pubkey": new_session_key.session_key_pubkey,
+        "spending_limit": new_session_key.spending_limit,
+        "duration_secs": new_session_key.duration_secs,
+        "scopes": new_session_key.scopes,
+        "token_mint": new_session_key.token_mint,
+        "suggested_sol_funding": new_session_key.suggested_sol_funding,
+        "suggested_token_funding": new_session_key.suggested_token_funding,
+    });
+    if let Some(ref secret_key) = new_session_key.ephemeral_secret_key {
+        sk_obj["ephemeral_secret_key"] = json!(secret_key);
+    }
+
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/session-renew-request",
+        json!({
+            "old_session_key_pubkey": old_session_key_pubkey,
+            "expires_at": expires_at,
+            "new_session_key": sk_obj,
+        }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
+/// Build a session renew response message.
+/// Sent from phone to MCP after registering the new session key.
+pub fn build_session_renew_response(
+    from_did: &str,
+    to_did: &str,
+    old_session_key_pubkey: &str,
+    new_session_key_pubkey: &str,
+    renewed: bool,
+    tx_signature: Option<&str>,
+) -> Message {
+    let mut body = json!({
+        "old_session_key_pubkey": old_session_key_pubkey,
+        "new_session_key_pubkey": new_session_key_pubkey,
+        "renewed": renewed,
+    });
+    if let Some(sig) = tx_signature {
+        body["tx_signature"] = json!(sig);
+    }
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/session-renew-response",
+        body,
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
 /// Encrypt a DIDComm message using authcrypt (authenticated encryption).
 /// Returns a JWE JSON string.
 pub fn pack_encrypted(
@@ -1072,6 +1216,7 @@ mod tests {
             token_mint: None,
             suggested_sol_funding: 5000,
             suggested_token_funding: None,
+            ephemeral_secret_key: None,
         };
         let methods = vec![PaymentMethod::SessionKey];
         let msg = build_authorization_request_with_methods(

@@ -6,6 +6,7 @@ use std::sync::Mutex;
 
 const WHITELIST_TREE: &str = "__whitelist__";
 const BLACKLIST_TREE: &str = "__blacklist__";
+const MERCHANT_SPENDING_TREE: &str = "__merchant_spending__";
 
 /// Persistent store for merchant whitelist and blacklist.
 /// Caches entries locally in sled, syncs with IPFS for cross-device sharing.
@@ -107,6 +108,33 @@ impl ListStore {
         Ok(())
     }
 
+    /// Record cumulative spending for a merchant.
+    pub fn record_merchant_spent(&self, merchant_did: &str, amount: u64) -> Result<()> {
+        let tree = self.db.open_tree(MERCHANT_SPENDING_TREE)?;
+        let current = Self::get_merchant_spent_from_tree(&tree, merchant_did)?;
+        let new_total = current.saturating_add(amount);
+        let value = new_total.to_le_bytes();
+        tree.insert(merchant_did.as_bytes(), &value[..])?;
+        tree.flush()?;
+        Ok(())
+    }
+
+    /// Get cumulative spending for a merchant.
+    pub fn get_merchant_spent(&self, merchant_did: &str) -> Result<u64> {
+        let tree = self.db.open_tree(MERCHANT_SPENDING_TREE)?;
+        Self::get_merchant_spent_from_tree(&tree, merchant_did)
+    }
+
+    fn get_merchant_spent_from_tree(tree: &sled::Tree, merchant_did: &str) -> Result<u64> {
+        match tree.get(merchant_did.as_bytes())? {
+            Some(bytes) if bytes.len() >= 8 => {
+                let arr: [u8; 8] = bytes[..8].try_into()?;
+                Ok(u64::from_le_bytes(arr))
+            }
+            _ => Ok(0),
+        }
+    }
+
     /// Risk control check implementing the §4.2 decision flow (V1.1).
     /// 1. Check blacklist (with expiry) -> Blocked
     /// 2. Check whitelist (with expiry + max_amount) -> AutoApproved or NeedsAuth
@@ -120,6 +148,14 @@ impl ListStore {
         // Step 2: Whitelist check
         let wl = self.check_whitelist(merchant_did, amount)?;
         if wl.is_whitelisted {
+            // F8: Check cumulative spending against whitelist max_amount
+            if let Some(max) = wl.max_amount {
+                let cumulative = self.get_merchant_spent(merchant_did).unwrap_or(0);
+                if cumulative.saturating_add(amount) > max {
+                    // Cumulative exceeded — route to manual auth instead of auto-approve
+                    return Ok(RiskControlDecision::NeedsAuth);
+                }
+            }
             return Ok(RiskControlDecision::AutoApproved {
                 max_amount: wl.max_amount,
                 label: wl.label,

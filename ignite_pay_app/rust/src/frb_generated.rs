@@ -2285,6 +2285,446 @@ fn wire__crate__api__simple__build_unsigned_sponsored_spl_transfer_tx_impl(
     )
 }
 
+fn wire__crate__api__session__register_external_session_key_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "register_external_session_key",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_rpc_url = <String>::sse_decode(&mut deserializer);
+            let api_owner_secret_key = <String>::sse_decode(&mut deserializer);
+            let api_ephemeral_pubkey = <String>::sse_decode(&mut deserializer);
+            let api_ephemeral_secret_key = <String>::sse_decode(&mut deserializer);
+            let api_target_program = <String>::sse_decode(&mut deserializer);
+            let api_scopes = <Vec<String>>::sse_decode(&mut deserializer);
+            let api_spending_limit = <u64>::sse_decode(&mut deserializer);
+            let api_duration_secs = <i64>::sse_decode(&mut deserializer);
+            let api_token_mint = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::session::register_external_session_key(
+                            api_storage_path,
+                            api_rpc_url,
+                            api_owner_secret_key,
+                            api_ephemeral_pubkey,
+                            api_ephemeral_secret_key,
+                            api_target_program,
+                            api_scopes,
+                            api_spending_limit,
+                            api_duration_secs,
+                            api_token_mint,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+
+fn wire__crate__api__simple__register_external_session_key_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "register_external_session_key",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_rpc_url = <String>::sse_decode(&mut deserializer);
+            let api_owner_secret_key = <String>::sse_decode(&mut deserializer);
+            let api_ephemeral_pubkey = <String>::sse_decode(&mut deserializer);
+            let api_ephemeral_secret_key = <String>::sse_decode(&mut deserializer);
+            let api_target_program = <String>::sse_decode(&mut deserializer);
+            let api_scopes = <Vec<String>>::sse_decode(&mut deserializer);
+            let api_spending_limit = <u64>::sse_decode(&mut deserializer);
+            let api_duration_secs = <i64>::sse_decode(&mut deserializer);
+            let api_token_mint = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::register_external_session_key(
+                            api_storage_path,
+                            api_rpc_url,
+                            api_owner_secret_key,
+                            api_ephemeral_pubkey,
+                            api_ephemeral_secret_key,
+                            api_target_program,
+                            api_scopes,
+                            api_spending_limit,
+                            api_duration_secs,
+                            api_token_mint,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+
+fn wire__crate__api__session__fund_session_key_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "fund_session_key",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_rpc_url = <String>::sse_decode(&mut deserializer);
+            let api_owner_secret_key = <String>::sse_decode(&mut deserializer);
+            let api_ephemeral_pubkey = <String>::sse_decode(&mut deserializer);
+            let api_sol_amount = <u64>::sse_decode(&mut deserializer);
+            let api_spl_token_mint = <Option<String>>::sse_decode(&mut deserializer);
+            let api_spl_amount = <Option<u64>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::session::fund_session_key(
+                            api_rpc_url,
+                            api_owner_secret_key,
+                            api_ephemeral_pubkey,
+                            api_sol_amount,
+                            api_spl_token_mint,
+                            api_spl_amount,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+
+fn wire__crate__api__simple__fund_session_key_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "fund_session_key",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_rpc_url = <String>::sse_decode(&mut deserializer);
+            let api_owner_secret_key = <String>::sse_decode(&mut deserializer);
+            let api_ephemeral_pubkey = <String>::sse_decode(&mut deserializer);
+            let api_sol_amount = <u64>::sse_decode(&mut deserializer);
+            let api_spl_token_mint = <Option<String>>::sse_decode(&mut deserializer);
+            let api_spl_amount = <Option<u64>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::fund_session_key(
+                            api_rpc_url,
+                            api_owner_secret_key,
+                            api_ephemeral_pubkey,
+                            api_sol_amount,
+                            api_spl_token_mint,
+                            api_spl_amount,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+
+fn wire__crate__api__session__register_and_fund_session_key_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "register_and_fund_session_key",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_rpc_url = <String>::sse_decode(&mut deserializer);
+            let api_owner_secret_key = <String>::sse_decode(&mut deserializer);
+            let api_ephemeral_pubkey = <String>::sse_decode(&mut deserializer);
+            let api_ephemeral_secret_key = <String>::sse_decode(&mut deserializer);
+            let api_target_program = <String>::sse_decode(&mut deserializer);
+            let api_scopes = <Vec<String>>::sse_decode(&mut deserializer);
+            let api_spending_limit = <u64>::sse_decode(&mut deserializer);
+            let api_duration_secs = <i64>::sse_decode(&mut deserializer);
+            let api_token_mint = <Option<String>>::sse_decode(&mut deserializer);
+            let api_sol_funding = <u64>::sse_decode(&mut deserializer);
+            let api_token_funding = <Option<u64>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::session::register_and_fund_session_key(
+                            api_storage_path,
+                            api_rpc_url,
+                            api_owner_secret_key,
+                            api_ephemeral_pubkey,
+                            api_ephemeral_secret_key,
+                            api_target_program,
+                            api_scopes,
+                            api_spending_limit,
+                            api_duration_secs,
+                            api_token_mint,
+                            api_sol_funding,
+                            api_token_funding,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+
+fn wire__crate__api__simple__register_and_fund_session_key_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "register_and_fund_session_key",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_rpc_url = <String>::sse_decode(&mut deserializer);
+            let api_owner_secret_key = <String>::sse_decode(&mut deserializer);
+            let api_ephemeral_pubkey = <String>::sse_decode(&mut deserializer);
+            let api_ephemeral_secret_key = <String>::sse_decode(&mut deserializer);
+            let api_target_program = <String>::sse_decode(&mut deserializer);
+            let api_scopes = <Vec<String>>::sse_decode(&mut deserializer);
+            let api_spending_limit = <u64>::sse_decode(&mut deserializer);
+            let api_duration_secs = <i64>::sse_decode(&mut deserializer);
+            let api_token_mint = <Option<String>>::sse_decode(&mut deserializer);
+            let api_sol_funding = <u64>::sse_decode(&mut deserializer);
+            let api_token_funding = <Option<u64>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::register_and_fund_session_key(
+                            api_storage_path,
+                            api_rpc_url,
+                            api_owner_secret_key,
+                            api_ephemeral_pubkey,
+                            api_ephemeral_secret_key,
+                            api_target_program,
+                            api_scopes,
+                            api_spending_limit,
+                            api_duration_secs,
+                            api_token_mint,
+                            api_sol_funding,
+                            api_token_funding,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+
+fn wire__crate__api__simple__send_session_fund_response_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "send_session_fund_response",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_mcp_did = <String>::sse_decode(&mut deserializer);
+            let api_session_key_pubkey = <String>::sse_decode(&mut deserializer);
+            let api_funded = <bool>::sse_decode(&mut deserializer);
+            let api_new_balance = <u64>::sse_decode(&mut deserializer);
+            let api_tx_signature = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::send_session_fund_response(
+                            api_storage_path,
+                            api_mcp_did,
+                            api_session_key_pubkey,
+                            api_funded,
+                            api_new_balance,
+                            api_tx_signature,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+
+fn wire__crate__api__simple__send_session_renew_response_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "send_session_renew_response",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_mcp_did = <String>::sse_decode(&mut deserializer);
+            let api_old_session_key_pubkey = <String>::sse_decode(&mut deserializer);
+            let api_new_session_key_pubkey = <String>::sse_decode(&mut deserializer);
+            let api_renewed = <bool>::sse_decode(&mut deserializer);
+            let api_tx_signature = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::send_session_renew_response(
+                            api_storage_path,
+                            api_mcp_did,
+                            api_old_session_key_pubkey,
+                            api_new_session_key_pubkey,
+                            api_renewed,
+                            api_tx_signature,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+
 // Section: dart2rust
 
 impl SseDecode for flutter_rust_bridge::for_generated::anyhow::Error {
@@ -2384,6 +2824,25 @@ impl SseDecode for crate::api::notification::DecryptedMessage {
         let mut var_rawBody = <String>::sse_decode(deserializer);
         let mut var_listType = <Option<String>>::sse_decode(deserializer);
         let mut var_label = <Option<String>>::sse_decode(deserializer);
+        let mut var_newSessionKeyPubkey = <Option<String>>::sse_decode(deserializer);
+        let mut var_newSessionKeySecretKey = <Option<String>>::sse_decode(deserializer);
+        let mut var_newSessionKeySpendingLimit = <Option<u64>>::sse_decode(deserializer);
+        let mut var_newSessionKeyDurationSecs = <Option<i64>>::sse_decode(deserializer);
+        let mut var_newSessionKeyScopes = <Option<Vec<String>>>::sse_decode(deserializer);
+        let mut var_newSessionKeyTokenMint = <Option<String>>::sse_decode(deserializer);
+        let mut var_newSessionKeySuggestedSolFunding = <Option<u64>>::sse_decode(deserializer);
+        let mut var_newSessionKeySuggestedTokenFunding = <Option<u64>>::sse_decode(deserializer);
+        let mut var_availablePaymentMethods = <Option<Vec<String>>>::sse_decode(deserializer);
+        let mut var_sessionFundRequiredAmount = <Option<u64>>::sse_decode(deserializer);
+        let mut var_sessionFundCurrentBalance = <Option<u64>>::sse_decode(deserializer);
+        let mut var_sessionFundSpendingLimitRemaining = <Option<u64>>::sse_decode(deserializer);
+        let mut var_sessionFundTokenMint = <Option<String>>::sse_decode(deserializer);
+        let mut var_sessionFundReason = <Option<String>>::sse_decode(deserializer);
+        let mut var_balanceNotificationBalance = <Option<u64>>::sse_decode(deserializer);
+        let mut var_balanceNotificationThreshold = <Option<u64>>::sse_decode(deserializer);
+        let mut var_balanceNotificationSpendingLimitRemaining = <Option<u64>>::sse_decode(deserializer);
+        let mut var_oldSessionKeyPubkey = <Option<String>>::sse_decode(deserializer);
+        let mut var_sessionRenewExpiresAt = <Option<i64>>::sse_decode(deserializer);
         return crate::api::notification::DecryptedMessage {
             msg_type: var_msgType,
             payment_id: var_paymentId,
@@ -2396,6 +2855,25 @@ impl SseDecode for crate::api::notification::DecryptedMessage {
             raw_body: var_rawBody,
             list_type: var_listType,
             label: var_label,
+            new_session_key_pubkey: var_newSessionKeyPubkey,
+            new_session_key_secret_key: var_newSessionKeySecretKey,
+            new_session_key_spending_limit: var_newSessionKeySpendingLimit,
+            new_session_key_duration_secs: var_newSessionKeyDurationSecs,
+            new_session_key_scopes: var_newSessionKeyScopes,
+            new_session_key_token_mint: var_newSessionKeyTokenMint,
+            new_session_key_suggested_sol_funding: var_newSessionKeySuggestedSolFunding,
+            new_session_key_suggested_token_funding: var_newSessionKeySuggestedTokenFunding,
+            available_payment_methods: var_availablePaymentMethods,
+            session_fund_required_amount: var_sessionFundRequiredAmount,
+            session_fund_current_balance: var_sessionFundCurrentBalance,
+            session_fund_spending_limit_remaining: var_sessionFundSpendingLimitRemaining,
+            session_fund_token_mint: var_sessionFundTokenMint,
+            session_fund_reason: var_sessionFundReason,
+            balance_notification_balance: var_balanceNotificationBalance,
+            balance_notification_threshold: var_balanceNotificationThreshold,
+            balance_notification_spending_limit_remaining: var_balanceNotificationSpendingLimitRemaining,
+            old_session_key_pubkey: var_oldSessionKeyPubkey,
+            session_renew_expires_at: var_sessionRenewExpiresAt,
         };
     }
 }
@@ -2677,6 +3155,28 @@ impl SseDecode for Option<u64> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<u64>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<i64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<i64>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<Vec<String>> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<Vec<String>>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -3014,6 +3514,48 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
+        54 => wire__crate__api__session__register_external_session_key_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        55 => wire__crate__api__simple__register_external_session_key_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        56 => wire__crate__api__session__fund_session_key_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        57 => wire__crate__api__simple__fund_session_key_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        58 => wire__crate__api__session__register_and_fund_session_key_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        59 => wire__crate__api__simple__register_and_fund_session_key_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        60 => {
+            wire__crate__api__simple__send_session_fund_response_impl(port, ptr, rust_vec_len, data_len)
+        }
+        61 => {
+            wire__crate__api__simple__send_session_renew_response_impl(port, ptr, rust_vec_len, data_len)
+        }
         _ => unreachable!(),
     }
 }
@@ -3119,6 +3661,25 @@ impl flutter_rust_bridge::IntoDart for crate::api::notification::DecryptedMessag
             self.raw_body.into_into_dart().into_dart(),
             self.list_type.into_into_dart().into_dart(),
             self.label.into_into_dart().into_dart(),
+            self.new_session_key_pubkey.into_into_dart().into_dart(),
+            self.new_session_key_secret_key.into_into_dart().into_dart(),
+            self.new_session_key_spending_limit.into_into_dart().into_dart(),
+            self.new_session_key_duration_secs.into_into_dart().into_dart(),
+            self.new_session_key_scopes.into_into_dart().into_dart(),
+            self.new_session_key_token_mint.into_into_dart().into_dart(),
+            self.new_session_key_suggested_sol_funding.into_into_dart().into_dart(),
+            self.new_session_key_suggested_token_funding.into_into_dart().into_dart(),
+            self.available_payment_methods.into_into_dart().into_dart(),
+            self.session_fund_required_amount.into_into_dart().into_dart(),
+            self.session_fund_current_balance.into_into_dart().into_dart(),
+            self.session_fund_spending_limit_remaining.into_into_dart().into_dart(),
+            self.session_fund_token_mint.into_into_dart().into_dart(),
+            self.session_fund_reason.into_into_dart().into_dart(),
+            self.balance_notification_balance.into_into_dart().into_dart(),
+            self.balance_notification_threshold.into_into_dart().into_dart(),
+            self.balance_notification_spending_limit_remaining.into_into_dart().into_dart(),
+            self.old_session_key_pubkey.into_into_dart().into_dart(),
+            self.session_renew_expires_at.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -3491,6 +4052,25 @@ impl SseEncode for crate::api::notification::DecryptedMessage {
         <String>::sse_encode(self.raw_body, serializer);
         <Option<String>>::sse_encode(self.list_type, serializer);
         <Option<String>>::sse_encode(self.label, serializer);
+        <Option<String>>::sse_encode(self.new_session_key_pubkey, serializer);
+        <Option<String>>::sse_encode(self.new_session_key_secret_key, serializer);
+        <Option<u64>>::sse_encode(self.new_session_key_spending_limit, serializer);
+        <Option<i64>>::sse_encode(self.new_session_key_duration_secs, serializer);
+        <Option<Vec<String>>>::sse_encode(self.new_session_key_scopes, serializer);
+        <Option<String>>::sse_encode(self.new_session_key_token_mint, serializer);
+        <Option<u64>>::sse_encode(self.new_session_key_suggested_sol_funding, serializer);
+        <Option<u64>>::sse_encode(self.new_session_key_suggested_token_funding, serializer);
+        <Option<Vec<String>>>::sse_encode(self.available_payment_methods, serializer);
+        <Option<u64>>::sse_encode(self.session_fund_required_amount, serializer);
+        <Option<u64>>::sse_encode(self.session_fund_current_balance, serializer);
+        <Option<u64>>::sse_encode(self.session_fund_spending_limit_remaining, serializer);
+        <Option<String>>::sse_encode(self.session_fund_token_mint, serializer);
+        <Option<String>>::sse_encode(self.session_fund_reason, serializer);
+        <Option<u64>>::sse_encode(self.balance_notification_balance, serializer);
+        <Option<u64>>::sse_encode(self.balance_notification_threshold, serializer);
+        <Option<u64>>::sse_encode(self.balance_notification_spending_limit_remaining, serializer);
+        <Option<String>>::sse_encode(self.old_session_key_pubkey, serializer);
+        <Option<i64>>::sse_encode(self.session_renew_expires_at, serializer);
     }
 }
 
@@ -3694,6 +4274,26 @@ impl SseEncode for Option<u64> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <u64>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<i64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <i64>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<Vec<String>> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <Vec<String>>::sse_encode(value, serializer);
         }
     }
 }

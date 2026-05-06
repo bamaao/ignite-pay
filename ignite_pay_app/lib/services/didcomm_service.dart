@@ -17,12 +17,31 @@ class AuthRequest {
   final String merchantDid;
   final int amount;
   final String description;
+  // F2: MCP-provided session key info for embedded payment flow
+  final String? newSessionKeyPubkey;
+  final String? newSessionKeySecretKey;
+  final int? newSessionKeySpendingLimit;
+  final int? newSessionKeyDurationSecs;
+  final List<String>? newSessionKeyScopes;
+  final String? newSessionKeyTokenMint;
+  final int? newSessionKeySuggestedSolFunding;
+  final int? newSessionKeySuggestedTokenFunding;
+  final List<String>? availablePaymentMethods;
 
   AuthRequest({
     required this.paymentId,
     required this.merchantDid,
     required this.amount,
     required this.description,
+    this.newSessionKeyPubkey,
+    this.newSessionKeySecretKey,
+    this.newSessionKeySpendingLimit,
+    this.newSessionKeyDurationSecs,
+    this.newSessionKeyScopes,
+    this.newSessionKeyTokenMint,
+    this.newSessionKeySuggestedSolFunding,
+    this.newSessionKeySuggestedTokenFunding,
+    this.availablePaymentMethods,
   });
 }
 
@@ -79,6 +98,67 @@ class MbDepositResult {
   });
 }
 
+/// A session fund request from the MCP server (F3/F7).
+class SessionFundRequest {
+  final String sessionKeyPubkey;
+  final int requiredAmount;
+  final int currentBalance;
+  final int spendingLimitRemaining;
+  final String? tokenMint;
+  final String? reason;
+
+  SessionFundRequest({
+    required this.sessionKeyPubkey,
+    required this.requiredAmount,
+    required this.currentBalance,
+    required this.spendingLimitRemaining,
+    this.tokenMint,
+    this.reason,
+  });
+}
+
+/// A balance notification from the MCP server (F13).
+class BalanceNotification {
+  final String sessionKeyPubkey;
+  final int balance;
+  final int threshold;
+  final int spendingLimitRemaining;
+
+  BalanceNotification({
+    required this.sessionKeyPubkey,
+    required this.balance,
+    required this.threshold,
+    required this.spendingLimitRemaining,
+  });
+}
+
+/// A session renew request from the MCP server (F14).
+class SessionRenewRequest {
+  final String oldSessionKeyPubkey;
+  final int expiresAt;
+  final String? newSessionKeyPubkey;
+  final String? newSessionKeySecretKey;
+  final int? newSessionKeySpendingLimit;
+  final int? newSessionKeyDurationSecs;
+  final List<String>? newSessionKeyScopes;
+  final String? newSessionKeyTokenMint;
+  final int? newSessionKeySuggestedSolFunding;
+  final int? newSessionKeySuggestedTokenFunding;
+
+  SessionRenewRequest({
+    required this.oldSessionKeyPubkey,
+    required this.expiresAt,
+    this.newSessionKeyPubkey,
+    this.newSessionKeySecretKey,
+    this.newSessionKeySpendingLimit,
+    this.newSessionKeyDurationSecs,
+    this.newSessionKeyScopes,
+    this.newSessionKeyTokenMint,
+    this.newSessionKeySuggestedSolFunding,
+    this.newSessionKeySuggestedTokenFunding,
+  });
+}
+
 /// A paired MCP server with its identity info received from connection-response.
 class PairedMcp {
   final String did;
@@ -119,6 +199,29 @@ class DecryptedMsg {
   final String? listCid; // V1.1: IPFS CID from list-sync-notification
   final String? listType; // V1.1: "whitelist" or "blacklist"
   final String? label; // V1.1: user-assigned label
+  // F2: MCP-provided session key fields
+  final String? newSessionKeyPubkey;
+  final String? newSessionKeySecretKey;
+  final int? newSessionKeySpendingLimit;
+  final int? newSessionKeyDurationSecs;
+  final List<String>? newSessionKeyScopes;
+  final String? newSessionKeyTokenMint;
+  final int? newSessionKeySuggestedSolFunding;
+  final int? newSessionKeySuggestedTokenFunding;
+  final List<String>? availablePaymentMethods;
+  // F3/F7: Session fund request fields
+  final int? sessionFundRequiredAmount;
+  final int? sessionFundCurrentBalance;
+  final int? sessionFundSpendingLimitRemaining;
+  final String? sessionFundTokenMint;
+  final String? sessionFundReason;
+  // F13: Balance notification fields
+  final int? balanceNotificationBalance;
+  final int? balanceNotificationThreshold;
+  final int? balanceNotificationSpendingLimitRemaining;
+  // F14: Session renew request fields
+  final String? oldSessionKeyPubkey;
+  final int? sessionRenewExpiresAt;
 
   DecryptedMsg({
     required this.msgType,
@@ -130,6 +233,25 @@ class DecryptedMsg {
     this.listCid,
     this.listType,
     this.label,
+    this.newSessionKeyPubkey,
+    this.newSessionKeySecretKey,
+    this.newSessionKeySpendingLimit,
+    this.newSessionKeyDurationSecs,
+    this.newSessionKeyScopes,
+    this.newSessionKeyTokenMint,
+    this.newSessionKeySuggestedSolFunding,
+    this.newSessionKeySuggestedTokenFunding,
+    this.availablePaymentMethods,
+    this.sessionFundRequiredAmount,
+    this.sessionFundCurrentBalance,
+    this.sessionFundSpendingLimitRemaining,
+    this.sessionFundTokenMint,
+    this.sessionFundReason,
+    this.balanceNotificationBalance,
+    this.balanceNotificationThreshold,
+    this.balanceNotificationSpendingLimitRemaining,
+    this.oldSessionKeyPubkey,
+    this.sessionRenewExpiresAt,
   });
 }
 
@@ -171,6 +293,12 @@ class DidcommService extends ChangeNotifier {
       StreamController<QrPaymentResult>.broadcast();
   final StreamController<MbDepositResult> _mbDepositResultController =
       StreamController<MbDepositResult>.broadcast();
+  final StreamController<SessionFundRequest> _sessionFundRequestController =
+      StreamController<SessionFundRequest>.broadcast();
+  final StreamController<BalanceNotification> _balanceNotificationController =
+      StreamController<BalanceNotification>.broadcast();
+  final StreamController<SessionRenewRequest> _sessionRenewRequestController =
+      StreamController<SessionRenewRequest>.broadcast();
 
   // Getters
   String get did => _did;
@@ -188,6 +316,9 @@ class DidcommService extends ChangeNotifier {
   Stream<AuthRequest> get authRequests => _authRequestController.stream;
   Stream<QrPaymentResult> get qrPaymentResults => _qrPaymentResultController.stream;
   Stream<MbDepositResult> get mbDepositResults => _mbDepositResultController.stream;
+  Stream<SessionFundRequest> get sessionFundRequests => _sessionFundRequestController.stream;
+  Stream<BalanceNotification> get balanceNotifications => _balanceNotificationController.stream;
+  Stream<SessionRenewRequest> get sessionRenewRequests => _sessionRenewRequestController.stream;
 
   /// Whether the current user is detected as a Chinese user based on locale.
   /// Chinese users use WebSocket direct push instead of FCM.
@@ -475,6 +606,25 @@ class DidcommService extends ChangeNotifier {
         listCid: decrypted.listCid,
         listType: decrypted.listType,
         label: decrypted.label,
+        newSessionKeyPubkey: decrypted.newSessionKeyPubkey,
+        newSessionKeySecretKey: decrypted.newSessionKeySecretKey,
+        newSessionKeySpendingLimit: decrypted.newSessionKeySpendingLimit?.toInt(),
+        newSessionKeyDurationSecs: decrypted.newSessionKeyDurationSecs,
+        newSessionKeyScopes: decrypted.newSessionKeyScopes,
+        newSessionKeyTokenMint: decrypted.newSessionKeyTokenMint,
+        newSessionKeySuggestedSolFunding: decrypted.newSessionKeySuggestedSolFunding?.toInt(),
+        newSessionKeySuggestedTokenFunding: decrypted.newSessionKeySuggestedTokenFunding?.toInt(),
+        availablePaymentMethods: decrypted.availablePaymentMethods,
+        sessionFundRequiredAmount: decrypted.sessionFundRequiredAmount?.toInt(),
+        sessionFundCurrentBalance: decrypted.sessionFundCurrentBalance?.toInt(),
+        sessionFundSpendingLimitRemaining: decrypted.sessionFundSpendingLimitRemaining?.toInt(),
+        sessionFundTokenMint: decrypted.sessionFundTokenMint,
+        sessionFundReason: decrypted.sessionFundReason,
+        balanceNotificationBalance: decrypted.balanceNotificationBalance?.toInt(),
+        balanceNotificationThreshold: decrypted.balanceNotificationThreshold?.toInt(),
+        balanceNotificationSpendingLimitRemaining: decrypted.balanceNotificationSpendingLimitRemaining?.toInt(),
+        oldSessionKeyPubkey: decrypted.oldSessionKeyPubkey,
+        sessionRenewExpiresAt: decrypted.sessionRenewExpiresAt,
       );
 
       _messages.add(msg);
@@ -551,6 +701,15 @@ class DidcommService extends ChangeNotifier {
           merchantDid: msg.merchantDid ?? '',
           amount: msg.amount ?? 0,
           description: msg.description ?? '',
+          newSessionKeyPubkey: msg.newSessionKeyPubkey,
+          newSessionKeySecretKey: msg.newSessionKeySecretKey,
+          newSessionKeySpendingLimit: msg.newSessionKeySpendingLimit,
+          newSessionKeyDurationSecs: msg.newSessionKeyDurationSecs,
+          newSessionKeyScopes: msg.newSessionKeyScopes,
+          newSessionKeyTokenMint: msg.newSessionKeyTokenMint,
+          newSessionKeySuggestedSolFunding: msg.newSessionKeySuggestedSolFunding,
+          newSessionKeySuggestedTokenFunding: msg.newSessionKeySuggestedTokenFunding,
+          availablePaymentMethods: msg.availablePaymentMethods,
         );
         _pendingAuth = authReq;
         _authRequestController.add(authReq);
@@ -583,6 +742,56 @@ class DidcommService extends ChangeNotifier {
         );
         AppLogService().info('DIDComm', 'MB deposit response: success=${mbResult.success} amount=${mbResult.depositAmount}');
         _mbDepositResultController.add(mbResult);
+      }
+
+      // F3/F7: Check if it's a session-fund-request
+      if (msg.msgType.contains('session-fund-request')) {
+        final fundReq = SessionFundRequest(
+          sessionKeyPubkey: msg.rawBody.contains('session_key_pubkey')
+              ? (jsonDecode(msg.rawBody) as Map<String, dynamic>)['session_key_pubkey'] as String? ?? ''
+              : '',
+          requiredAmount: msg.sessionFundRequiredAmount ?? 0,
+          currentBalance: msg.sessionFundCurrentBalance ?? 0,
+          spendingLimitRemaining: msg.sessionFundSpendingLimitRemaining ?? 0,
+          tokenMint: msg.sessionFundTokenMint,
+          reason: msg.sessionFundReason,
+        );
+        AppLogService().info('DIDComm', 'Session fund request: pubkey=${fundReq.sessionKeyPubkey} required=${fundReq.requiredAmount}');
+        _sessionFundRequestController.add(fundReq);
+      }
+
+      // F13: Check if it's a balance-notification
+      if (msg.msgType.contains('balance-notification')) {
+        final notif = BalanceNotification(
+          sessionKeyPubkey: msg.rawBody.contains('session_key_pubkey')
+              ? (jsonDecode(msg.rawBody) as Map<String, dynamic>)['session_key_pubkey'] as String? ?? ''
+              : '',
+          balance: msg.balanceNotificationBalance ?? 0,
+          threshold: msg.balanceNotificationThreshold ?? 0,
+          spendingLimitRemaining: msg.balanceNotificationSpendingLimitRemaining ?? 0,
+        );
+        AppLogService().info('DIDComm', 'Balance notification: pubkey=${notif.sessionKeyPubkey} balance=${notif.balance}');
+        _balanceNotificationController.add(notif);
+      }
+
+      // F14: Check if it's a session-renew-request
+      if (msg.msgType.contains('session-renew-request')) {
+        final body = jsonDecode(msg.rawBody) as Map<String, dynamic>;
+        final newSk = body['new_session_key'] as Map<String, dynamic>?;
+        final renewReq = SessionRenewRequest(
+          oldSessionKeyPubkey: msg.oldSessionKeyPubkey ?? body['old_session_key_pubkey'] as String? ?? '',
+          expiresAt: msg.sessionRenewExpiresAt ?? body['expires_at'] as int? ?? 0,
+          newSessionKeyPubkey: msg.newSessionKeyPubkey ?? newSk?['session_key_pubkey'] as String?,
+          newSessionKeySecretKey: msg.newSessionKeySecretKey ?? newSk?['ephemeral_secret_key'] as String?,
+          newSessionKeySpendingLimit: msg.newSessionKeySpendingLimit ?? newSk?['spending_limit'] as int?,
+          newSessionKeyDurationSecs: msg.newSessionKeyDurationSecs ?? newSk?['duration_secs'] as int?,
+          newSessionKeyScopes: msg.newSessionKeyScopes ?? (newSk?['scopes'] as List<dynamic>?)?.cast<String>(),
+          newSessionKeyTokenMint: msg.newSessionKeyTokenMint ?? newSk?['token_mint'] as String?,
+          newSessionKeySuggestedSolFunding: msg.newSessionKeySuggestedSolFunding ?? newSk?['suggested_sol_funding'] as int?,
+          newSessionKeySuggestedTokenFunding: msg.newSessionKeySuggestedTokenFunding ?? newSk?['suggested_token_funding'] as int?,
+        );
+        AppLogService().info('DIDComm', 'Session renew request: old=${renewReq.oldSessionKeyPubkey}');
+        _sessionRenewRequestController.add(renewReq);
       }
 
       notifyListeners();
@@ -879,6 +1088,52 @@ class DidcommService extends ChangeNotifier {
     }
   }
 
+  /// F3/F7: Respond to a session fund request.
+  Future<void> respondToFundRequest({
+    required String mcpDid,
+    required String sessionKeyPubkey,
+    required bool funded,
+    required int newBalance,
+    String? txSignature,
+  }) async {
+    try {
+      await rust.sendSessionFundResponse(
+        storagePath: _storagePath,
+        mcpDid: mcpDid,
+        sessionKeyPubkey: sessionKeyPubkey,
+        funded: funded,
+        newBalance: BigInt.from(newBalance),
+        txSignature: txSignature,
+      );
+      AppLogService().info('DIDComm', 'Fund response sent: $sessionKeyPubkey -> funded=$funded');
+    } catch (e) {
+      AppLogService().error('DIDComm', 'Failed to send fund response: $e');
+    }
+  }
+
+  /// F14: Respond to a session renew request.
+  Future<void> respondToRenewRequest({
+    required String mcpDid,
+    required String oldSessionKeyPubkey,
+    required String newSessionKeyPubkey,
+    required bool renewed,
+    String? txSignature,
+  }) async {
+    try {
+      await rust.sendSessionRenewResponse(
+        storagePath: _storagePath,
+        mcpDid: mcpDid,
+        oldSessionKeyPubkey: oldSessionKeyPubkey,
+        newSessionKeyPubkey: newSessionKeyPubkey,
+        renewed: renewed,
+        txSignature: txSignature,
+      );
+      AppLogService().info('DIDComm', 'Renew response sent: $oldSessionKeyPubkey -> renewed=$renewed');
+    } catch (e) {
+      AppLogService().error('DIDComm', 'Failed to send renew response: $e');
+    }
+  }
+
   /// Clear the pending auth request.
   void clearPendingAuth() {
     _pendingAuth = null;
@@ -920,6 +1175,9 @@ class DidcommService extends ChangeNotifier {
     _authRequestController.close();
     _qrPaymentResultController.close();
     _mbDepositResultController.close();
+    _sessionFundRequestController.close();
+    _balanceNotificationController.close();
+    _sessionRenewRequestController.close();
     super.dispose();
   }
 }

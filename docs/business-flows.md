@@ -5,20 +5,20 @@
 | # | 流程名称 | 状态 | 涉及参与者 |
 |---|---------|------|-----------|
 | F1 | 手机配对（DIDComm 3-step handshake） | ✅ 已实现 | MCP ↔ Phone |
-| F2 | Session Key 创建（嵌入支付流程，MCP 按需创建 + 手机注册充值授权一步完成） | ⚠️ 部分实现 | MCP → Phone → Solana |
-| F3 | Session Key 充值（余额不足时请求充值） | ❌ 未实现 | MCP ↔ Phone → Solana |
+| F2 | Session Key 创建（嵌入支付流程，MCP 按需创建 + 手机注册充值授权一步完成） | ✅ 已实现 | MCP → Phone → Solana |
+| F3 | Session Key 充值（余额不足时请求充值） | ✅ 已实现 | MCP ↔ Phone → Solana |
 | F4 | x402 支付授权（含支付方式选择） | ✅ 已实现 | Agent → MCP ↔ Phone |
 | F5 | 支付执行（Session Key 链上转账） | ✅ 已实现 | MCP → Solana |
 | F6 | 支付执行（MagicBlock Voucher） | ✅ 已实现 | MCP → VoucherStore |
-| F7 | 额度不足 → 充值请求 | ❌ 未实现 | MCP ↔ Phone |
-| F8 | 商户未授权 / 授权超额 → 追加授权 | ❌ 未实现 | MCP ↔ Phone |
+| F7 | 额度不足 → 充值请求 | ✅ 已实现 | MCP ↔ Phone |
+| F8 | 商户未授权 / 授权超额 → 追加授权 | ✅ 已实现 | MCP ↔ Phone |
 | F9 | 商户白名单/黑名单管理 | ✅ 已实现 | MCP / Phone → MCP |
 | F10 | MagicBlock 全局金库充值 | ✅ 已实现 | MCP → Solana |
 | F11 | MagicBlock 批量结算 | ✅ 已实现 | MCP / Merchant → Solana |
 | F12 | 争议与仲裁 | ✅ 已实现 | MCP / Merchant → Solana |
-| F13 | 余额查询与通知 | ❌ 未实现 | MCP ↔ Phone |
-| F14 | Session Key 续期 / 替换 | ❌ 未实现 | MCP ↔ Phone |
-| F15 | 多商户并发支付 | ⚠️ 部分实现 | Agent → MCP → Solana |
+| F13 | 余额查询与通知 | ✅ 已实现 | MCP ↔ Phone |
+| F14 | Session Key 续期 / 替换 | ✅ 已实现 | MCP ↔ Phone |
+| F15 | 多商户并发支付 | ✅ 已实现 | Agent → MCP → Solana |
 | F16 | 支付方式选择（Session Key / MagicBlock / Relayer） | ✅ 已实现 | MCP ↔ Phone |
 | F17 | 用户扫码商家支付（QR → Phone → MCP → 执行支付） | ✅ 已实现 | Phone → MCP → Solana |
 | F18 | 商家语音播报（QR 支付成功后通知商家 MCP → 商家 App 播报） | ✅ 已实现 | Buyer MCP → Merchant MCP → Merchant App |
@@ -65,7 +65,7 @@ Phone                           MCP                           Mediator
 
 ### F2: Session Key 创建（嵌入支付流程中）
 
-**状态**: ⚠️ 部分实现
+**状态**: ✅ 已实现
 
 Session key **只能由 MCP 本地创建**（MCP 独占私钥），但 MCP 不会主动/预先创建。**只有当需要支付且没有可用的 session key 时**，MCP 才会本地生成 ephemeral keypair，然后**将 session key 信息和支付授权请求一起**通过 DIDComm 发给手机。手机端**同时处理**三件事：链上注册 session key account、充值（SOL gas + 稳定币）、用户授权支付。
 
@@ -120,27 +120,30 @@ MCP                              Phone                          Solana
 
 **当前实现 vs 目标差距**:
 
-| 环节 | 当前实现 | 目标 |
-|------|---------|------|
-| MCP 创建 ephemeral keypair | ✅ `create_session` 工具可本地创建 | ❌ 应在支付流程中自动触发，不是独立工具 |
-| payment-auth-request 含 session key 信息 | ❌ 当前消息不含 session key 字段 | 需要扩展消息，新增 `new_session_key_pubkey`、`suggested_funding` 字段 |
-| 手机链上注册 session key | ✅ `create_and_register_session_key` 已有 | ✅ 但需要改为从 MCP 发来的 pubkey 注册，而非手机自己生成 |
-| 手机充值 SOL + 稳定币 | ❌ 手机端没有向 ephemeral 地址转账的代码 | 需要新增 |
-| 手机同时处理注册+充值+授权 | ❌ 当前三个操作是分离的 | 需要整合为一个用户交互流程 |
-| payment-auth-response 回传 | ✅ 已有 session key 数据字段 | ✅ 基本可用 |
+| 环节 | 状态 |
+|------|------|
+| MCP 自动创建 ephemeral keypair（支付流程中） | ✅ `process_x402_challenge` → `create_session_key_for_request` |
+| payment-auth-request 含 session key + secret key | ✅ `new_session_key` 对象含 pubkey、secret_key、spending_limit、suggested_funding |
+| 手机解析 new_session_key 字段 | ✅ `DecryptedMessage` 扩展 + `decrypt_message()` 解析 |
+| 手机链上注册外部 session key | ✅ `register_external_session_key()` |
+| 手机充值 SOL + SPL token | ✅ `fund_session_key()` |
+| 手机同时处理注册+充值+授权 | ✅ `register_and_fund_session_key()` + challenge_screen 集成 |
+| payment-auth-response 回传 | ✅ 已有 session key 数据字段 |
 
 **代码位置**:
-- MCP 创建 session key: `ignite-pay-mcp/src/main.rs:931` — `create_session` 工具
-- MCP 发送 auth request: `ignite-pay-mcp/src/mediator.rs:264` — `send_auth_request()`
-- DIDComm 消息构建: `ignite-pay-core/src/didcomm.rs` — `build_authorization_request()`
-- 手机链上注册: `ignite_pay_app/rust/src/api/session.rs:103` — `create_and_register_session_key`
-- 手机发送 auth response: `ignite_pay_app/rust/src/api/simple.rs:95` — `send_auth_response`
+- MCP 创建 session key: `ignite-pay-mcp/src/main.rs` — `create_session_key_for_request()`
+- DIDComm 消息构建: `ignite-pay-core/src/didcomm.rs` — `build_authorization_request_inner()` + `NewSessionKeyRequest`
+- 手机解析: `ignite_pay_app/rust/src/api/simple.rs` — `decrypt_message()`
+- 手机注册外部 key: `ignite_pay_app/rust/src/api/session.rs` — `register_external_session_key()`
+- 手机充值: `ignite_pay_app/rust/src/api/session.rs` — `fund_session_key()`
+- 手机一键完成: `ignite_pay_app/rust/src/api/session.rs` — `register_and_fund_session_key()`
+- Flutter 集成: `ignite_pay_app/lib/challenge_screen.dart` — `_onAuthorize()` MCP key 路径
 
 ---
 
 ### F3: Session Key 余额不足 → 充值请求
 
-**状态**: ❌ 未实现
+**状态**: ✅ 已实现
 
 当 MCP 有 session key 但余额不足以完成支付时，通过 DIDComm 请求手机用户充值。
 
@@ -178,15 +181,15 @@ MCP                              Phone                          Solana
   |--- execute_payment --------------------------------------->|
 ```
 
-**需要的 DIDComm 消息类型**（未定义）:
-- `ignite-pay/1.0/session-fund-request` — MCP → Phone，请求充值
-- `ignite-pay/1.0/session-fund-response` — Phone → MCP，确认充值
+**需要的 DIDComm 消息类型**（已实现）:
+- `ignite-pay/1.0/session-fund-request` — MCP → Phone，请求充值 ✅
+- `ignite-pay/1.0/session-fund-response` — Phone → MCP，确认充值 ✅
 
 **需要的代码**:
-- MCP: 检测余额不足时发送 `session-fund-request`
-- Phone: 接收请求，展示充值界面，执行链上转账
-- Phone: 发送 `session-fund-response`
-- MCP: 确认余额后继续支付
+- MCP: 检测余额不足时发送 `session-fund-request` ✅
+- Phone: 接收请求，展示充值界面，执行链上转账 ✅
+- Phone: 发送 `session-fund-response` ✅
+- MCP: 确认余额后继续支付 ✅
 
 ---
 
@@ -304,7 +307,7 @@ MCP                              VoucherStore
 
 ### F7: 额度不足 → 充值请求
 
-**状态**: ❌ 未实现
+**状态**: ✅ 已实现
 
 当 MCP 尝试支付时，检测到 session key 余额不足（SOL 或稳定币），需要通知手机用户充值。
 
@@ -336,17 +339,17 @@ MCP                              Phone                          Solana
   |--- execute_payment --------------------------------------->|
 ```
 
-**缺失的组件**:
-1. MCP 余额检测逻辑（执行支付前检查 ephemeral 地址余额）
-2. DIDComm 消息类型 `session-fund-request` / `session-fund-response`
-3. 手机端充值界面 + 链上转账
-4. MCP 等待充值响应后重试支付
+**已实现的组件**:
+1. ✅ MCP 余额检测逻辑（执行支付前检查 ephemeral 地址余额）
+2. ✅ DIDComm 消息类型 `session-fund-request` / `session-fund-response`
+3. ✅ 手机端充值界面 + 链上转账
+4. ✅ MCP 等待充值响应后重试支付
 
 ---
 
 ### F8: 商户未授权 / 授权超额 → 追加授权
 
-**状态**: ❌ 未实现
+**状态**: ✅ 已实现
 
 当 MCP 需要支付给某个商户时，如果用户之前没有明确授权该商户（不在白名单中），或者该商户的累计支付金额已超过用户设定的授权额度，需要请求手机用户追加授权。
 
@@ -399,11 +402,11 @@ MCP                              Phone
 - 白名单机制存在（`ListStore`），但没有 "商户额度耗尽时请求追加" 的 DIDComm 消息
 - `payment-auth-response` 中的 `list_action` 字段可以触发白名单更新，但这是事后操作（支付后才更新）
 
-**缺失的组件**:
-1. 商户授权额度跟踪（累计支付 vs 授权上限）
-2. 额度耗尽时的自动检测
-3. 差异化的 DIDComm 消息（区分 "新商户授权" 和 "额度追加"）
-4. 手机端商户授权管理界面
+**已实现的组件**:
+1. ✅ 商户授权额度跟踪（累计支付 vs 授权上限）
+2. ✅ 额度耗尽时的自动检测
+3. ✅ 差异化的 DIDComm 消息（区分 "新商户授权" 和 "额度追加"）
+4. ✅ 手机端商户授权管理界面
 
 ---
 
@@ -466,7 +469,7 @@ MCP 可以重建 Merkle 树并签名批量结算，商家可以提交 `settle_ba
 
 ### F13: 余额查询与通知
 
-**状态**: ❌ 未实现
+**状态**: ✅ 已实现
 
 MCP 没有定期查询 session key 或全局金库余额的机制，也没有主动通知手机余额不足的功能。
 
@@ -492,7 +495,7 @@ MCP                              Phone
 
 ### F14: Session Key 续期 / 替换
 
-**状态**: ❌ 未实现
+**状态**: ✅ 已实现
 
 Session key 过期后需要手动创建新的。没有自动续期或无缝替换机制。
 
@@ -527,13 +530,13 @@ MCP                              Phone                          Solana
 
 ### F15: 多商户并发支付
 
-**状态**: ⚠️ 部分实现
+**状态**: ✅ 已实现
 
-MCP 的 `process_x402_challenge` 是单次请求处理。多个并发支付请求通过 MCP 的异步机制可以并行处理，但：
+MCP 的 `process_x402_challenge` 支持并发请求处理。通过支付互斥锁和原子执行机制：
 
-- 共享同一个 session key 时，spending limit 检查可能存在竞态
-- MagicBlock voucher 的 seq 分配没有并发保护
-- 没有支付队列或优先级机制
+- ✅ 共享同一个 session key 时，spending limit 检查通过互斥锁保证原子性
+- ✅ MagicBlock voucher 的 seq 分配有并发保护
+- ✅ 支付队列和优先级机制已实现
 
 ---
 
@@ -859,13 +862,13 @@ Buyer MCP                  Merchant Mediator         Merchant MCP         Mercha
 | 消息类型 | 方向 | 用途 | 关联流程 |
 |---------|------|------|---------|
 | `payment-auth-request` 扩展 | MCP → Phone | 新增 `available_payment_methods`、`new_session_key` 字段 | F2, F16 ✅ 已实现 |
-| `session-fund-request` | MCP → Phone | 余额不足时请求充值（复用 `payment-auth-request` 或独立消息） | F3 |
-| `session-fund-response` | Phone → MCP | 充值结果（已充值 + tx sig / 已拒绝） | F3 |
-| `ignite-pay/1.0/merchant-auth-request` | MCP → Phone | 新商户授权 / 额度追加请求 | F8 |
-| `ignite-pay/1.0/merchant-auth-response` | Phone → MCP | 商户授权结果 | F8 |
-| `ignite-pay/1.0/balance-notification` | MCP → Phone | 余额不足预警 | F13 |
-| `ignite-pay/1.0/session-renew-request` | MCP → Phone | Session key 即将过期，请求续期（MCP 创建新 key → 发给手机充值） | F14 |
-| `ignite-pay/1.0/session-renew-response` | Phone → MCP | 新 session key 充值完成确认 | F14 |
+| `session-fund-request` | MCP → Phone | 余额不足时请求充值（复用 `payment-auth-request` 或独立消息） | F3 ✅ 已实现 |
+| `session-fund-response` | Phone → MCP | 充值结果（已充值 + tx sig / 已拒绝） | F3 ✅ 已实现 |
+| `ignite-pay/1.0/merchant-auth-request` | MCP → Phone | 新商户授权 / 额度追加请求 | F8 ✅ 已实现 |
+| `ignite-pay/1.0/merchant-auth-response` | Phone → MCP | 商户授权结果 | F8 ✅ 已实现 |
+| `ignite-pay/1.0/balance-notification` | MCP → Phone | 余额不足预警 | F13 ✅ 已实现 |
+| `ignite-pay/1.0/session-renew-request` | MCP → Phone | Session key 即将过期，请求续期（MCP 创建新 key → 发给手机充值） | F14 ✅ 已实现 |
+| `ignite-pay/1.0/session-renew-response` | Phone → MCP | 新 session key 充值完成确认 | F14 ✅ 已实现 |
 
 ---
 

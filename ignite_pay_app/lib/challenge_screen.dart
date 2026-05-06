@@ -7,6 +7,7 @@ import 'package:ignite_pay_app/services/didcomm_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
 import 'package:ignite_pay_app/services/wallet_deep_link_service.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
+import 'package:ignite_pay_app/src/rust/api/session.dart' as session;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -170,6 +171,59 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
       return;
     }
 
+    // F2: If MCP provided a session key, register + fund + respond in one flow
+    final mcpSessionKey = widget.request?.newSessionKeyPubkey;
+    if (mcpSessionKey != null && mcpSessionKey.isNotEmpty) {
+      setState(() {
+        _isAuthorizing = true;
+        _authResult = 'Registering MCP session key on-chain...';
+      });
+      try {
+        final req = widget.request!;
+        await svc.initialize();
+
+        // Determine owner key: derive from DID (same as existing flow)
+        final dir = await getApplicationSupportDirectory();
+
+        // Determine target program from scopes
+        final isSpl = (req.newSessionKeyScopes ?? []).any((s) => s.contains('spl'));
+        final targetProgram = isSpl
+            ? 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+            : '11111111111111111111111111111111';
+
+        setState(() => _authResult = 'Registering + funding session key...');
+
+        final info = await rust.registerAndFundSessionKey(
+          storagePath: dir.path,
+          rpcUrl: svc.rpcUrl,
+          ownerSecretKey: '', // Rust derives owner from DID when empty
+          ephemeralPubkey: req.newSessionKeyPubkey!,
+          ephemeralSecretKey: req.newSessionKeySecretKey!,
+          targetProgram: targetProgram,
+          scopes: req.newSessionKeyScopes ?? ['sol:transfer'],
+          spendingLimit: BigInt.from(req.newSessionKeySpendingLimit ?? 0),
+          durationSecs: req.newSessionKeyDurationSecs ?? 3600,
+          tokenMint: req.newSessionKeyTokenMint,
+          solFunding: BigInt.from(req.newSessionKeySuggestedSolFunding ?? 0),
+          tokenFunding: req.newSessionKeySuggestedTokenFunding != null
+              ? BigInt.from(req.newSessionKeySuggestedTokenFunding!)
+              : null,
+        );
+
+        // Send auth response with the registered session key info
+        await _sendAuthResponseWithExternalKey(info);
+        setState(() => _authResult = 'Authorized with MCP session key');
+        await Future.delayed(const Duration(milliseconds: 1200));
+        if (mounted) Navigator.of(context).pop('authorized');
+      } catch (e) {
+        setState(() {
+          _authResult = 'Error: $e';
+          _isAuthorizing = false;
+        });
+      }
+      return;
+    }
+
     // Show signing method selector
     final method = await _showSigningMethodSelector();
     if (method == null || !mounted) return;
@@ -271,6 +325,61 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
       dailyTxCountLimit: dailyTxCount,
       perTxLimit: perTxLimitLamports,
     );
+  }
+
+  /// Send auth response with externally-provided session key info.
+  Future<void> _sendAuthResponseWithExternalKey(session.SessionKeyInfo info) async {
+    // Parse policy values from inputs
+    final dailyLimitLamports = (_parseSol(_dailySpendingLimit) * 1000000000).round();
+    final perTxLimitLamports = (_parseSol(_perTxLimit) * 1000000000).round();
+    final dailyTxCount = int.tryParse(_dailyTxCountLimit) ?? 50;
+    final durationSecs = (int.tryParse(_durationHours) ?? 24) * 3600;
+
+    // Persist merchant policy
+    try {
+      final dir = await getApplicationSupportDirectory();
+      if (_merchantDid.isNotEmpty) {
+        await rust.saveMerchantPolicy(
+          storagePath: dir.path,
+          merchantDid: _merchantDid,
+          dailySpendingLimit: BigInt.from(dailyLimitLamports),
+          dailyTxCountLimit: dailyTxCount,
+          perTxLimit: BigInt.from(perTxLimitLamports),
+          durationSecs: durationSecs,
+        );
+
+        final prefs = await SharedPreferences.getInstance();
+        final known = prefs.getStringList('known_merchant_dids') ?? [];
+        if (!known.contains(_merchantDid)) {
+          known.add(_merchantDid);
+          await prefs.setStringList('known_merchant_dids', known);
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to save merchant policy: $e');
+    }
+
+    await rust.sendAuthResponse(
+      storagePath: DidcommService().storagePath,
+      paymentId: _paymentId,
+      authorized: true,
+      listAction: _listAction,
+      mcpDid: DidcommService().pairedMcps.isNotEmpty
+          ? DidcommService().pairedMcps.first.did
+          : '',
+      sessionKeyInfo: info,
+      listLabel: _showLabelInput && _listLabel.isNotEmpty ? _listLabel : null,
+      listMaxAmount: _showMaxAmountInput && _listMaxAmount.isNotEmpty
+          ? int.tryParse(_listMaxAmount) != null
+              ? BigInt.from(int.parse(_listMaxAmount))
+              : null
+          : null,
+      dailyTxCountLimit: dailyTxCount,
+      perTxLimit: BigInt.from(perTxLimitLamports),
+      tokenMint: widget.request?.newSessionKeyTokenMint,
+    );
+
+    DidcommService().clearPendingAuth();
   }
 
   /// Parse a SOL string to a double, returning 0 on failure.

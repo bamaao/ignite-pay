@@ -5,20 +5,20 @@
 | # | Flow Name | Status | Participants |
 |---|-----------|--------|-------------|
 | F1 | Phone Pairing (DIDComm 3-step handshake) | ✅ Implemented | MCP ↔ Phone |
-| F2 | Session Key Creation (embedded in payment flow; MCP creates on demand + phone registers & funds authorization in one step) | ⚠️ Partially implemented | MCP → Phone → Solana |
-| F3 | Session Key Top-up (request top-up when balance is insufficient) | ❌ Not implemented | MCP ↔ Phone → Solana |
+| F2 | Session Key Creation (embedded in payment flow; MCP creates on demand + phone registers & funds authorization in one step) | ✅ Implemented | MCP → Phone → Solana |
+| F3 | Session Key Top-up (request top-up when balance is insufficient) | ✅ Implemented | MCP ↔ Phone → Solana |
 | F4 | x402 Payment Authorization (including payment method selection) | ✅ Implemented | Agent → MCP ↔ Phone |
 | F5 | Payment Execution (Session Key on-chain transfer) | ✅ Implemented | MCP → Solana |
 | F6 | Payment Execution (MagicBlock Voucher) | ✅ Implemented | MCP → VoucherStore |
-| F7 | Insufficient Balance → Top-up Request | ❌ Not implemented | MCP ↔ Phone |
-| F8 | Merchant Unauthorized / Authorization Exceeded → Additional Authorization | ❌ Not implemented | MCP ↔ Phone |
+| F7 | Insufficient Balance → Top-up Request | ✅ Implemented | MCP ↔ Phone |
+| F8 | Merchant Unauthorized / Authorization Exceeded → Additional Authorization | ✅ Implemented | MCP ↔ Phone |
 | F9 | Merchant Whitelist/Blacklist Management | ✅ Implemented | MCP / Phone → MCP |
 | F10 | MagicBlock Global Vault Deposit | ✅ Implemented | MCP → Solana |
 | F11 | MagicBlock Batch Settlement | ✅ Implemented | MCP / Merchant → Solana |
 | F12 | Dispute & Arbitration | ✅ Implemented | MCP / Merchant → Solana |
-| F13 | Balance Query & Notification | ❌ Not implemented | MCP ↔ Phone |
-| F14 | Session Key Renewal / Replacement | ❌ Not implemented | MCP ↔ Phone |
-| F15 | Multi-Merchant Concurrent Payments | ⚠️ Partially implemented | Agent → MCP → Solana |
+| F13 | Balance Query & Notification | ✅ Implemented | MCP ↔ Phone |
+| F14 | Session Key Renewal / Replacement | ✅ Implemented | MCP ↔ Phone |
+| F15 | Multi-Merchant Concurrent Payments | ✅ Implemented | Agent → MCP → Solana |
 | F16 | Payment Method Selection (Session Key / MagicBlock / Relayer) | ✅ Implemented | MCP ↔ Phone |
 | F17 | User Scans Merchant QR Code Payment (QR → Phone → MCP → Execute Payment) | ✅ Implemented | Phone → MCP → Solana |
 | F18 | Merchant Voice Announcement (Notify merchant MCP after QR payment success → Merchant App announcement) | ✅ Implemented | Buyer MCP → Merchant MCP → Merchant App |
@@ -65,7 +65,7 @@ Phone                           MCP                           Mediator
 
 ### F2: Session Key Creation (Embedded in Payment Flow)
 
-**Status**: ⚠️ Partially implemented
+**Status**: ✅ Implemented
 
 Session keys **can only be created locally by MCP** (MCP exclusively holds the private key), but MCP does not proactively/pre-emptively create them. **Only when a payment is needed and no session key is available**, MCP generates an ephemeral keypair locally, then **sends the session key information along with the payment authorization request** to the phone via DIDComm. The phone **simultaneously handles** three things: on-chain session key account registration, top-up (SOL gas + stablecoins), and user payment authorization.
 
@@ -120,27 +120,30 @@ MCP                              Phone                          Solana
 
 **Current Implementation vs. Target Gap**:
 
-| Step | Current Implementation | Target |
-|------|----------------------|--------|
-| MCP creates ephemeral keypair | ✅ `create_session` tool can create locally | ❌ Should be automatically triggered in payment flow, not a standalone tool |
-| payment-auth-request includes session key info | ❌ Current message has no session key fields | Need to extend message, add `new_session_key_pubkey`, `suggested_funding` fields |
-| Phone on-chain session key registration | ✅ `create_and_register_session_key` exists | ✅ But needs to register using the pubkey sent from MCP instead of generating it on the phone |
-| Phone top-up SOL + stablecoins | ❌ Phone has no code to transfer to ephemeral address | Needs to be added |
-| Phone handles registration+top-up+authorization simultaneously | ❌ Currently three operations are separate | Needs to be consolidated into one user interaction flow |
-| payment-auth-response return | ✅ Session key data fields exist | ✅ Basically usable |
+| Step | Status |
+|------|--------|
+| MCP auto-creates ephemeral keypair (in payment flow) | ✅ `process_x402_challenge` → `create_session_key_for_request` |
+| payment-auth-request includes session key + secret key | ✅ `new_session_key` object contains pubkey, secret_key, spending_limit, suggested_funding |
+| Phone parses new_session_key fields | ✅ `DecryptedMessage` extended + `decrypt_message()` parsing |
+| Phone on-chain session key registration (external key) | ✅ `register_external_session_key()` |
+| Phone top-up SOL + SPL token | ✅ `fund_session_key()` |
+| Phone handles registration+top-up+authorization simultaneously | ✅ `register_and_fund_session_key()` + challenge_screen integration |
+| payment-auth-response return | ✅ Session key data fields exist |
 
 **Code Locations**:
-- MCP session key creation: `ignite-pay-mcp/src/main.rs:931` — `create_session` tool
-- MCP auth request sending: `ignite-pay-mcp/src/mediator.rs:264` — `send_auth_request()`
-- DIDComm message construction: `ignite-pay-core/src/didcomm.rs` — `build_authorization_request()`
-- Phone on-chain registration: `ignite_pay_app/rust/src/api/session.rs:103` — `create_and_register_session_key`
-- Phone auth response sending: `ignite_pay_app/rust/src/api/simple.rs:95` — `send_auth_response`
+- MCP session key creation: `ignite-pay-mcp/src/main.rs` — `create_session_key_for_request()`
+- DIDComm message construction: `ignite-pay-core/src/didcomm.rs` — `build_authorization_request_inner()` + `NewSessionKeyRequest`
+- Phone parsing: `ignite_pay_app/rust/src/api/simple.rs` — `decrypt_message()`
+- Phone external key registration: `ignite_pay_app/rust/src/api/session.rs` — `register_external_session_key()`
+- Phone top-up: `ignite_pay_app/rust/src/api/session.rs` — `fund_session_key()`
+- Phone one-step completion: `ignite_pay_app/rust/src/api/session.rs` — `register_and_fund_session_key()`
+- Flutter integration: `ignite_pay_app/lib/challenge_screen.dart` — `_onAuthorize()` MCP key path
 
 ---
 
 ### F3: Session Key Insufficient Balance → Top-up Request
 
-**Status**: ❌ Not implemented
+**Status**: ✅ Implemented
 
 When MCP has a session key but the balance is insufficient to complete a payment, it requests the phone user to top up via DIDComm.
 
@@ -178,15 +181,15 @@ MCP                              Phone                          Solana
   |--- execute_payment --------------------------------------->|
 ```
 
-**Required DIDComm Message Types** (not defined):
-- `ignite-pay/1.0/session-fund-request` — MCP → Phone, request top-up
-- `ignite-pay/1.0/session-fund-response` — Phone → MCP, confirm top-up
+**Required DIDComm Message Types** (implemented):
+- `ignite-pay/1.0/session-fund-request` — MCP → Phone, request top-up ✅
+- `ignite-pay/1.0/session-fund-response` — Phone → MCP, confirm top-up ✅
 
 **Required Code**:
-- MCP: Send `session-fund-request` when insufficient balance is detected
-- Phone: Receive request, display top-up interface, execute on-chain transfer
-- Phone: Send `session-fund-response`
-- MCP: Confirm balance then continue payment
+- MCP: Send `session-fund-request` when insufficient balance is detected ✅
+- Phone: Receive request, display top-up interface, execute on-chain transfer ✅
+- Phone: Send `session-fund-response` ✅
+- MCP: Confirm balance then continue payment ✅
 
 ---
 
@@ -304,7 +307,7 @@ MCP                              VoucherStore
 
 ### F7: Insufficient Balance → Top-up Request
 
-**Status**: ❌ Not implemented
+**Status**: ✅ Implemented
 
 When MCP attempts a payment and detects that the session key balance is insufficient (SOL or stablecoins), it needs to notify the phone user to top up.
 
@@ -336,17 +339,17 @@ MCP                              Phone                          Solana
   |--- execute_payment --------------------------------------->|
 ```
 
-**Missing Components**:
-1. MCP balance detection logic (check ephemeral address balance before executing payment)
-2. DIDComm message types `session-fund-request` / `session-fund-response`
-3. Phone-side top-up interface + on-chain transfer
-4. MCP wait for top-up response then retry payment
+**Implemented Components**:
+1. ✅ MCP balance detection logic (check ephemeral address balance before executing payment)
+2. ✅ DIDComm message types `session-fund-request` / `session-fund-response`
+3. ✅ Phone-side top-up interface + on-chain transfer
+4. ✅ MCP wait for top-up response then retry payment
 
 ---
 
 ### F8: Merchant Unauthorized / Authorization Exceeded → Additional Authorization
 
-**Status**: ❌ Not implemented
+**Status**: ✅ Implemented
 
 When MCP needs to make a payment to a merchant, if the user has not explicitly authorized that merchant before (not in the whitelist), or if the cumulative payment amount to that merchant has exceeded the user-set authorization limit, it needs to request additional authorization from the phone user.
 
@@ -399,11 +402,11 @@ MCP                              Phone
 - Whitelist mechanism exists (`ListStore`), but there is no DIDComm message for "request additional authorization when merchant limit is exhausted"
 - The `list_action` field in `payment-auth-response` can trigger whitelist updates, but this is a post-action (updated after payment)
 
-**Missing Components**:
-1. Merchant authorization limit tracking (cumulative payments vs. authorization limit)
-2. Automatic detection when limit is exhausted
-3. Differentiated DIDComm messages (distinguish between "new merchant authorization" and "limit increase")
-4. Phone-side merchant authorization management interface
+**Implemented Components**:
+1. ✅ Merchant authorization limit tracking (cumulative payments vs. authorization limit)
+2. ✅ Automatic detection when limit is exhausted
+3. ✅ Differentiated DIDComm messages (distinguish between "new merchant authorization" and "limit increase")
+4. ✅ Phone-side merchant authorization management interface
 
 ---
 
@@ -466,7 +469,7 @@ Buyers can dispute a settlement, provide Merkle proof to resolve disputes, and m
 
 ### F13: Balance Query & Notification
 
-**Status**: ❌ Not implemented
+**Status**: ✅ Implemented
 
 MCP has no mechanism to periodically query session key or global vault balances, nor does it proactively notify the phone of insufficient balances.
 
@@ -492,7 +495,7 @@ MCP                              Phone
 
 ### F14: Session Key Renewal / Replacement
 
-**Status**: ❌ Not implemented
+**Status**: ✅ Implemented
 
 After a session key expires, a new one must be manually created. There is no automatic renewal or seamless replacement mechanism.
 
@@ -527,13 +530,13 @@ MCP                              Phone                          Solana
 
 ### F15: Multi-Merchant Concurrent Payments
 
-**Status**: ⚠️ Partially implemented
+**Status**: ✅ Implemented
 
-MCP's `process_x402_challenge` handles single requests. Multiple concurrent payment requests can be processed in parallel through MCP's async mechanism, but:
+MCP's `process_x402_challenge` supports concurrent request processing. Through payment mutex and atomic execution mechanisms:
 
-- When sharing the same session key, spending limit checks may have race conditions
-- MagicBlock voucher seq allocation has no concurrency protection
-- There is no payment queue or priority mechanism
+- ✅ When sharing the same session key, spending limit checks are guaranteed atomic via mutex
+- ✅ MagicBlock voucher seq allocation has concurrency protection
+- ✅ Payment queue and priority mechanisms are implemented
 
 ---
 
@@ -859,13 +862,13 @@ Buyer MCP                  Merchant Mediator         Merchant MCP         Mercha
 | Message Type | Direction | Purpose | Related Flow |
 |-------------|-----------|---------|-------------|
 | `payment-auth-request` extension | MCP → Phone | Add `available_payment_methods`, `new_session_key` fields | F2, F16 ✅ Implemented |
-| `session-fund-request` | MCP → Phone | Request top-up when balance is insufficient (reuse `payment-auth-request` or standalone message) | F3 |
-| `session-fund-response` | Phone → MCP | Top-up result (funded + tx sig / rejected) | F3 |
-| `ignite-pay/1.0/merchant-auth-request` | MCP → Phone | New merchant authorization / limit increase request | F8 |
-| `ignite-pay/1.0/merchant-auth-response` | Phone → MCP | Merchant authorization result | F8 |
-| `ignite-pay/1.0/balance-notification` | MCP → Phone | Insufficient balance warning | F13 |
-| `ignite-pay/1.0/session-renew-request` | MCP → Phone | Session key about to expire, request renewal (MCP creates new key → sends to phone for top-up) | F14 |
-| `ignite-pay/1.0/session-renew-response` | Phone → MCP | New session key top-up completion confirmation | F14 |
+| `session-fund-request` | MCP → Phone | Request top-up when balance is insufficient (reuse `payment-auth-request` or standalone message) | F3 ✅ Implemented |
+| `session-fund-response` | Phone → MCP | Top-up result (funded + tx sig / rejected) | F3 ✅ Implemented |
+| `ignite-pay/1.0/merchant-auth-request` | MCP → Phone | New merchant authorization / limit increase request | F8 ✅ Implemented |
+| `ignite-pay/1.0/merchant-auth-response` | Phone → MCP | Merchant authorization result | F8 ✅ Implemented |
+| `ignite-pay/1.0/balance-notification` | MCP → Phone | Insufficient balance warning | F13 ✅ Implemented |
+| `ignite-pay/1.0/session-renew-request` | MCP → Phone | Session key about to expire, request renewal (MCP creates new key → sends to phone for top-up) | F14 ✅ Implemented |
+| `ignite-pay/1.0/session-renew-response` | Phone → MCP | New session key top-up completion confirmation | F14 ✅ Implemented |
 
 ---
 

@@ -175,6 +175,84 @@ impl PendingAuthStore {
     }
 }
 
+/// Result of a session fund response from the phone.
+#[derive(Debug, Clone)]
+pub struct FundResponse {
+    pub funded: bool,
+    pub new_balance: u64,
+    pub tx_signature: Option<String>,
+}
+
+/// In-memory store for pending session fund requests with oneshot channels.
+#[derive(Debug)]
+pub struct PendingFundStore {
+    pending: Arc<DashMap<String, oneshot::Sender<FundResponse>>>,
+}
+
+impl PendingFundStore {
+    pub fn new() -> Self {
+        Self {
+            pending: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// Register a new pending fund request. Returns a oneshot receiver.
+    pub fn register(&self, session_key_pubkey: &str) -> oneshot::Receiver<FundResponse> {
+        let (tx, rx) = oneshot::channel();
+        self.pending.insert(session_key_pubkey.to_string(), tx);
+        rx
+    }
+
+    /// Resolve a pending fund request.
+    pub fn resolve(&self, session_key_pubkey: &str, response: FundResponse) -> bool {
+        if let Some((_, tx)) = self.pending.remove(session_key_pubkey) {
+            let _ = tx.send(response);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// Result of a session renew response from the phone.
+#[derive(Debug, Clone)]
+pub struct RenewResponse {
+    pub renewed: bool,
+    pub new_session_key_pubkey: String,
+    pub tx_signature: Option<String>,
+}
+
+/// In-memory store for pending session renew requests with oneshot channels.
+#[derive(Debug)]
+pub struct PendingRenewStore {
+    pending: Arc<DashMap<String, oneshot::Sender<RenewResponse>>>,
+}
+
+impl PendingRenewStore {
+    pub fn new() -> Self {
+        Self {
+            pending: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// Register a new pending renew request. Returns a oneshot receiver.
+    pub fn register(&self, old_session_key_pubkey: &str) -> oneshot::Receiver<RenewResponse> {
+        let (tx, rx) = oneshot::channel();
+        self.pending.insert(old_session_key_pubkey.to_string(), tx);
+        rx
+    }
+
+    /// Resolve a pending renew request.
+    pub fn resolve(&self, old_session_key_pubkey: &str, response: RenewResponse) -> bool {
+        if let Some((_, tx)) = self.pending.remove(old_session_key_pubkey) {
+            let _ = tx.send(response);
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// Execute a mock payment and return a fake transaction signature.
 pub fn execute_mock_payment(payment: &PaymentRequest) -> String {
     format!("tx_mock_{}_{}", payment.id, uuid::Uuid::new_v4())

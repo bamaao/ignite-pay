@@ -1,4 +1,4 @@
-use crate::payment::{AuthResponse, PaymentRequest, PendingAuthStore};
+use crate::payment::{AuthResponse, FundResponse, PaymentRequest, PendingAuthStore, RenewResponse};
 
 use affinidi_messaging_didcomm::identity::PrivateIdentity;
 use base64::Engine;
@@ -240,6 +240,8 @@ impl MediatorConnection {
     pub async fn connect(
         &self,
         pending: Arc<PendingAuthStore>,
+        pending_fund: Arc<crate::payment::PendingFundStore>,
+        pending_renew: Arc<crate::payment::PendingRenewStore>,
         create_channel_tx: Option<mpsc::UnboundedSender<CreateChannelCommand>>,
         mb_deposit_tx: Option<mpsc::UnboundedSender<MbDepositCommand>>,
         qr_payment_tx: Option<mpsc::UnboundedSender<QrPaymentCommand>>,
@@ -254,6 +256,8 @@ impl MediatorConnection {
         let phone_mediator_http_url = self.phone_mediator_http_url.clone();
         let signing_private = self.signing_private;
         let db = self.db.clone();
+        let pending_fund = pending_fund;
+        let pending_renew = pending_renew;
 
         // Create a new channel pair for this connection
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel();
@@ -273,6 +277,8 @@ impl MediatorConnection {
                 connected,
                 outgoing_rx,
                 pending,
+                pending_fund,
+                pending_renew,
                 paired_phone,
                 pending_phone,
                 phone_mediator_http_url,
@@ -597,6 +603,8 @@ async fn real_ws_client(
     _connected: Arc<Notify>,
     mut outgoing_rx: mpsc::UnboundedReceiver<String>,
     pending: Arc<PendingAuthStore>,
+    pending_fund: Arc<crate::payment::PendingFundStore>,
+    pending_renew: Arc<crate::payment::PendingRenewStore>,
     paired_phone: Arc<tokio::sync::Mutex<Option<String>>>,
     pending_phone: Arc<tokio::sync::Mutex<Option<String>>>,
     phone_mediator_http_url: Arc<tokio::sync::Mutex<Option<String>>>,
@@ -614,6 +622,8 @@ async fn real_ws_client(
             did_doc,
             &mut outgoing_rx,
             &pending,
+            &pending_fund,
+            &pending_renew,
             &paired_phone,
             &pending_phone,
             &phone_mediator_http_url,
@@ -644,6 +654,8 @@ async fn connect_and_run(
     did_doc: &Value,
     outgoing_rx: &mut mpsc::UnboundedReceiver<String>,
     pending: &PendingAuthStore,
+    pending_fund: &crate::payment::PendingFundStore,
+    pending_renew: &crate::payment::PendingRenewStore,
     paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
     pending_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
     phone_mediator_http_url: &Arc<tokio::sync::Mutex<Option<String>>>,
@@ -816,7 +828,7 @@ async fn connect_and_run(
                                     for entry in messages {
                                         if let Some(jwe) = entry.get("message").and_then(|m| m.as_str()) {
                                             handle_incoming_message(
-                                                jwe, agent, pending, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, mb_deposit_tx, qr_payment_tx, db, our_did, did_doc, ws_url, signing_private,
+                                                jwe, agent, pending, pending_fund, pending_renew, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, mb_deposit_tx, qr_payment_tx, db, our_did, did_doc, ws_url, signing_private,
                                             )
                                             .await;
                                         }
@@ -855,7 +867,7 @@ async fn connect_and_run(
             msg = ws.next() => {
                 match msg {
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
-                        handle_incoming_message(&text, agent, pending, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, mb_deposit_tx, qr_payment_tx, db, our_did, did_doc, ws_url, signing_private).await;
+                        handle_incoming_message(&text, agent, pending, pending_fund, pending_renew, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, mb_deposit_tx, qr_payment_tx, db, our_did, did_doc, ws_url, signing_private).await;
                     }
                     Some(Ok(_)) => {}
                     Some(Err(e)) => return Err(e.into()),
@@ -958,6 +970,8 @@ async fn handle_incoming_message(
     text: &str,
     agent: &Arc<Mutex<DIDCommAgent>>,
     pending: &PendingAuthStore,
+    pending_fund: &crate::payment::PendingFundStore,
+    pending_renew: &crate::payment::PendingRenewStore,
     paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
     pending_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
     phone_mediator_http_url: &Arc<tokio::sync::Mutex<Option<String>>>,
@@ -976,7 +990,7 @@ async fn handle_incoming_message(
         match didcomm::unpack_message(&agent_guard, text, None) {
             Ok(msg) => {
                 drop(agent_guard);
-                process_inner_message(&msg, pending, paired_phone, pending_phone, phone_mediator_http_url, agent, create_channel_tx, mb_deposit_tx, qr_payment_tx, db, our_did, did_doc, mcp_ws_url, signing_private).await;
+                process_inner_message(&msg, pending, pending_fund, pending_renew, paired_phone, pending_phone, phone_mediator_http_url, agent, create_channel_tx, mb_deposit_tx, qr_payment_tx, db, our_did, did_doc, mcp_ws_url, signing_private).await;
                 return;
             }
             Err(e) => {
@@ -1220,6 +1234,8 @@ async fn handle_incoming_message(
 async fn process_inner_message(
     msg: &affinidi_messaging_didcomm::Message,
     pending: &PendingAuthStore,
+    pending_fund: &crate::payment::PendingFundStore,
+    pending_renew: &crate::payment::PendingRenewStore,
     paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
     pending_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
     phone_mediator_http_url: &Arc<tokio::sync::Mutex<Option<String>>>,
@@ -1590,6 +1606,53 @@ async fn process_inner_message(
             }
         } else {
             tracing::warn!("No qr_payment_tx available, ignoring qr-payment-request");
+        }
+    } else if msg.typ.contains("session-fund-response") {
+        let session_key_pubkey = msg.body.get("session_key_pubkey")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let funded = msg.body.get("funded")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let new_balance = msg.body.get("new_balance")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let tx_signature = msg.body.get("tx_signature")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let response = FundResponse {
+            funded,
+            new_balance,
+            tx_signature,
+        };
+        if pending_fund.resolve(&session_key_pubkey, response) {
+            tracing::info!("Resolved pending fund: {} -> funded={}", session_key_pubkey, funded);
+        }
+    } else if msg.typ.contains("session-renew-response") {
+        let old_session_key_pubkey = msg.body.get("old_session_key_pubkey")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let new_session_key_pubkey = msg.body.get("new_session_key_pubkey")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let renewed = msg.body.get("renewed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let tx_signature = msg.body.get("tx_signature")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let response = RenewResponse {
+            renewed,
+            new_session_key_pubkey,
+            tx_signature,
+        };
+        if pending_renew.resolve(&old_session_key_pubkey, response) {
+            tracing::info!("Resolved pending renew: {} -> renewed={}", old_session_key_pubkey, renewed);
         }
     } else {
         tracing::info!("Received message type={}, no handler", msg.typ);

@@ -1,6 +1,7 @@
 use ignite_pay_mcp::mediator::{MediatorConnection, MbDepositCommand, QrPaymentCommand};
 use ignite_pay_mcp::payment::{
-    execute_mock_payment, AuthResponse, PaymentRequest, PaymentStatus, PendingAuthStore,
+    execute_mock_payment, AuthResponse, PaymentRequest, PaymentStatus,
+    PendingAuthStore, PendingFundStore,
 };
 use ignite_pay_mcp::audit::AuditLogStore;
 use ignite_pay_mcp::tools::{
@@ -469,6 +470,7 @@ impl IgnitePayMcpServer {
             token_mint: token_mint.clone(),
             suggested_sol_funding: payment.amount + 10_000_000, // payment + 0.01 SOL for gas
             suggested_token_funding: if token_mint.is_some() { Some(payment.amount) } else { None },
+            ephemeral_secret_key: Some(bs58::encode(session.keypair.to_bytes()).into_string()),
         })
     }
 
@@ -545,6 +547,12 @@ struct IgnitePayMcpServer {
     mb_program_id: Pubkey,
     mb_buyer_keypair: Arc<MbKeypair>,
     mb_voucher_store: Arc<VoucherStore>,
+    // F15: Payment mutex for atomic execution
+    payment_mutex: Arc<tokio::sync::Mutex<()>>,
+    // F3/F7: Pending session fund requests
+    pending_fund: Arc<PendingFundStore>,
+    // F14: Pending session renew requests
+    pending_renew: Arc<ignite_pay_mcp::payment::PendingRenewStore>,
 }
 
 #[tool_router]
@@ -769,7 +777,7 @@ impl IgnitePayMcpServer {
             }
             Ok(RiskControlDecision::AutoApproved { max_amount: _, label }) => {
                 let session = self.get_active_session();
-                return match self.execute_payment_auto(&payment, &session, spl_params.as_ref(), None).await {
+                return match self.execute_payment_atomic(&payment, &session, spl_params.as_ref(), None).await {
                     Ok(proof) => {
                         let _ = self
                             .payments
@@ -808,7 +816,7 @@ impl IgnitePayMcpServer {
         // 4. Check auto-approve (global threshold)
         if self.auto_approve_max > 0 && amount <= self.auto_approve_max {
             let session = self.get_active_session();
-            match self.execute_payment_auto(&payment, &session, spl_params.as_ref(), None).await {
+            match self.execute_payment_atomic(&payment, &session, spl_params.as_ref(), None).await {
                 Ok(proof) => {
                     if let Err(e) = self
                         .payments
@@ -917,7 +925,7 @@ impl IgnitePayMcpServer {
                 if let Some(method) = chosen_method {
                     tracing::info!("User chose payment method: {}", method);
                 }
-                match self.execute_payment_auto(&payment, &session, spl_params.as_ref(), chosen_method).await {
+                match self.execute_payment_atomic(&payment, &session, spl_params.as_ref(), chosen_method).await {
                     Ok(proof) => {
                         let _ = self
                             .payments
@@ -1945,6 +1953,239 @@ impl IgnitePayMcpServer {
 }
 
 impl IgnitePayMcpServer {
+    /// Check if the session has enough remaining balance for the given amount.
+    fn check_session_balance(&self, session: &Option<SessionKeypair>, amount: u64) -> Result<(), String> {
+        if let Some(sk) = session {
+            let remaining = sk.session_data.spending_limit.saturating_sub(sk.session_data.current_spent);
+            if remaining < amount {
+                return Err(format!(
+                    "Session balance insufficient: {} remaining, {} needed",
+                    remaining, amount
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Execute a payment atomically: acquire mutex, check balance, execute, record spending.
+    async fn execute_payment_atomic(
+        &self,
+        payment: &PaymentRequest,
+        session: &Option<SessionKeypair>,
+        spl_params: Option<&SplPaymentParams>,
+        preferred_method: Option<&str>,
+    ) -> Result<PaymentProof, String> {
+        let _guard = self.payment_mutex.lock().await;
+
+        // F3/F7: Ensure session has sufficient balance, requesting funds if needed
+        self.ensure_session_funded(session, payment.amount).await?;
+
+        // Check session balance before payment
+        self.check_session_balance(session, payment.amount)?;
+
+        // Execute the payment
+        let proof = self.execute_payment_auto(payment, session, spl_params, preferred_method).await?;
+
+        // Record spent amount in session (if session exists)
+        if let Some(client) = &self.solana_client {
+            if let Some(sk) = session {
+                let _ = client.session_manager().record_spent(
+                    &sk.keypair.pubkey(),
+                    payment.amount,
+                );
+            }
+        }
+
+        // Record cumulative merchant spending for F8
+        if !payment.merchant_did.is_empty() {
+            let _ = self.list_store.record_merchant_spent(&payment.merchant_did, payment.amount);
+        }
+
+        Ok(proof)
+    }
+
+    /// F3/F7: Ensure the session has sufficient balance before payment.
+    /// If not, send a fund request to the phone and wait for response.
+    async fn ensure_session_funded(
+        &self,
+        session: &Option<SessionKeypair>,
+        amount: u64,
+    ) -> Result<(), String> {
+        let sk = match session {
+            Some(s) => s,
+            None => return Ok(()), // No session, let execute_payment handle it
+        };
+
+        let remaining = sk.session_data.spending_limit.saturating_sub(sk.session_data.current_spent);
+        if remaining >= amount {
+            return Ok(());
+        }
+
+        // Need to request funding from phone
+        let session_key_pubkey = sk.keypair.pubkey().to_string();
+        tracing::info!(
+            "Session {} balance insufficient ({} < {}), requesting funds from phone",
+            session_key_pubkey, remaining, amount
+        );
+
+        let phone_did = self.resolve_phone_did().await
+            .ok_or_else(|| "No phone DID available for fund request".to_string())?;
+
+        let rx = self.pending_fund.register(&session_key_pubkey);
+
+        let msg = ignite_pay_core::didcomm::build_session_fund_request(
+            self.mediator.our_did(),
+            &phone_did,
+            &session_key_pubkey,
+            amount.saturating_sub(remaining),
+            remaining,
+            remaining,
+            "",
+            "insufficient_balance",
+        );
+
+        self.mediator.send_to_phone(&msg, &phone_did).await
+            .map_err(|e| format!("Failed to send fund request: {}", e))?;
+
+        // Wait for response with 60s timeout
+        match tokio::time::timeout(std::time::Duration::from_secs(60), rx).await {
+            Ok(Ok(resp)) if resp.funded => {
+                tracing::info!("Session funded: new_balance={}", resp.new_balance);
+                Ok(())
+            }
+            Ok(Ok(_)) => Err("Phone declined fund request".to_string()),
+            Ok(Err(_)) => Err("Fund request channel error".to_string()),
+            Err(_) => Err("Fund request timed out (60s)".to_string()),
+        }
+    }
+
+    /// F13: Check session balance and send notification if below threshold.
+    async fn check_and_notify_balances(&self) {
+        let session = match self.get_active_session() {
+            Some(s) => s,
+            None => return,
+        };
+
+        let remaining = session.session_data.spending_limit.saturating_sub(session.session_data.current_spent);
+        let threshold = session.session_data.spending_limit / 10; // 10% threshold
+
+        if remaining >= threshold {
+            return;
+        }
+
+        let phone_did = match self.resolve_phone_did().await {
+            Some(d) => d,
+            None => return,
+        };
+
+        let msg = ignite_pay_core::didcomm::build_balance_notification(
+            self.mediator.our_did(),
+            &phone_did,
+            &session.keypair.pubkey().to_string(),
+            remaining,
+            threshold,
+            remaining,
+        );
+
+        match self.mediator.send_to_phone(&msg, &phone_did).await {
+            Ok(_) => tracing::info!("Balance notification sent: remaining={}", remaining),
+            Err(e) => tracing::warn!("Failed to send balance notification: {}", e),
+        }
+    }
+
+    /// F14: Check if session key needs renewal and request renewal from phone.
+    async fn check_and_renew_session(&self) {
+        let session = match self.get_active_session() {
+            Some(s) => s,
+            None => return,
+        };
+
+        let now = chrono::Utc::now().timestamp();
+        let expires_at = session.session_data.expires_at;
+        let remaining_secs = expires_at.saturating_sub(now);
+
+        // Renew if less than 5 minutes remaining
+        if remaining_secs > 300 {
+            return;
+        }
+
+        tracing::info!(
+            "Session {} expires in {}s, requesting renewal",
+            session.keypair.pubkey(),
+            remaining_secs
+        );
+
+        let phone_did = match self.resolve_phone_did().await {
+            Some(d) => d,
+            None => return,
+        };
+
+        // Create a new ephemeral keypair for the replacement session
+        let new_sk = match self.create_session_key_for_request(
+            &PaymentRequest {
+                id: String::new(),
+                recipient: String::new(),
+                merchant_did: String::new(),
+                amount: session.session_data.spending_limit,
+                token: if session.session_data.token_mint == Pubkey::default() {
+                    "SOL".to_string()
+                } else {
+                    session.session_data.token_mint.to_string()
+                },
+                network: "solana".to_string(),
+                description: String::new(),
+                status: PaymentStatus::PendingAuth,
+                created_at: chrono::Utc::now(),
+                tx_signature: None,
+            },
+            &None,
+        ) {
+            Some(sk) => sk,
+            None => {
+                tracing::warn!("Failed to create new session key for renewal");
+                return;
+            }
+        };
+
+        let old_pubkey = session.keypair.pubkey().to_string();
+        let rx = self.pending_renew.register(&old_pubkey);
+
+        let msg = ignite_pay_core::didcomm::build_session_renew_request(
+            self.mediator.our_did(),
+            &phone_did,
+            &old_pubkey,
+            expires_at,
+            &new_sk,
+        );
+
+        match self.mediator.send_to_phone(&msg, &phone_did).await {
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!("Failed to send renew request: {}", e);
+                return;
+            }
+        }
+
+        // Wait for response with 60s timeout
+        match tokio::time::timeout(std::time::Duration::from_secs(60), rx).await {
+            Ok(Ok(resp)) if resp.renewed => {
+                tracing::info!(
+                    "Session renewed: old={} new={}",
+                    old_pubkey, resp.new_session_key_pubkey
+                );
+            }
+            Ok(Ok(_)) => {
+                tracing::warn!("Phone declined session renewal");
+            }
+            Ok(Err(_)) => {
+                tracing::warn!("Session renew channel error");
+            }
+            Err(_) => {
+                tracing::warn!("Session renew request timed out (60s)");
+            }
+        }
+    }
+
     /// Resolve the phone DID: prefer the dynamically paired phone DID,
     /// fall back to the config value, then to the input parameter.
     async fn resolve_phone_did(&self) -> Option<String> {
@@ -2364,8 +2605,10 @@ async fn main() -> anyhow::Result<()> {
     // Connect to mediator (spawns background task with pending auth handling)
     let (qr_payment_tx, mut qr_payment_rx) = tokio::sync::mpsc::unbounded_channel::<QrPaymentCommand>();
     let (mb_deposit_tx, mut mb_deposit_rx) = tokio::sync::mpsc::unbounded_channel::<MbDepositCommand>();
+    let pending_fund_store = Arc::new(PendingFundStore::new());
+    let pending_renew_store = Arc::new(ignite_pay_mcp::payment::PendingRenewStore::new());
     mediator
-        .connect(Arc::clone(&pending), None, Some(mb_deposit_tx), Some(qr_payment_tx))
+        .connect(Arc::clone(&pending), Arc::clone(&pending_fund_store), Arc::clone(&pending_renew_store), None, Some(mb_deposit_tx), Some(qr_payment_tx))
         .await?;
     tracing::info!("Connecting to mediator at {}...", config.mediator.ws_url);
 
@@ -2464,6 +2707,9 @@ async fn main() -> anyhow::Result<()> {
         mb_program_id,
         mb_buyer_keypair,
         mb_voucher_store,
+        payment_mutex: Arc::new(tokio::sync::Mutex::new(())),
+        pending_fund: pending_fund_store,
+        pending_renew: pending_renew_store,
     };
 
     // Spawn QR payment handler background task
@@ -2510,7 +2756,7 @@ async fn main() -> anyhow::Result<()> {
                     None
                 };
 
-                let result = server.execute_payment_auto(
+                let result = server.execute_payment_atomic(
                     &payment,
                     &session,
                     spl_params.as_ref(),
@@ -2690,6 +2936,29 @@ async fn main() -> anyhow::Result<()> {
                     Ok(_) => tracing::info!("MB deposit response sent to phone"),
                     Err(e) => tracing::error!("Failed to send MB deposit response: {}", e),
                 }
+            }
+        });
+    }
+
+    // F13/F14: Background monitor for balance notifications and session renewal
+    {
+        let server = server.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            let mut last_notification: std::time::Instant = std::time::Instant::now()
+                - std::time::Duration::from_secs(300); // Allow immediate first notification
+
+            loop {
+                interval.tick().await;
+
+                // F13: Check balance and send notification (max once per 5 minutes)
+                if last_notification.elapsed() >= std::time::Duration::from_secs(300) {
+                    server.check_and_notify_balances().await;
+                    last_notification = std::time::Instant::now();
+                }
+
+                // F14: Check if session needs renewal
+                server.check_and_renew_session().await;
             }
         });
     }

@@ -27,6 +27,7 @@ class SessionKeyService extends ChangeNotifier {
   session.UnsignedRegisterTx? _pendingUnsignedTx;
 
   bool get isRegistering => _isRegistering;
+  String get rpcUrl => _rpcUrl;
   List<session.SessionKeyEntry> get sessionKeys => List.unmodifiable(_sessionKeys);
   session.SessionKeyEntry? get activeSessionKey => _activeSessionKey;
   session.UnsignedRegisterTx? get pendingUnsignedTx => _pendingUnsignedTx;
