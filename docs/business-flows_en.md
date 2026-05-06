@@ -552,7 +552,7 @@ Users can choose the payment method when authorizing on the phone. MCP determine
 |--------|-------------|--------|
 | `session_key` | Session Key on-chain direct transfer | ✅ Available |
 | `magicblock` | MagicBlock off-chain voucher signing | ✅ Available (requires channel) |
-| `relayer` | Sponsored payment mode + Relayer service | ❌ Not implemented |
+| `relayer` | Sponsored payment mode + Relayer service | ✅ Available (session key signs, relayer pays gas) |
 
 **Flow**:
 ```
@@ -572,7 +572,7 @@ MCP                                             Phone
   | execute_payment_auto(preferred_method)         |
   |   - "session_key" → on-chain transfer          |
   |   - "magicblock" → sign voucher                |
-  |   - "relayer" → error: not implemented         |
+  |   - "relayer" → execute_payment_sponsored (session key signs, relayer pays gas) |
 ```
 
 **Code Locations**:
@@ -722,7 +722,7 @@ Merchant          Phone              Mediator           MCP              Solana
 |---------------|---------------------|
 | `session_key` | Sign on-chain SOL/SPL transfer using session key |
 | `magicblock` | Off-chain voucher signing: `SHA256(channel_id ‖ seq ‖ amount)` + Ed25519 |
-| `relayer` | Return error: not yet implemented |
+| `relayer` | Session key signs transaction, relayer submits and pays gas |
 
 **Code Locations**:
 - DIDComm message construction: `ignite-pay-core/src/didcomm.rs` — `build_qr_payment_request()`, `build_qr_payment_response()`, `build_qr_payment_notify()`

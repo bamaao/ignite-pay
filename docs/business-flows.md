@@ -552,7 +552,7 @@ MCP 的 `process_x402_challenge` 支持并发请求处理。通过支付互斥�
 |------|------|------|
 | `session_key` | Session Key 链上直接转账 | ✅ 可用 |
 | `magicblock` | MagicBlock 链下 voucher 签名 | ✅ 可用（需有 channel） |
-| `relayer` | 代付模式 + Relayer 服务 | ❌ 未实现 |
+| `relayer` | 代付模式 + Relayer 服务 | ✅ 可用（session key 签名，relayer 代付 gas） |
 
 **流程**:
 ```
@@ -572,7 +572,7 @@ MCP                                             Phone
   | execute_payment_auto(preferred_method)         |
   |   - "session_key" → on-chain transfer          |
   |   - "magicblock" → sign voucher                |
-  |   - "relayer" → error: not implemented         |
+  |   - "relayer" → execute_payment_sponsored (session key signs, relayer pays gas) |
 ```
 
 **代码位置**:
@@ -722,7 +722,7 @@ Merchant          Phone              Mediator           MCP              Solana
 |---------|------------|
 | `session_key` | 使用 session key 签名链上 SOL/SPL 转账 |
 | `magicblock` | 链下签名 voucher: `SHA256(channel_id ‖ seq ‖ amount)` + Ed25519 |
-| `relayer` | 返回错误：尚未实现 |
+| `relayer` | session key 签名交易，relayer 代付 gas 上链 |
 
 **代码位置**:
 - DIDComm 消息构建: `ignite-pay-core/src/didcomm.rs` — `build_qr_payment_request()`, `build_qr_payment_response()`, `build_qr_payment_notify()`
