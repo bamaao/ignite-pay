@@ -56,6 +56,7 @@ class _MockRustLibApi extends RustLibApi {
     int? dailyTxCountLimit,
     BigInt? perTxLimit,
     String? tokenMint,
+    required String? paymentMethod,
   }) async {}
 
   @override

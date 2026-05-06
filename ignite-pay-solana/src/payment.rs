@@ -269,6 +269,49 @@ impl IgnitePayClient {
         }
     }
 
+    /// Execute a payment using the relayer-sponsored path, regardless of global mode.
+    /// Used when the phone user explicitly selects the "relayer" payment method.
+    pub async fn execute_payment_sponsored(
+        &self,
+        recipient: &str,
+        amount: u64,
+        token: &str,
+        _network: &str,
+        session: &SessionKeypair,
+        spl_params: Option<&SplPaymentParams>,
+    ) -> Result<PaymentResult> {
+        let recipient_pubkey = recipient
+            .parse::<Pubkey>()
+            .map_err(|e| SolanaError::InvalidPubkey(e.to_string()))?;
+
+        let relayer_url = self.relayer_url.as_ref().ok_or_else(|| {
+            SolanaError::RelayerError("relayer_url not configured for sponsored payment".into())
+        })?;
+
+        let relayer_pubkey = Self::fetch_relayer_pubkey(relayer_url).await?;
+
+        match token {
+            "SOL" | "sol" => {
+                self.execute_sol_transfer_sponsored(session, &recipient_pubkey, amount, &relayer_pubkey, relayer_url)
+                    .await
+            }
+            _ => {
+                let params = spl_params.ok_or_else(|| {
+                    SolanaError::Other(anyhow::anyhow!(
+                        "SPL token transfers require spl_params with mint address"
+                    ))
+                })?;
+                let source_ata = params.source_ata_override
+                    .unwrap_or_else(|| Self::derive_ata(&session.keypair.pubkey(), &params.mint));
+                let dest_ata = params.dest_ata_override
+                    .unwrap_or_else(|| Self::derive_ata(&recipient_pubkey, &params.mint));
+
+                self.execute_spl_transfer_sponsored(session, &source_ata, &dest_ata, amount, &params.mint, &relayer_pubkey, relayer_url)
+                    .await
+            }
+        }
+    }
+
     /// Fetch the relayer's fee-payer public key from GET /info.
     async fn fetch_relayer_pubkey(relayer_url: &str) -> Result<Pubkey> {
         let info_url = format!("{}/info", relayer_url.trim_end_matches("/sponsor"));

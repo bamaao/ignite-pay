@@ -377,6 +377,7 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
       dailyTxCountLimit: dailyTxCount,
       perTxLimit: BigInt.from(perTxLimitLamports),
       tokenMint: widget.request?.newSessionKeyTokenMint,
+      paymentMethod: null,
     );
 
     DidcommService().clearPendingAuth();

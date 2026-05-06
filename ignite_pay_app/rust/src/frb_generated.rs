@@ -1671,6 +1671,7 @@ fn wire__crate__api__simple__send_auth_response_impl(
             let api_daily_tx_count_limit = <Option<u32>>::sse_decode(&mut deserializer);
             let api_per_tx_limit = <Option<u64>>::sse_decode(&mut deserializer);
             let api_token_mint = <Option<String>>::sse_decode(&mut deserializer);
+            let api_payment_method = <Option<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
@@ -1687,6 +1688,7 @@ fn wire__crate__api__simple__send_auth_response_impl(
                             api_daily_tx_count_limit,
                             api_per_tx_limit,
                             api_token_mint,
+                            api_payment_method,
                         )
                         .await?;
                         Ok(output_ok)
@@ -2843,6 +2845,8 @@ impl SseDecode for crate::api::notification::DecryptedMessage {
         let mut var_balanceNotificationSpendingLimitRemaining = <Option<u64>>::sse_decode(deserializer);
         let mut var_oldSessionKeyPubkey = <Option<String>>::sse_decode(deserializer);
         let mut var_sessionRenewExpiresAt = <Option<i64>>::sse_decode(deserializer);
+        let mut var_relayerPubkey = <Option<String>>::sse_decode(deserializer);
+        let mut var_relayerUrl = <Option<String>>::sse_decode(deserializer);
         return crate::api::notification::DecryptedMessage {
             msg_type: var_msgType,
             payment_id: var_paymentId,
@@ -2874,6 +2878,8 @@ impl SseDecode for crate::api::notification::DecryptedMessage {
             balance_notification_spending_limit_remaining: var_balanceNotificationSpendingLimitRemaining,
             old_session_key_pubkey: var_oldSessionKeyPubkey,
             session_renew_expires_at: var_sessionRenewExpiresAt,
+            relayer_pubkey: var_relayerPubkey,
+            relayer_url: var_relayerUrl,
         };
     }
 }
@@ -3680,6 +3686,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::notification::DecryptedMessag
             self.balance_notification_spending_limit_remaining.into_into_dart().into_dart(),
             self.old_session_key_pubkey.into_into_dart().into_dart(),
             self.session_renew_expires_at.into_into_dart().into_dart(),
+            self.relayer_pubkey.into_into_dart().into_dart(),
+            self.relayer_url.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -4071,6 +4079,8 @@ impl SseEncode for crate::api::notification::DecryptedMessage {
         <Option<u64>>::sse_encode(self.balance_notification_spending_limit_remaining, serializer);
         <Option<String>>::sse_encode(self.old_session_key_pubkey, serializer);
         <Option<i64>>::sse_encode(self.session_renew_expires_at, serializer);
+        <Option<String>>::sse_encode(self.relayer_pubkey, serializer);
+        <Option<String>>::sse_encode(self.relayer_url, serializer);
     }
 }
 

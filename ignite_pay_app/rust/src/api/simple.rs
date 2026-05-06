@@ -104,6 +104,7 @@ pub async fn send_auth_response(
     daily_tx_count_limit: Option<u32>,
     per_tx_limit: Option<u64>,
     token_mint: Option<String>,
+    payment_method: Option<String>,
 ) -> Result<()> {
     let global = GLOBAL_WS_CLIENT.lock().await;
     let client = global
@@ -125,7 +126,7 @@ pub async fn send_auth_response(
         daily_tx_count_limit,
         per_tx_limit,
         token_mint: None,
-        payment_method: None,
+        payment_method,
     };
 
     if let Some(info) = &session_key_info {
@@ -324,6 +325,9 @@ pub fn decrypt_message(storage_path: String, jwe: String) -> Result<DecryptedMes
         // F14: session-renew-request fields
         old_session_key_pubkey: msg.body.get("old_session_key_pubkey").and_then(|v| v.as_str()).map(String::from),
         session_renew_expires_at: msg.body.get("expires_at").and_then(|v| v.as_i64()),
+        // F16: Relayer payment method fields
+        relayer_pubkey: msg.body.get("relayer_pubkey").and_then(|v| v.as_str()).map(String::from),
+        relayer_url: msg.body.get("relayer_url").and_then(|v| v.as_str()).map(String::from),
     };
 
     Ok(decrypted)

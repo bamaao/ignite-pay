@@ -305,45 +305,80 @@ impl MediatorConnection {
         payment: &PaymentRequest,
         new_session_key: Option<&didcomm::NewSessionKeyRequest>,
         available_payment_methods: Option<&[didcomm::PaymentMethod]>,
+        relayer_info: Option<(&str, &str)>,
     ) -> Result<String> {
-        let msg = match (new_session_key, available_payment_methods) {
-            (Some(sk), Some(methods)) => didcomm::build_authorization_request_with_methods(
-                &self.our_did,
-                phone_did,
-                &payment.id,
-                &payment.merchant_did,
-                payment.amount,
-                &payment.description,
-                Some(sk),
-                methods,
-            ),
-            (Some(sk), None) => didcomm::build_authorization_request_with_session_key(
-                &self.our_did,
-                phone_did,
-                &payment.id,
-                &payment.merchant_did,
-                payment.amount,
-                &payment.description,
-                sk,
-            ),
-            (None, Some(methods)) => didcomm::build_authorization_request_with_methods(
-                &self.our_did,
-                phone_did,
-                &payment.id,
-                &payment.merchant_did,
-                payment.amount,
-                &payment.description,
-                None,
-                methods,
-            ),
-            (None, None) => didcomm::build_authorization_request(
-                &self.our_did,
-                phone_did,
-                &payment.id,
-                &payment.merchant_did,
-                payment.amount,
-                &payment.description,
-            ),
+        // If relayer info is available and methods include relayer, use the relayer builder
+        let has_relayer = available_payment_methods
+            .map(|m| m.iter().any(|pm| matches!(pm, didcomm::PaymentMethod::Relayer)))
+            .unwrap_or(false);
+
+        let msg = if has_relayer {
+            if let Some((rpk, rurl)) = relayer_info {
+                didcomm::build_authorization_request_with_relayer(
+                    &self.our_did,
+                    phone_did,
+                    &payment.id,
+                    &payment.merchant_did,
+                    payment.amount,
+                    &payment.description,
+                    new_session_key,
+                    available_payment_methods.unwrap_or(&[]),
+                    rpk,
+                    rurl,
+                )
+            } else {
+                // Relayer in methods but no info — fall through to non-relayer builder
+                didcomm::build_authorization_request_with_methods(
+                    &self.our_did,
+                    phone_did,
+                    &payment.id,
+                    &payment.merchant_did,
+                    payment.amount,
+                    &payment.description,
+                    new_session_key,
+                    available_payment_methods.unwrap_or(&[]),
+                )
+            }
+        } else {
+            match (new_session_key, available_payment_methods) {
+                (Some(sk), Some(methods)) => didcomm::build_authorization_request_with_methods(
+                    &self.our_did,
+                    phone_did,
+                    &payment.id,
+                    &payment.merchant_did,
+                    payment.amount,
+                    &payment.description,
+                    Some(sk),
+                    methods,
+                ),
+                (Some(sk), None) => didcomm::build_authorization_request_with_session_key(
+                    &self.our_did,
+                    phone_did,
+                    &payment.id,
+                    &payment.merchant_did,
+                    payment.amount,
+                    &payment.description,
+                    sk,
+                ),
+                (None, Some(methods)) => didcomm::build_authorization_request_with_methods(
+                    &self.our_did,
+                    phone_did,
+                    &payment.id,
+                    &payment.merchant_did,
+                    payment.amount,
+                    &payment.description,
+                    None,
+                    methods,
+                ),
+                (None, None) => didcomm::build_authorization_request(
+                    &self.our_did,
+                    phone_did,
+                    &payment.id,
+                    &payment.merchant_did,
+                    payment.amount,
+                    &payment.description,
+                ),
+            }
         };
 
         let agent = self.agent.lock().await;

@@ -58,6 +58,9 @@ pub struct DecryptedMessage {
     // F14: Session renew request fields
     pub old_session_key_pubkey: Option<String>,
     pub session_renew_expires_at: Option<i64>,
+    // F16: Relayer payment method fields
+    pub relayer_pubkey: Option<String>,
+    pub relayer_url: Option<String>,
 }
 
 /// A DIDComm message envelope (before decryption).

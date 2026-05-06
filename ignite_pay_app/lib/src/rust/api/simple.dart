@@ -48,6 +48,7 @@ Future<void> sendAuthResponse({
   int? dailyTxCountLimit,
   BigInt? perTxLimit,
   String? tokenMint,
+  String? paymentMethod,
 }) => RustLib.instance.api.crateApiSimpleSendAuthResponse(
   storagePath: storagePath,
   paymentId: paymentId,
@@ -60,6 +61,7 @@ Future<void> sendAuthResponse({
   dailyTxCountLimit: dailyTxCountLimit,
   perTxLimit: perTxLimit,
   tokenMint: tokenMint,
+  paymentMethod: paymentMethod,
 );
 
 /// Poll for messages via HTTPS (for FCM wake-up path).

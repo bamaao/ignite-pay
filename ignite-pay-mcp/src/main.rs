@@ -412,9 +412,34 @@ impl IgnitePayMcpServer {
             }
             Some("relayer") => {
                 // User chose relayer-sponsored payment — session key signs, relayer pays gas
-                match execute_payment(&self.solana_client, payment, session, spl_params).await {
-                    Ok(tx_sig) => Ok(PaymentProof::TxSignature(tx_sig)),
-                    Err(e) => Err(e),
+                match self.solana_client {
+                    Some(ref client) => match session {
+                        Some(ref sess) => {
+                            match client
+                                .execute_payment_sponsored(
+                                    &payment.recipient,
+                                    payment.amount,
+                                    &payment.token,
+                                    &payment.network,
+                                    sess,
+                                    spl_params,
+                                )
+                                .await
+                            {
+                                Ok(result) => {
+                                    tracing::info!(
+                                        "Sponsored payment succeeded: sig={}, slot={}",
+                                        result.signature,
+                                        result.slot
+                                    );
+                                    Ok(PaymentProof::TxSignature(result.signature))
+                                }
+                                Err(e) => Err(format!("Sponsored payment failed: {}", e)),
+                            }
+                        }
+                        None => Err("No active session key for relayer payment".to_string()),
+                    },
+                    None => Err("No Solana client configured for relayer payment".to_string()),
                 }
             }
             _ => {
@@ -884,9 +909,22 @@ impl IgnitePayMcpServer {
             available_methods.iter().map(|m| m.as_str()).collect::<Vec<_>>()
         );
 
+        // Fetch relayer info if relayer is available as a payment method
+        let relayer_info: Option<(String, String)> = if available_methods.iter().any(|m| matches!(m, ignite_pay_core::didcomm::PaymentMethod::Relayer)) {
+            self.solana_client.as_ref().and_then(|c| {
+                c.relayer_url.as_ref().map(|url| {
+                    // We'll use a placeholder pubkey — the actual fetch happens during payment execution
+                    ("relayer_available".to_string(), url.clone())
+                })
+            })
+        } else {
+            None
+        };
+        let relayer_info_ref = relayer_info.as_ref().map(|(pk, url)| (pk.as_str(), url.as_str()));
+
         match self
             .mediator
-            .send_auth_request(&phone_did, &payment, new_session_key.as_ref(), Some(&available_methods))
+            .send_auth_request(&phone_did, &payment, new_session_key.as_ref(), Some(&available_methods), relayer_info_ref)
             .await
         {
             Ok(_) => {}

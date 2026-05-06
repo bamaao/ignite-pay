@@ -100,6 +100,12 @@ class DecryptedMessage {
   /// F14: Expiry timestamp of the old session key.
   final PlatformInt64? sessionRenewExpiresAt;
 
+  /// F16: Relayer fee-payer public key (base58).
+  final String? relayerPubkey;
+
+  /// F16: Relayer service URL.
+  final String? relayerUrl;
+
   const DecryptedMessage({
     required this.msgType,
     this.paymentId,
@@ -131,6 +137,8 @@ class DecryptedMessage {
     this.balanceNotificationSpendingLimitRemaining,
     this.oldSessionKeyPubkey,
     this.sessionRenewExpiresAt,
+    this.relayerPubkey,
+    this.relayerUrl,
   });
 
   @override
@@ -164,7 +172,9 @@ class DecryptedMessage {
       balanceNotificationThreshold.hashCode ^
       balanceNotificationSpendingLimitRemaining.hashCode ^
       oldSessionKeyPubkey.hashCode ^
-      sessionRenewExpiresAt.hashCode;
+      sessionRenewExpiresAt.hashCode ^
+      relayerPubkey.hashCode ^
+      relayerUrl.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -204,7 +214,9 @@ class DecryptedMessage {
           balanceNotificationSpendingLimitRemaining ==
               other.balanceNotificationSpendingLimitRemaining &&
           oldSessionKeyPubkey == other.oldSessionKeyPubkey &&
-          sessionRenewExpiresAt == other.sessionRenewExpiresAt;
+          sessionRenewExpiresAt == other.sessionRenewExpiresAt &&
+          relayerPubkey == other.relayerPubkey &&
+          relayerUrl == other.relayerUrl;
 }
 
 /// A DIDComm message envelope (before decryption).

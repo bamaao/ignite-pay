@@ -222,6 +222,9 @@ class DecryptedMsg {
   // F14: Session renew request fields
   final String? oldSessionKeyPubkey;
   final int? sessionRenewExpiresAt;
+  // F16: Relayer payment method fields
+  final String? relayerPubkey;
+  final String? relayerUrl;
 
   DecryptedMsg({
     required this.msgType,
@@ -252,6 +255,8 @@ class DecryptedMsg {
     this.balanceNotificationSpendingLimitRemaining,
     this.oldSessionKeyPubkey,
     this.sessionRenewExpiresAt,
+    this.relayerPubkey,
+    this.relayerUrl,
   });
 }
 
@@ -426,6 +431,7 @@ class DidcommService extends ChangeNotifier {
             ? BigInt.from(response.listMaxAmount!)
             : null,
         tokenMint: null,
+        paymentMethod: null,
       );
 
       debugPrint(
@@ -452,6 +458,7 @@ class DidcommService extends ChangeNotifier {
     int? dailyTxCountLimit,
     int? perTxLimit,
     String? tokenMint,
+    String? paymentMethod,
   }) async {
     try {
       // Reuse existing session key if one is already active (avoids double creation)
@@ -476,6 +483,7 @@ class DidcommService extends ChangeNotifier {
         dailyTxCountLimit: dailyTxCountLimit,
         perTxLimit: perTxLimit != null ? BigInt.from(perTxLimit) : null,
         tokenMint: tokenMint,
+        paymentMethod: paymentMethod,
       );
 
       debugPrint(
@@ -625,6 +633,8 @@ class DidcommService extends ChangeNotifier {
         balanceNotificationSpendingLimitRemaining: decrypted.balanceNotificationSpendingLimitRemaining?.toInt(),
         oldSessionKeyPubkey: decrypted.oldSessionKeyPubkey,
         sessionRenewExpiresAt: decrypted.sessionRenewExpiresAt,
+        relayerPubkey: decrypted.relayerPubkey,
+        relayerUrl: decrypted.relayerUrl,
       );
 
       _messages.add(msg);

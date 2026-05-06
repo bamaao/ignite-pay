@@ -348,6 +348,7 @@ abstract class RustLibApi extends BaseApi {
     int? dailyTxCountLimit,
     BigInt? perTxLimit,
     String? tokenMint,
+    required String? paymentMethod,
   });
 
   Future<void> crateApiSimpleSendSessionFundResponse({
@@ -2237,6 +2238,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     int? dailyTxCountLimit,
     BigInt? perTxLimit,
     String? tokenMint,
+    required String? paymentMethod,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -2256,6 +2258,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_opt_box_autoadd_u_32(dailyTxCountLimit, serializer);
           sse_encode_opt_box_autoadd_u_64(perTxLimit, serializer);
           sse_encode_opt_String(tokenMint, serializer);
+          sse_encode_opt_String(paymentMethod, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -3071,8 +3074,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DecryptedMessage dco_decode_decrypted_message(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 30)
-      throw Exception('unexpected arr length: expect 30 but see ${arr.length}');
+    if (arr.length != 32)
+      throw Exception('unexpected arr length: expect 32 but see ${arr.length}');
     return DecryptedMessage(
       msgType: dco_decode_String(arr[0]),
       paymentId: dco_decode_opt_String(arr[1]),
@@ -3104,6 +3107,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       balanceNotificationSpendingLimitRemaining: dco_decode_opt_box_autoadd_u_64(arr[27]),
       oldSessionKeyPubkey: dco_decode_opt_String(arr[28]),
       sessionRenewExpiresAt: dco_decode_opt_box_autoadd_i_64(arr[29]),
+      relayerPubkey: dco_decode_opt_String(arr[30]),
+      relayerUrl: dco_decode_opt_String(arr[31]),
     );
   }
 
@@ -3558,6 +3563,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_balanceNotificationSpendingLimitRemaining = sse_decode_opt_box_autoadd_u_64(deserializer);
     var var_oldSessionKeyPubkey = sse_decode_opt_String(deserializer);
     var var_sessionRenewExpiresAt = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var varRelayerPubkey = sse_decode_opt_String(deserializer);
+    var varRelayerUrl = sse_decode_opt_String(deserializer);
     return DecryptedMessage(
       msgType: var_msgType,
       paymentId: var_paymentId,
@@ -3589,6 +3596,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       balanceNotificationSpendingLimitRemaining: var_balanceNotificationSpendingLimitRemaining,
       oldSessionKeyPubkey: var_oldSessionKeyPubkey,
       sessionRenewExpiresAt: var_sessionRenewExpiresAt,
+      relayerPubkey: varRelayerPubkey,
+      relayerUrl: varRelayerUrl,
     );
   }
 
@@ -4147,6 +4156,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_box_autoadd_u_64(self.balanceNotificationSpendingLimitRemaining, serializer);
     sse_encode_opt_String(self.oldSessionKeyPubkey, serializer);
     sse_encode_opt_box_autoadd_i_64(self.sessionRenewExpiresAt, serializer);
+    sse_encode_opt_String(self.relayerPubkey, serializer);
+    sse_encode_opt_String(self.relayerUrl, serializer);
   }
 
   @protected
