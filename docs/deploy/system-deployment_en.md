@@ -33,7 +33,7 @@ Ignite Pay is an off-chain payment system built on the Solana blockchain, using 
 | Component | Description |
 |:----------|:------------|
 | **ignite-pay-program** | On-chain state channel program (Anchor 1.0.0), Program ID: `DJBHr35jL3JAGoU7bKMsEFmpeNMrCSK7oYQE4HJ3GBUe` |
-| **ignite-pay-did-program** | On-chain DID program (Anchor + Light SDK), ZK Compression compressed accounts |
+| **ignite-pay-did-program** | On-chain DID program (Anchor), PDA-based merchant DID storage (optional ZK Compression with `--features zk-compression`) |
 | **didcomm-router** | DIDComm message router, providing message relay and FCM push for mobile clients |
 | **did-registry** | DID registration service, managing merchant on-chain identity, VC issuance/revocation |
 | **channel-user** | User-side state channel service (Party A, payer) |
@@ -106,7 +106,7 @@ graph TD
 | Dependency | Purpose |
 |:-----------|:--------|
 | Solana RPC | On-chain transaction submission and state queries |
-| Photon RPC (Helius) | ZK Compression proof service (DID program) |
+| Photon RPC (Helius) | ZK Compression proof service (only needed with `--features zk-compression`) |
 | Firebase (optional) | FCM push notifications (DIDComm Router) |
 
 ### 2.3 Operating System
@@ -187,7 +187,7 @@ graph TD
 | Merchant MCP | DIDComm Router (merchant instance) | 4000 | WS |
 | User MCP | Channel User | 3001 | HTTP |
 | Merchant MCP | Channel Hub | 3003 | HTTP+WS |
-| DID Registry | Solana RPC + Photon | 443 | HTTPS |
+| DID Registry | Solana RPC (+ Photon, ZK mode only) | 443 | HTTPS |
 
 ---
 
@@ -514,8 +514,8 @@ rpc_url = "https://api.devnet.solana.com"        # Solana RPC endpoint
 did_program_id = "<DEPLOYED_PROGRAM_ID>"           # On-chain DID program ID
 payer_keypair_path = ""                            # Transaction payer keypair path (empty = ephemeral key)
 
-[light]
-photon_url = ""                                    # Photon RPC URL (ZK Compression)
+# [light]                                           # Only needed for ZK Compression mode
+# photon_url = ""                                   # Photon RPC URL
 
 [auth]
 jwt_secret = "did-registry-secret"                 # JWT signing secret
@@ -532,7 +532,7 @@ rotate_key_fee_lamports = 2000                     # Sponsored key rotation fee
 |:------|:---------|:------------|
 | `solana.did_program_id` | Yes | Deployed ignite-pay-did-program ID |
 | `solana.payer_keypair_path` | Required in production | Empty = ephemeral key, development only |
-| `light.photon_url` | Required in production | Helius Photon RPC URL |
+| `light.photon_url` | ZK mode only | Helius Photon RPC URL (not needed in default PDA mode) |
 | `auth.platform_signing_key_path` | Required in production | 32-byte Ed25519 private key |
 
 ### 5.3 Channel Hub (`ignite-pay-channel-service/config-hub.toml`)
@@ -635,12 +635,12 @@ mode = "mock"                           # IPFS mode (mock/kubo)
 
 [solana]
 rpc_url = "https://api.devnet.solana.com"
-tree_address = ""                       # Concurrent Merkle Tree address
-tree_authority = ""                     # Tree control key
-das_endpoint = ""                       # Helius DAS API endpoint
-pay_mode = "self_funded"                # Payment mode
+did_program_id = ""                     # On-chain DID program ID
+pay_mode = "self_funded"                # Payment mode (self_funded / sponsored)
+relayer_url = ""                        # Relayer URL (sponsored mode only)
 default_owner = ""                      # Default owner public key
-tree_authority_keypair_b58 = ""         # Tree authority key (Base58)
+# photon_url = ""                       # Only needed for ZK Compression mode
+# address_tree = ""                     # Only needed for ZK Compression mode
 ```
 
 #### F13/F15 New Internal Mechanisms

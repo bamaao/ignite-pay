@@ -33,7 +33,7 @@ Ignite Pay 是基于 Solana 区块链的离链支付系统，采用 UTXO + Merkl
 | 组件 | 说明 |
 |:-----|:-----|
 | **ignite-pay-program** | 链上状态通道程序（Anchor 1.0.0），Program ID: `DJBHr35jL3JAGoU7bKMsEFmpeNMrCSK7oYQE4HJ3GBUe` |
-| **ignite-pay-did-program** | 链上 DID 程序（Anchor + Light SDK），ZK Compression 压缩账户 |
+| **ignite-pay-did-program** | 链上 DID 程序（Anchor），PDA 存储商户 DID（可选 ZK Compression，需 `--features zk-compression`） |
 | **didcomm-router** | DIDComm 消息路由器，为移动端提供消息中继和 FCM 推送 |
 | **did-registry** | DID 注册服务，管理商户链上身份、VC 签发/吊销 |
 | **channel-user** | 用户端状态通道服务（Party A，付款方） |
@@ -106,7 +106,7 @@ graph TD
 | 依赖 | 用途 |
 |:-----|:-----|
 | Solana RPC | 链上交易提交和状态查询 |
-| Photon RPC (Helius) | ZK Compression 证明服务（DID 程序） |
+| Photon RPC (Helius) | ZK Compression 证明服务（仅 `--features zk-compression` 模式需要） |
 | Firebase (可选) | FCM 推送通知（DIDComm Router） |
 
 ### 2.3 操作系统
@@ -187,7 +187,7 @@ graph TD
 | Merchant MCP | DIDComm Router (商户侧实例) | 4000 | WS |
 | User MCP | Channel User | 3001 | HTTP |
 | Merchant MCP | Channel Hub | 3003 | HTTP+WS |
-| DID Registry | Solana RPC + Photon | 443 | HTTPS |
+| DID Registry | Solana RPC（+ Photon，仅 ZK 模式） | 443 | HTTPS |
 
 ---
 
@@ -514,8 +514,8 @@ rpc_url = "https://api.devnet.solana.com"        # Solana RPC 端点
 did_program_id = "<DEPLOYED_PROGRAM_ID>"           # 链上 DID 程序 ID
 payer_keypair_path = ""                            # 交易支付方密钥路径（空=临时密钥）
 
-[light]
-photon_url = ""                                    # Photon RPC URL（ZK Compression）
+# [light]                                           # 仅 ZK Compression 模式需要
+# photon_url = ""                                   # Photon RPC URL
 
 [auth]
 jwt_secret = "did-registry-secret"                 # JWT 签名密钥
@@ -532,7 +532,7 @@ rotate_key_fee_lamports = 2000                     # Sponsored 密钥轮换费
 |:-----|:-----|:-----|
 | `solana.did_program_id` | 是 | 部署后的 ignite-pay-did-program ID |
 | `solana.payer_keypair_path` | 生产必填 | 空=临时密钥，仅开发用 |
-| `light.photon_url` | 生产必填 | Helius Photon RPC URL |
+| `light.photon_url` | 仅 ZK 模式 | Helius Photon RPC URL（默认 PDA 模式不需要） |
 | `auth.platform_signing_key_path` | 生产必填 | 32 字节 Ed25519 私钥 |
 
 ### 5.3 Channel Hub (`ignite-pay-channel-service/config-hub.toml`)
@@ -635,12 +635,12 @@ mode = "mock"                           # IPFS 模式（mock/kubo）
 
 [solana]
 rpc_url = "https://api.devnet.solana.com"
-tree_address = ""                       # Concurrent Merkle Tree 地址
-tree_authority = ""                     # Tree 控制密钥
-das_endpoint = ""                       # Helius DAS API 端点
-pay_mode = "self_funded"                # 支付模式
+did_program_id = ""                     # 链上 DID 程序 ID
+pay_mode = "self_funded"                # 支付模式（self_funded / sponsored）
+relayer_url = ""                        # Relayer URL（仅 sponsored 模式）
 default_owner = ""                      # 默认 owner 公钥
-tree_authority_keypair_b58 = ""         # Tree authority 密钥（Base58）
+# photon_url = ""                       # 仅 ZK Compression 模式需要
+# address_tree = ""                     # 仅 ZK Compression 模式需要
 ```
 
 #### F13/F15 新增内部机制
