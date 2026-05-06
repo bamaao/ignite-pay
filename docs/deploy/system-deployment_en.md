@@ -641,6 +641,17 @@ default_owner = ""                      # Default owner public key
 tree_authority_keypair_b58 = ""         # Tree authority key (Base58)
 ```
 
+#### F13/F15 New Internal Mechanisms
+
+The following mechanisms are built-in behaviors requiring no additional configuration:
+
+| Mechanism | Description |
+|-----------|-------------|
+| Payment Mutex (F15) | `payment_mutex` ensures concurrent payment requests are serialized, preventing overspending |
+| Cumulative Merchant Spending (F8) | sled `__merchant_spending__` tree tracks cumulative spending per merchant; routes to manual auth when exceeding whitelist `max_amount` |
+| Balance Background Monitor (F13) | Checks session key balance every 60 seconds; sends `balance-notification` to phone when below 10% of spending limit (rate limited to once per 5 minutes per session) |
+| Session Key Renewal (F14) | Background check for session key expiry; auto-sends renewal request to phone when less than 5 minutes remaining |
+
 ### 5.7 Merchant MCP (`ignite-pay-merchant-mcp/config.toml`)
 
 ```toml

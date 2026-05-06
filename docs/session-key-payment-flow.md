@@ -251,6 +251,12 @@ pub async fn execute_sol_transfer(
 }
 ```
 
+F15 新增 `execute_payment_atomic` 方法，在 `payment_mutex` 互斥锁保护下原子化执行：
+1. `check_session_balance()` — 检查会话余额是否充足
+2. `execute_payment_auto()` — 执行实际支付
+3. `record_spent()` — 记录会话消费
+4. `record_merchant_spent()` — 记录商户累计消费
+
 ### 3.5 链上指令构建
 
 `build_execute_payment_ix()`（`ignite-pay-solana/src/session_program.rs`）：
@@ -357,6 +363,8 @@ pub struct ExecutePayment<'info> {
 | `is_expired()` | 检查 `now >= expires_at` |
 | `check_spending_limit()` | 检查 `current_spent + amount <= spending_limit` |
 | `record_spent()` | 交易成功后更新 `current_spent` |
+| `record_merchant_spent(merchant_did, amount)` | F8: 记录商户累计消费金额（存储在 sled `__merchant_spending__` 树中） |
+| `get_merchant_spent(merchant_did) -> u64` | F8: 查询商户累计消费金额 |
 | `close_session()` | 删除 session |
 
 **sled 存储格式**：

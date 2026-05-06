@@ -152,7 +152,7 @@ AI Agent ──X402──> MCP Server ──DIDComm JWE──> Mediator ──pu
 | 模块 | 功能 |
 |------|------|
 | `identity` | DID 生成、DID Document 构建、身份持久化、DID 签名验证 |
-| `didcomm` | DIDComm 消息构造器（15 种消息类型）、JWE 加解密、Agent 创建 |
+| `didcomm` | DIDComm 消息构造器（20 种消息类型）、JWE 加解密、Agent 创建 |
 | `types` | 共享类型：PaymentRequest, MerchantListEntry, VerifiableCredential, RiskControlDecision |
 | `list_store` | 白名单/黑名单管理（sled + IPFS 同步），风控决策 |
 | `vc` | Verifiable Credential 签发与验证 |
@@ -520,6 +520,11 @@ Channel Hub              Hub Registry              App
 | Mediation | `https://didcomm.org/coordinate-mediation/2.0/*` | 双向 | Mediator 协议 |
 | WS 认证 | `https://didcomm.org/ignite-pay/1.0/ws-challenge-response` | 双向 | WS 认证挑战 |
 | 消息拾取 | `https://didcomm.org/messagepickup/3.0/*` | 双向 | 消息拾取协议 |
+| 会话充值请求 | `https://didcomm.org/ignite-pay/1.0/session-fund-request` | MCP → 用户 | 会话密钥余额不足时请求充值 |
+| 会话充值响应 | `https://didcomm.org/ignite-pay/1.0/session-fund-response` | 用户 → MCP | 手机充值后回复 |
+| 余额通知 | `https://didcomm.org/ignite-pay/1.0/balance-notification` | MCP → 用户 | 余额低于阈值时主动通知 |
+| 会话续期请求 | `https://didcomm.org/ignite-pay/1.0/session-renew-request` | MCP → 用户 | 会话密钥即将过期时请求续期 |
+| 会话续期响应 | `https://didcomm.org/ignite-pay/1.0/session-renew-response` | 用户 → MCP | 手机注册新密钥后回复 |
 
 ### 5.2 支付授权请求消息体
 
@@ -746,6 +751,7 @@ did:ignite:z<multibase-base58btc>
 | scopes | 权限范围限定 (`["sol:transfer", "spl:transfer"]`) |
 | 禁止指令 | Session Key 不可执行 UpdateState / CloseAccount 等控制权指令 |
 | CloseSession | 自付模式下，过期后可退还剩余 Gas 给主钱包 |
+| F15 原子支付 | 通过 payment_mutex（tokio::sync::Mutex）实现原子化支付执行，防止并发请求超过消费限额。execute_payment_atomic 方法在互斥锁保护下依次执行：余额检查 → 支付执行 → 消费记录 |
 
 **两种支付模式**：
 
@@ -1330,7 +1336,11 @@ RouteService ──(GET /v1/hubs/{id}/metrics)───────────�
 | `GET /v1/compliance/{channel_id}` | Channel User | 通道合规状态 |
 | `GET /v1/hubs/{id}/metrics` | Hub Registry | Hub 性能指标查询 |
 
-### 14.5 已知局限
+### 14.5 F13 余额监控
+
+MCP 后台每 60 秒检查会话密钥余额，当余额低于消费限额的 10% 时，通过 DIDComm 向手机发送 balance-notification。每会话最多每 5 分钟通知一次。
+
+### 14.6 已知局限
 
 | 局限 | 说明 |
 |:-----|:-----|
@@ -1480,6 +1490,7 @@ Merchant MCP 磁盘 ≈ 订单数 × 500 B + 审计条目数 × 300 B
 | `__identity__` | 单条 | DID 身份 (~200 B) |
 | `__audit_log__:{ts}:{uuid}` | 每事件 | 审计条目 (**纯追加**) |
 | `session:{pubkey}` | 每 Session Key | 临时密钥+元数据 (~200 B) |
+| `__merchant_spending__` | 每商户 | 商户累计消费追踪 (key: merchant_did, value: u64 LE bytes) |
 
 **Merchant MCP** (`./data/merchant-mcp`)：
 

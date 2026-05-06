@@ -153,7 +153,7 @@ Core protocol library providing DID identity management, DIDComm communication, 
 | Module | Functionality |
 |--------|---------------|
 | `identity` | DID generation, DID Document construction, identity persistence, DID signature verification |
-| `didcomm` | DIDComm message constructor (15 message types), JWE encryption/decryption, Agent creation |
+| `didcomm` | DIDComm message constructor (20 message types), JWE encryption/decryption, Agent creation |
 | `types` | Shared types: PaymentRequest, MerchantListEntry, VerifiableCredential, RiskControlDecision |
 | `list_store` | Whitelist/blacklist management (sled + IPFS sync), risk control decisions |
 | `vc` | Verifiable Credential issuance and verification |
@@ -524,6 +524,11 @@ Channel Hub              Hub Registry              App
 | Mediation | `https://didcomm.org/coordinate-mediation/2.0/*` | Bidirectional | Mediator protocol |
 | WS Authentication | `https://didcomm.org/ignite-pay/1.0/ws-challenge-response` | Bidirectional | WS authentication challenge |
 | Message Pickup | `https://didcomm.org/messagepickup/3.0/*` | Bidirectional | Message pickup protocol |
+| Session Fund Request | `https://didcomm.org/ignite-pay/1.0/session-fund-request` | MCP → User | Request funding when session key balance insufficient |
+| Session Fund Response | `https://didcomm.org/ignite-pay/1.0/session-fund-response` | User → MCP | Response after phone funds the session |
+| Balance Notification | `https://didcomm.org/ignite-pay/1.0/balance-notification` | MCP → User | Proactive notification when balance drops below threshold |
+| Session Renew Request | `https://didcomm.org/ignite-pay/1.0/session-renew-request` | MCP → User | Request session key renewal when near expiry |
+| Session Renew Response | `https://didcomm.org/ignite-pay/1.0/session-renew-response` | User → MCP | Response after phone registers new key |
 
 ### 5.2 Payment Authorization Request Message Body
 
@@ -750,6 +755,7 @@ The two key systems are completely independent and do not interfere with each ot
 | scopes | Permission scope restriction (`["sol:transfer", "spl:transfer"]`) |
 | Prohibited instructions | Session Key cannot execute control instructions such as UpdateState / CloseAccount |
 | CloseSession | In self-funded mode, remaining Gas can be refunded to the main wallet after expiry |
+| F15 Atomic Payment | Atomic payment execution via payment_mutex (tokio::sync::Mutex) prevents concurrent requests from exceeding spending limits. The execute_payment_atomic method runs under mutex protection: balance check → payment execution → spent recording |
 
 **Two Payment Modes**:
 
@@ -1334,7 +1340,11 @@ RouteService ──(GET /v1/hubs/{id}/metrics)───────────�
 | `GET /v1/compliance/{channel_id}` | Channel User | Channel compliance status |
 | `GET /v1/hubs/{id}/metrics` | Hub Registry | Hub performance metrics query |
 
-### 14.5 Known Limitations
+### 14.5 F13 Balance Monitor
+
+MCP background task checks session key balance every 60 seconds. When balance falls below 10% of spending limit, a balance-notification DIDComm message is sent to the phone. Rate limited to once per 5 minutes per session.
+
+### 14.6 Known Limitations
 
 | Limitation | Description |
 |:-----|:-----|
@@ -1484,6 +1494,7 @@ Merchant MCP disk ≈ order count × 500 B + audit entry count × 300 B
 | `__identity__` | Single entry | DID identity (~200 B) |
 | `__audit_log__:{ts}:{uuid}` | Per event | Audit entry (**append-only**) |
 | `session:{pubkey}` | Per Session Key | Temporary key + metadata (~200 B) |
+| `__merchant_spending__` | Per merchant | Cumulative merchant spending tracking (key: merchant_did, value: u64 LE bytes) |
 
 **Merchant MCP** (`./data/merchant-mcp`):
 

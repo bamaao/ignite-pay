@@ -641,6 +641,17 @@ default_owner = ""                      # 默认 owner 公钥
 tree_authority_keypair_b58 = ""         # Tree authority 密钥（Base58）
 ```
 
+#### F13/F15 新增内部机制
+
+以下机制为代码内建行为，无需额外配置：
+
+| 机制 | 说明 |
+|------|------|
+| 支付互斥锁 (F15) | `payment_mutex` 确保并发支付请求串行执行，防止超额消费 |
+| 累计商户消费追踪 (F8) | sled `__merchant_spending__` 树追踪每个商户的累计消费金额，超过白名单 `max_amount` 时路由到手动授权 |
+| 余额后台监控 (F13) | 每 60 秒检查会话密钥余额，低于消费限额 10% 时发送 `balance-notification` 到手机（每会话最多每 5 分钟一次） |
+| 会话密钥续期 (F14) | 后台检查会话密钥有效期，剩余不足 5 分钟时自动向手机发送续期请求 |
+
 ### 5.7 Merchant MCP (`ignite-pay-merchant-mcp/config.toml`)
 
 ```toml

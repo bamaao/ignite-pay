@@ -306,6 +306,11 @@ MCP 收到 connection-confirm 后：
 | `ignite-pay/1.0/payment-auth-response` | App → MCP | 支付授权响应（含 session key） |
 | `ignite-pay/1.0/create-channel-request` | Merchant App → MCP | 建立状态通道请求 |
 | `ignite-pay/1.0/channel-payment-confirm` | MCP → Merchant App | 通道支付确认 |
+| `ignite-pay/1.0/session-fund-request` | MCP → Phone | F3/F7: 会话余额不足时请求充值 |
+| `ignite-pay/1.0/session-fund-response` | Phone → MCP | F3/F7: 充值完成回复 |
+| `ignite-pay/1.0/balance-notification` | MCP → Phone | F13: 余额低于阈值通知 |
+| `ignite-pay/1.0/session-renew-request` | MCP → Phone | F14: 请求续期会话密钥 |
+| `ignite-pay/1.0/session-renew-response` | Phone → MCP | F14: 续期完成回复 |
 
 ---
 
