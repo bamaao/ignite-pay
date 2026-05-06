@@ -534,6 +534,84 @@ class _MockRustLibApi extends RustLibApi {
     required String tokenMintB58,
     required String relayerPubkeyB58,
   }) async => 'unsigned_sponsored_spl_tx_b58_mock';
+
+  @override
+  Future<void> crateApiSimpleSendSessionFundResponse({
+    required String storagePath,
+    required String mcpDid,
+    required String sessionKeyPubkey,
+    required bool funded,
+    required BigInt newBalance,
+    required String? txSignature,
+  }) async {}
+
+  @override
+  Future<void> crateApiSimpleSendSessionRenewResponse({
+    required String storagePath,
+    required String mcpDid,
+    required String oldSessionKeyPubkey,
+    required String newSessionKeyPubkey,
+    required bool renewed,
+    required String? txSignature,
+  }) async {}
+
+  @override
+  Future<SessionKeyInfo> crateApiSimpleRegisterExternalSessionKey({
+    required String storagePath,
+    required String rpcUrl,
+    required String ownerSecretKey,
+    required String ephemeralPubkey,
+    required String ephemeralSecretKey,
+    required String targetProgram,
+    required List<String> scopes,
+    required BigInt spendingLimit,
+    required int durationSecs,
+    String? tokenMint,
+  }) async =>
+      SessionKeyInfo(
+        ephemeralPubkey: ephemeralPubkey,
+        ephemeralSecretKey: ephemeralSecretKey,
+        expiresAt: DateTime.now().millisecondsSinceEpoch + durationSecs * 1000,
+        spendingLimit: spendingLimit,
+        scopes: scopes,
+        txSignature: 'mock_tx_sig',
+        sessionPda: 'mock_pda',
+      );
+
+  @override
+  Future<List<String>> crateApiSimpleFundSessionKey({
+    required String rpcUrl,
+    required String ownerSecretKey,
+    required String ephemeralPubkey,
+    required BigInt solAmount,
+    String? splTokenMint,
+    BigInt? splAmount,
+  }) async => ['mock_fund_tx_sig'];
+
+  @override
+  Future<SessionKeyInfo> crateApiSimpleRegisterAndFundSessionKey({
+    required String storagePath,
+    required String rpcUrl,
+    required String ownerSecretKey,
+    required String ephemeralPubkey,
+    required String ephemeralSecretKey,
+    required String targetProgram,
+    required List<String> scopes,
+    required BigInt spendingLimit,
+    required int durationSecs,
+    String? tokenMint,
+    required BigInt solFunding,
+    BigInt? tokenFunding,
+  }) async =>
+      SessionKeyInfo(
+        ephemeralPubkey: ephemeralPubkey,
+        ephemeralSecretKey: ephemeralSecretKey,
+        expiresAt: DateTime.now().millisecondsSinceEpoch + durationSecs * 1000,
+        spendingLimit: spendingLimit,
+        scopes: scopes,
+        txSignature: 'mock_tx_sig',
+        sessionPda: 'mock_pda',
+      );
 }
 
 void main() {
