@@ -4,6 +4,7 @@ use crate::config::Config;
 use crate::did::ignite_store::IgniteDidStore;
 use ignite_pay_solana::compression::DidService;
 use ignite_pay_solana::types::MerchantDidAccount;
+#[cfg(feature = "zk-compression")]
 use light_client::rpc::{LightClient, LightClientConfig, Rpc};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signer::Signer;
@@ -18,13 +19,11 @@ fn encode_did_ignite(pub_key: &[u8; 32]) -> String {
 }
 
 /// Shared application state for the DID registry service.
-/// Uses ZK Compression via LightClient (Photon RPC) for reading compressed
-/// accounts and obtaining validity proofs, and DidService for building
-/// and sending on-chain transactions.
 #[derive(Clone)]
 pub struct RegistryState {
     pub config: Config,
     pub did_service: Arc<DidService>,
+    #[cfg(feature = "zk-compression")]
     pub light_rpc: Arc<tokio::sync::Mutex<LightClient>>,
     pub did_store: Arc<IgniteDidStore>,
     pub db: Arc<sled::Db>,
@@ -43,11 +42,6 @@ impl RegistryState {
             &config.solana.rpc_url,
             &config.solana.did_program_id,
         )?;
-
-        // We need to create LightClient async, so we'll do it in a blocking context
-        // or use a placeholder. Since LightClient::new is async, we'll spawn it.
-        let photon_url = config.light.photon_url.clone();
-        let rpc_url = config.solana.rpc_url.clone();
 
         let db = sled::open("./did_registry_data")?;
 
@@ -81,21 +75,28 @@ impl RegistryState {
         let platform_did = encode_did_ignite(verifying_key.as_bytes());
         tracing::info!("Platform DID: {}", platform_did);
 
-        // Create LightClient synchronously (using tokio runtime handle)
-        let light_rpc = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let light_config = LightClientConfig::new(
-                    rpc_url,
-                    Some(photon_url),
-                );
-                LightClient::new(light_config).await
-            })
-        })?;
+        // Initialize LightClient only in ZK Compression mode
+        #[cfg(feature = "zk-compression")]
+        let light_rpc = {
+            let photon_url = config.light.photon_url.clone();
+            let rpc_url = config.solana.rpc_url.clone();
+            let light = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let light_config = LightClientConfig::new(
+                        rpc_url,
+                        Some(photon_url),
+                    );
+                    LightClient::new(light_config).await
+                })
+            })?;
+            Arc::new(tokio::sync::Mutex::new(light))
+        };
 
         Ok(Self {
             config,
             did_service: Arc::new(did_service),
-            light_rpc: Arc::new(tokio::sync::Mutex::new(light_rpc)),
+            #[cfg(feature = "zk-compression")]
+            light_rpc,
             did_store: Arc::new(did_store),
             db: Arc::new(db),
             payer: Arc::new(payer),
@@ -131,8 +132,6 @@ impl RegistryState {
 
     /// Sign (credential_subject_pk || vc_hash) with the platform Ed25519 key.
     /// Returns 64-byte Ed25519 signature.
-    /// The credential_subject_pk is the VC subject's public key — the platform
-    /// vouches that this vc_hash belongs to this subject.
     pub fn sign_vc_binding(&self, credential_subject_pk: &Pubkey, vc_hash: &[u8; 32]) -> [u8; 64] {
         use ed25519_dalek::Signer;
         let mut message = Vec::with_capacity(64);

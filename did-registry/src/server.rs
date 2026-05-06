@@ -5,7 +5,8 @@ use crate::state::RegistryState;
 
 /// Build the axum router with all REST API routes.
 pub fn build_router(state: RegistryState) -> Router {
-    Router::new()
+    #[allow(unused_mut)]
+    let mut router = Router::new()
         .route("/health", get(health))
         // DID resolution
         .route("/v1/did/resolve/{did}", get(crate::handlers::resolve::resolve_did))
@@ -21,11 +22,16 @@ pub fn build_router(state: RegistryState) -> Router {
         // VC issuance & revocation
         .route("/v1/vc/issue", post(crate::handlers::issue_vc::issue_vc))
         .route("/v1/vc/revoke", post(crate::handlers::revoke_vc::revoke_vc))
-        // ZK Compression proof (public, no auth required)
-        .route("/v1/proof", post(crate::handlers::proof::get_proof))
         // Fee records
-        .route("/v1/fees", get(crate::handlers::fees::list_fees))
-        .with_state(state)
+        .route("/v1/fees", get(crate::handlers::fees::list_fees));
+
+    // ZK Compression proof endpoint (only in zk-compression mode)
+    #[cfg(feature = "zk-compression")]
+    {
+        router = router.route("/v1/proof", post(crate::handlers::proof::get_proof));
+    }
+
+    router.with_state(state)
 }
 
 async fn health() -> &'static str {

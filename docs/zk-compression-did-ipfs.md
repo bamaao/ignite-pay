@@ -1,5 +1,7 @@
 # 技术架构文档：ZK Compression、DID 上链与 IPFS 存储
 
+> **注意：** PDA 方案现为默认方案。本文档描述的 ZK Compression 方案通过 `--features zk-compression` 编译选项保留为备选。参见 [PDA 迁移指南](did-pda-migration.md)。
+
 ## 1. 概述
 
 Ignite-Pay 系统采用三层去中心化存储架构：

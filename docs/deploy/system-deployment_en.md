@@ -1,5 +1,7 @@
 # Ignite Pay System Deployment Guide
 
+> **Note:** DID on-chain storage now uses the PDA approach by default. Photon RPC deployment is no longer required. For the ZK Compression approach, compile with `--features zk-compression` and refer to the [ZK DID Deployment Guide](zk-did-deployment_en.md).
+
 This document covers the complete deployment process for all Ignite Pay services, including infrastructure dependencies, on-chain programs, off-chain microservices, mobile applications, and the MCP agent service.
 
 ---

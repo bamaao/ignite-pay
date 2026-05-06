@@ -1,5 +1,7 @@
 # Ignite Pay 系统部署指南
 
+> **注意：** DID 链上存储现已默认使用 PDA 方案，不再需要部署 Photon RPC。如需 ZK Compression 方案，请使用 `--features zk-compression` 编译并参考 [ZK DID 部署文档](zk-did-deployment.md)。
+
 本文档涵盖 Ignite Pay 全部服务的完整部署流程，包括基础设施依赖、链上程序、链下微服务、移动端应用和 MCP 代理服务。
 
 ---

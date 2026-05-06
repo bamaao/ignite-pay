@@ -1,14 +1,27 @@
+//! ZK Compression proof endpoint.
+//! Only available when compiled with `zk-compression` feature.
+
+#[cfg(feature = "zk-compression")]
 use axum::extract::State;
+#[cfg(feature = "zk-compression")]
 use axum::http::StatusCode;
+#[cfg(feature = "zk-compression")]
 use axum::response::IntoResponse;
+#[cfg(feature = "zk-compression")]
 use base64::Engine;
+#[cfg(feature = "zk-compression")]
 use light_client::indexer::Indexer;
+#[cfg(feature = "zk-compression")]
 use light_client::rpc::Rpc;
+#[cfg(feature = "zk-compression")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "zk-compression")]
 use solana_sdk::pubkey::Pubkey;
 
+#[cfg(feature = "zk-compression")]
 use crate::state::RegistryState;
 
+#[cfg(feature = "zk-compression")]
 #[derive(Debug, Deserialize)]
 pub struct ProofRequest {
     /// Merchant's active/controller public key (base58).
@@ -22,10 +35,12 @@ pub struct ProofRequest {
     pub account_hash: Option<String>,
 }
 
+#[cfg(feature = "zk-compression")]
 fn default_operation() -> String {
     "register".to_string()
 }
 
+#[cfg(feature = "zk-compression")]
 #[derive(Debug, Serialize)]
 pub struct AccountMetaJson {
     pub pubkey: String,
@@ -33,6 +48,7 @@ pub struct AccountMetaJson {
     pub is_writable: bool,
 }
 
+#[cfg(feature = "zk-compression")]
 #[derive(Debug, Serialize)]
 pub struct ProofResponse {
     /// Borsh-serialized ZK validity proof (base64).
@@ -56,19 +72,8 @@ pub struct ProofResponse {
     pub platform_config_address: String,
 }
 
+#[cfg(feature = "zk-compression")]
 /// `POST /v1/proof` — Public endpoint for ZK Compression validity proofs.
-///
-/// Merchants call this to obtain the proof data needed to construct and sign
-/// their own on-chain transactions locally, without the platform building or
-/// seeing the transaction.
-///
-/// The merchant then:
-/// 1. Builds the Anchor instruction using the program ID, discriminator,
-///    accounts (signer + remaining_accounts), and instruction data
-///    (proof + address_tree_info + params).
-/// 2. Constructs a `Transaction` with a recent blockhash.
-/// 3. Signs with their own keypair.
-/// 4. Broadcasts to the Solana RPC.
 pub async fn get_proof(
     State(state): State<RegistryState>,
     axum::Json(req): axum::Json<ProofRequest>,
@@ -94,7 +99,6 @@ pub async fn get_proof(
             .into_response();
     }
 
-    // For update_vc/rotate_key, account_hash is required
     if req.operation.as_str() != "register" && req.account_hash.is_none() {
         return (
             StatusCode::BAD_REQUEST,
@@ -105,7 +109,6 @@ pub async fn get_proof(
             .into_response();
     }
 
-    // Parse account_hash if provided
     let account_hash_bytes: Option<[u8; 32]> = match req.account_hash {
         Some(ref hex_str) => {
             match hex_to_bytes32(hex_str) {
@@ -124,14 +127,12 @@ pub async fn get_proof(
         None => None,
     };
 
-    // Get address tree and derive compressed address
     let light_rpc = state.light_rpc.lock().await;
     let address_tree = light_rpc.get_address_tree_v1();
     let (address, seed) = state
         .did_service
         .derive_compressed_address(&active_pubkey, &address_tree.tree);
 
-    // Get validity proof
     let indexer = match light_rpc.indexer() {
         Ok(i) => i,
         Err(e) => {
@@ -146,7 +147,6 @@ pub async fn get_proof(
 
     let proof_result = match req.operation.as_str() {
         "register" => {
-            // New address proof: no existing accounts, one new address
             indexer
                 .get_validity_proof(
                     vec![],
@@ -159,7 +159,6 @@ pub async fn get_proof(
                 .await
         }
         _ => {
-            // Existing account proof: provide the account hash
             let hash = account_hash_bytes.unwrap();
             indexer
                 .get_validity_proof(
@@ -185,13 +184,11 @@ pub async fn get_proof(
 
     let proof_context = proof_result.value;
 
-    // Pack accounts and tree infos
     let mut packed_accounts = light_account::PackedAccounts::default();
     let packed_tree_infos = proof_context.pack_tree_infos(&mut packed_accounts);
     let remaining_accounts: Vec<solana_sdk::instruction::AccountMeta> =
         packed_accounts.to_account_metas().0;
 
-    // Serialize proof
     let proof_bytes = match borsh::to_vec(&proof_context.proof) {
         Ok(b) => b,
         Err(e) => {
@@ -253,6 +250,7 @@ pub async fn get_proof(
     (StatusCode::OK, axum::Json(serde_json::to_value(response).unwrap())).into_response()
 }
 
+#[cfg(feature = "zk-compression")]
 fn hex_to_bytes32(hex_str: &str) -> Result<[u8; 32], String> {
     let bytes = hex::decode(hex_str).map_err(|e| format!("Invalid hex: {}", e))?;
     if bytes.len() != 32 {

@@ -54,6 +54,7 @@ prost-build = "0.13"
 default = []
 kubo = ["reqwest"]
 solana = ["ignite-pay-solana", "reqwest"]
+zk-compression = ["ignite-pay-solana/zk-compression"]
 
 [dev-dependencies]
 tempfile = "3"

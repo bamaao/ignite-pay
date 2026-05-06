@@ -78,8 +78,6 @@ pub async fn revoke_vc(
 
     info!("Revoking VC {} for subject {}", req.vc_hash, req.credential_subject_pk);
 
-    let platform_config_address = state.platform_config_address();
-
     match state
         .did_service
         .revoke_vc(
@@ -87,7 +85,6 @@ pub async fn revoke_vc(
             vc_hash_bytes,
             &credential_subject_pk,
             req.reason,
-            &platform_config_address,
         )
         .await
     {

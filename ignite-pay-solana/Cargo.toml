@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Solana integration for Ignite Pay: DID-based merchant identity, Session Keys, and on-chain payments"
 
+[features]
+default = []
+zk-compression = ["light-sdk", "light-client"]
+
 [dependencies]
 # Solana SDK & client
 solana-sdk = "2.1"
@@ -13,9 +17,9 @@ solana-client = "2.1"
 spl-token = "7"
 spl-associated-token-account = "6"
 
-# ZK Compression
-light-sdk = "0.23.0"
-light-client = "0.23.0"
+# ZK Compression (optional)
+light-sdk = { version = "0.23.0", optional = true }
+light-client = { version = "0.23.0", optional = true }
 
 # Serialization
 borsh = "0.10"

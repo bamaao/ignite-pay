@@ -3,6 +3,10 @@ name = "did-registry"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+zk-compression = ["light-sdk", "light-client", "light-account"]
+
 [dependencies]
 ignite-pay-core = { path = "../ignite-pay-core", features = ["solana"] }
 ignite-pay-solana = { path = "../ignite-pay-solana" }
@@ -53,7 +57,7 @@ solana-sdk = "2.1"
 solana-client = "2.1"
 solana-transaction-status = "2.1"
 
-# ZK Compression
-light-sdk = "0.23.0"
-light-client = "0.23.0"
-light-account = "0.23.0"
+# ZK Compression (optional)
+light-sdk = { version = "0.23.0", optional = true }
+light-client = { version = "0.23.0", optional = true }
+light-account = { version = "0.23.0", optional = true }

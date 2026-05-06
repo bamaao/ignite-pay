@@ -11,8 +11,6 @@ use crate::handlers::nonce::verify_and_consume_nonce;
 use crate::state::RegistryState;
 use ignite_pay_core::verify_did_signature;
 use ignite_pay_solana::types::{MerchantDidAccount, OnchainMode};
-use light_client::rpc::Rpc;
-use light_client::indexer::Indexer;
 
 /// Request body for merchant registration.
 #[derive(Debug, Deserialize)]
@@ -30,6 +28,181 @@ pub struct RegisterMerchantRequest {
     pub mode: OnchainMode,
 }
 
+// ─── PDA version (default) ──────────────────────────────────────────
+
+/// `POST /v1/merchants/register` — Register a merchant on-chain as a PDA DID.
+#[cfg(not(feature = "zk-compression"))]
+pub async fn register_merchant(
+    State(state): State<RegistryState>,
+    axum::Json(req): axum::Json<RegisterMerchantRequest>,
+) -> impl IntoResponse {
+    // Validate DID format
+    if !req.merchant_did.starts_with("did:ignite:") {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({ "error": "Invalid DID format, expected did:ignite:..." })),
+        )
+            .into_response();
+    }
+
+    // Verify nonce was issued by this server and consume it (prevents replay)
+    if !verify_and_consume_nonce(&state, &req.nonce) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "Invalid or expired nonce" })),
+        )
+            .into_response();
+    }
+
+    // Verify DID signature proving ownership of the merchant DID key
+    let message = format!(
+        "register:{}:{}:{}:{}",
+        req.merchant_did, req.active_pubkey, req.platform_vc_hash, req.nonce
+    );
+    if !verify_did_signature(&req.merchant_did, &message, &req.did_signature) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "Invalid DID signature" })),
+        )
+            .into_response();
+    }
+
+    // Parse active_pubkey
+    let active_pubkey = match req.active_pubkey.parse::<Pubkey>() {
+        Ok(pk) => pk,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                axum::Json(serde_json::json!({ "error": format!("Invalid active_pubkey: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    // Parse platform_vc_hash (hex)
+    let vc_hash_bytes = match hex_to_bytes32(&req.platform_vc_hash) {
+        Ok(h) => h,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                axum::Json(serde_json::json!({ "error": format!("Invalid platform_vc_hash: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    info!("Registering merchant {} as PDA DID", req.merchant_did);
+
+    let did_hash = compute_did_hash(&req.merchant_did);
+
+    // Generate platform signature over (credential_subject_pk || vc_hash)
+    let platform_signature = state.sign_vc_binding(&active_pubkey, &vc_hash_bytes);
+
+    match req.mode {
+        OnchainMode::Sponsored => {
+            match state
+                .did_service
+                .initialize_did(
+                    &state.payer,
+                    vc_hash_bytes,
+                    platform_signature,
+                    &active_pubkey,
+                )
+                .await
+            {
+                Ok(sig) => {
+                    // Cache the new merchant DID locally
+                    let did_account = MerchantDidAccount {
+                        original_pk: active_pubkey,
+                        controller_pk: active_pubkey,
+                        recovery_pk: Pubkey::default(),
+                        vc_hash: vc_hash_bytes,
+                        last_updated: chrono::Utc::now().timestamp(),
+                        nonce: 0,
+                    };
+                    state.cache_merchant(&did_hash, &did_account);
+
+                    // Record fee
+                    let store = crate::storage::sled_store::MerchantStore::new((*state.db).clone());
+                    if let Err(e) = store.record_fee(
+                        &did_hash,
+                        "register",
+                        state.config.fees.register_fee_lamports,
+                        "sponsored",
+                        &req.merchant_did,
+                    ) {
+                        tracing::warn!("Failed to record fee: {}", e);
+                    }
+
+                    info!("Merchant registered as PDA DID: sig={}", sig);
+                    (StatusCode::OK, axum::Json(serde_json::json!({
+                        "signature": sig.to_string(),
+                    })))
+                    .into_response()
+                }
+                Err(e) => {
+                    tracing::error!("Failed to register merchant on-chain: {}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(serde_json::json!({ "error": format!("On-chain error: {}", e) })),
+                    )
+                        .into_response()
+                }
+            }
+        }
+        OnchainMode::SelfOnchain => {
+            let tx = match state
+                .did_service
+                .prepare_initialize_did(
+                    &active_pubkey,
+                    vc_hash_bytes,
+                    platform_signature,
+                    &active_pubkey,
+                )
+                .await
+            {
+                Ok(tx) => tx,
+                Err(e) => {
+                    tracing::error!("Failed to prepare unsigned transaction: {}", e);
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(serde_json::json!({ "error": format!("Prepare error: {}", e) })),
+                    )
+                        .into_response();
+                }
+            };
+
+            let tx_bytes = match bincode::serialize(&tx) {
+                Ok(b) => b,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(serde_json::json!({ "error": format!("Serialization error: {}", e) })),
+                    )
+                        .into_response();
+                }
+            };
+
+            let tx_b64 = base64::engine::general_purpose::STANDARD.encode(&tx_bytes);
+
+            info!("Prepared unsigned register transaction for merchant {}", req.merchant_did);
+            (StatusCode::OK, axum::Json(serde_json::json!({
+                "transaction": tx_b64,
+                "message": "sign and broadcast within 90 seconds; blockhash expires",
+            })))
+            .into_response()
+        }
+    }
+}
+
+// ─── ZK Compression version (optional) ──────────────────────────────
+
+#[cfg(feature = "zk-compression")]
+use light_client::rpc::Rpc;
+#[cfg(feature = "zk-compression")]
+use light_client::indexer::Indexer;
+
+#[cfg(feature = "zk-compression")]
 /// `POST /v1/merchants/register` — Register a merchant on-chain as a ZK compressed DID.
 pub async fn register_merchant(
     State(state): State<RegistryState>,
@@ -113,7 +286,7 @@ pub async fn register_merchant(
     };
     let proof_result = match indexer
         .get_validity_proof(
-            vec![], // no existing accounts
+            vec![],
             vec![light_client::indexer::AddressWithTree {
                 address: light_client::indexer::Address::from(address),
                 tree: address_tree.tree,
@@ -135,13 +308,11 @@ pub async fn register_merchant(
 
     let proof_context = proof_result.value;
 
-    // Pack accounts and tree infos
     let mut packed_accounts = light_account::PackedAccounts::default();
     let packed_tree_infos = proof_context.pack_tree_infos(&mut packed_accounts);
     let remaining_accounts: Vec<solana_sdk::instruction::AccountMeta> =
         packed_accounts.to_account_metas().0;
 
-    // Serialize proof
     let proof_bytes = match borsh::to_vec(&proof_context.proof) {
         Ok(b) => b,
         Err(e) => {
@@ -153,7 +324,6 @@ pub async fn register_merchant(
         }
     };
 
-    // Get address_tree_info and output_state_tree_index
     let address_tree_info = match packed_tree_infos.address_trees.first() {
         Some(info) => *info,
         None => {
@@ -170,10 +340,7 @@ pub async fn register_merchant(
         .map(|st| st.output_tree_index)
         .unwrap_or(0);
 
-    // Submit to on-chain compressed account via DidService
     let did_hash = compute_did_hash(&req.merchant_did);
-
-    // Generate platform signature over (credential_subject_pk || vc_hash)
     let platform_signature = state.sign_vc_binding(&active_pubkey, &vc_hash_bytes);
     let platform_config_address = state.platform_config_address();
 
@@ -195,7 +362,6 @@ pub async fn register_merchant(
                 .await
             {
                 Ok(sig) => {
-                    // Cache the new merchant DID locally
                     let did_account = MerchantDidAccount {
                         original_pk: active_pubkey,
                         controller_pk: active_pubkey,
@@ -206,7 +372,6 @@ pub async fn register_merchant(
                     };
                     state.cache_merchant(&did_hash, &did_account);
 
-                    // Record fee
                     let store = crate::storage::sled_store::MerchantStore::new((*state.db).clone());
                     if let Err(e) = store.record_fee(
                         &did_hash,

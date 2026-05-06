@@ -3,6 +3,10 @@ name = "ignite-pay-mcp"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+zk-compression = ["ignite-pay-core/zk-compression", "ignite-pay-solana/zk-compression"]
+
 [[bin]]
 name = "ignite-pay-mcp"
 path = "src/main.rs"

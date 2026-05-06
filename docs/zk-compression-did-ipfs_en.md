@@ -1,5 +1,7 @@
 # Technical Architecture: ZK Compression, DID On-Chain Registration, and IPFS Storage
 
+> **Note:** The PDA approach is now the default. The ZK Compression approach described in this document is preserved as an alternative via the `--features zk-compression` build option. See the [PDA Migration Guide](did-pda-migration_en.md).
+
 ## 1. Overview
 
 The Ignite-Pay system employs a three-layer decentralized storage architecture:

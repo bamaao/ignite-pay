@@ -5,25 +5,9 @@ pub mod error;
 
 use anchor_lang::prelude::*;
 use error::DidError;
-use light_sdk::{
-    account::LightAccount,
-    address::v1::derive_address,
-    cpi::{
-        v1::{CpiAccounts, LightSystemProgramCpi},
-        CpiSigner, InvokeLightSystemProgram, LightCpiInstruction,
-    },
-    derive_light_cpi_signer,
-    instruction::{account_meta::CompressedAccountMeta, PackedAddressTreeInfo},
-    PackedAddressTreeInfoExt,
-};
-use state::{MerchantCompressedDid, PlatformConfig, RevokedVc};
+use state::{PlatformConfig, RevokedVc};
 
 declare_id!("D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D");
-
-/// Compile-time CPI signer derived from the program ID.
-/// Seeds: [b"authority"] relative to the program ID.
-pub const LIGHT_CPI_SIGNER: CpiSigner =
-    derive_light_cpi_signer!("D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D");
 
 /// Verify an Ed25519 signature against a message and public key.
 /// Uses ed25519_dalek v1.x for on-chain verification.
@@ -64,29 +48,6 @@ pub struct RevokeVc<'info> {
     pub system_program: Program<'info, System>,
 }
 
-/// Generic Anchor accounts struct for compressed DID instructions
-/// that do NOT require platform signature verification.
-#[derive(Accounts)]
-pub struct GenericAnchorAccounts<'info> {
-    #[account(mut)]
-    pub signer: Signer<'info>,
-}
-
-/// Anchor accounts struct for DID instructions that require
-/// platform signature verification (initialize_did, update_did_with_vc).
-#[derive(Accounts)]
-pub struct DidWithPlatformAccounts<'info> {
-    #[account(mut)]
-    pub signer: Signer<'info>,
-    /// Platform config PDA: must be initialized via `init_platform`.
-    #[account(
-        seeds = [b"platform-config"],
-        bump = platform_config.bump,
-        constraint = platform_config.platform_ed25519_pubkey != [0u8; 32] @ DidError::PlatformNotInitialized
-    )]
-    pub platform_config: Account<'info, PlatformConfig>,
-}
-
 /// Accounts for the one-time `init_platform` instruction.
 #[derive(Accounts)]
 pub struct InitPlatform<'info> {
@@ -103,15 +64,135 @@ pub struct InitPlatform<'info> {
     pub system_program: Program<'info, System>,
 }
 
+// ─── PDA version Account structs (default) ──────────────────────────────
+
+#[cfg(not(feature = "zk-compression"))]
+use state::MerchantDidAccount;
+
+#[cfg(not(feature = "zk-compression"))]
+#[derive(Accounts)]
+#[instruction(credential_subject_pk: Pubkey)]
+pub struct InitializeDid<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    #[account(
+        init,
+        payer = signer,
+        space = 153,
+        seeds = [b"merchant-did", signer.key().as_ref()],
+        bump,
+        constraint = signer.key() == credential_subject_pk @ DidError::VcSubjectMismatch
+    )]
+    pub merchant_did: Account<'info, MerchantDidAccount>,
+    #[account(
+        seeds = [b"platform-config"],
+        bump = platform_config.bump,
+        constraint = platform_config.platform_ed25519_pubkey != [0u8; 32] @ DidError::PlatformNotInitialized
+    )]
+    pub platform_config: Account<'info, PlatformConfig>,
+    pub system_program: Program<'info, System>,
+}
+
+#[cfg(not(feature = "zk-compression"))]
+#[derive(Accounts)]
+pub struct UpdateDidWithVc<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"merchant-did", merchant_did.original_pk.as_ref()],
+        bump = merchant_did.bump,
+        constraint = merchant_did.controller_pk == signer.key() @ DidError::InvalidControllerKey
+    )]
+    pub merchant_did: Account<'info, MerchantDidAccount>,
+    #[account(
+        seeds = [b"platform-config"],
+        bump = platform_config.bump,
+        constraint = platform_config.platform_ed25519_pubkey != [0u8; 32] @ DidError::PlatformNotInitialized
+    )]
+    pub platform_config: Account<'info, PlatformConfig>,
+}
+
+#[cfg(not(feature = "zk-compression"))]
+#[derive(Accounts)]
+pub struct SetRecoveryKey<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"merchant-did", merchant_did.original_pk.as_ref()],
+        bump = merchant_did.bump,
+        constraint = merchant_did.controller_pk == signer.key() @ DidError::InvalidControllerKey
+    )]
+    pub merchant_did: Account<'info, MerchantDidAccount>,
+}
+
+#[cfg(not(feature = "zk-compression"))]
+#[derive(Accounts)]
+pub struct RecoverController<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"merchant-did", merchant_did.original_pk.as_ref()],
+        bump = merchant_did.bump,
+        constraint = merchant_did.recovery_pk == signer.key() @ DidError::InvalidRecoveryKey
+    )]
+    pub merchant_did: Account<'info, MerchantDidAccount>,
+}
+
+// ─── ZK Compression Account structs (optional) ──────────────────────────
+
+#[cfg(feature = "zk-compression")]
+use light_sdk::{
+    account::LightAccount,
+    address::v1::derive_address,
+    cpi::{
+        v1::{CpiAccounts, LightSystemProgramCpi},
+        CpiSigner, InvokeLightSystemProgram, LightCpiInstruction,
+    },
+    derive_light_cpi_signer,
+    instruction::{account_meta::CompressedAccountMeta, PackedAddressTreeInfo},
+    PackedAddressTreeInfoExt,
+};
+
+#[cfg(feature = "zk-compression")]
+use state::MerchantCompressedDid;
+
+/// Compile-time CPI signer derived from the program ID.
+#[cfg(feature = "zk-compression")]
+pub const LIGHT_CPI_SIGNER: CpiSigner =
+    derive_light_cpi_signer!("D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D");
+
+#[cfg(feature = "zk-compression")]
+#[derive(Accounts)]
+pub struct GenericAnchorAccounts<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+}
+
+#[cfg(feature = "zk-compression")]
+#[derive(Accounts)]
+pub struct DidWithPlatformAccounts<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    #[account(
+        seeds = [b"platform-config"],
+        bump = platform_config.bump,
+        constraint = platform_config.platform_ed25519_pubkey != [0u8; 32] @ DidError::PlatformNotInitialized
+    )]
+    pub platform_config: Account<'info, PlatformConfig>,
+}
+
+// ─── Program instructions ───────────────────────────────────────────────
+
 #[program]
 pub mod ignite_pay_did_program {
     use super::*;
 
-    // ─── 0. init_platform ───
+    // ─── 0. init_platform (shared) ───
 
     /// One-time initialization of the platform Ed25519 public key.
-    /// Stores the platform's verifying key in a PDA so on-chain instructions
-    /// can verify platform signatures before accepting VC bindings.
     pub fn init_platform(
         ctx: Context<InitPlatform>,
         platform_ed25519_pubkey: [u8; 32],
@@ -123,13 +204,133 @@ pub mod ignite_pay_did_program {
         Ok(())
     }
 
-    // ─── 1. initialize_did ───
+    // ─── PDA version instructions (default) ───────────────────────────
 
-    /// Create a new compressed merchant DID.
-    /// Derives a compressed PDA address from [b"merchant-did", original_pk]
-    /// and creates it in the output state tree via Light System Program CPI.
-    /// Requires a valid platform signature over (signer_pk || vc_hash) to
-    /// prevent replay attacks and identity spoofing.
+    /// Create a new merchant DID as a standard PDA.
+    /// Seeds: [b"merchant-did", signer.key()]
+    /// Requires a valid platform signature over (credential_subject_pk || vc_hash).
+    #[cfg(not(feature = "zk-compression"))]
+    pub fn initialize_did(
+        ctx: Context<InitializeDid>,
+        vc_hash: [u8; 32],
+        platform_signature: [u8; 64],
+        _credential_subject_pk: Pubkey,
+    ) -> Result<()> {
+        // Verify platform signature: sign(credential_subject_pk || vc_hash)
+        let platform_pk_bytes = ctx.accounts.platform_config.platform_ed25519_pubkey;
+        let credential_subject_pk = ctx.accounts.signer.key();
+        let mut message = Vec::with_capacity(64);
+        message.extend_from_slice(credential_subject_pk.as_ref());
+        message.extend_from_slice(&vc_hash);
+        require!(
+            verify_ed25519_signature(
+                &message,
+                &platform_signature,
+                &Pubkey::new_from_array(platform_pk_bytes)
+            ),
+            DidError::InvalidPlatformSignature
+        );
+
+        let did = &mut ctx.accounts.merchant_did;
+        did.original_pk = ctx.accounts.signer.key();
+        did.controller_pk = ctx.accounts.signer.key();
+        did.recovery_pk = Pubkey::default();
+        did.vc_hash = vc_hash;
+        did.last_updated = Clock::get()?.unix_timestamp;
+        did.nonce = 0;
+        did.bump = ctx.bumps.merchant_did;
+
+        Ok(())
+    }
+
+    /// Update the VC hash on an existing PDA merchant DID.
+    /// Requires the current controller as signer + valid platform signature.
+    #[cfg(not(feature = "zk-compression"))]
+    pub fn update_did_with_vc(
+        ctx: Context<UpdateDidWithVc>,
+        vc_hash: [u8; 32],
+        nonce: u64,
+        platform_signature: [u8; 64],
+        _credential_subject_pk: Pubkey,
+    ) -> Result<()> {
+        let did = &mut ctx.accounts.merchant_did;
+
+        // Anti-replay: caller must supply the current nonce
+        require!(did.nonce == nonce, DidError::NonceMismatch);
+
+        // Verify platform signature: sign(credential_subject_pk || vc_hash)
+        let platform_pk_bytes = ctx.accounts.platform_config.platform_ed25519_pubkey;
+        let credential_subject_pk = ctx.accounts.signer.key();
+        let mut message = Vec::with_capacity(64);
+        message.extend_from_slice(credential_subject_pk.as_ref());
+        message.extend_from_slice(&vc_hash);
+        require!(
+            verify_ed25519_signature(
+                &message,
+                &platform_signature,
+                &Pubkey::new_from_array(platform_pk_bytes)
+            ),
+            DidError::InvalidPlatformSignature
+        );
+
+        did.vc_hash = vc_hash;
+        did.last_updated = Clock::get()?.unix_timestamp;
+        did.nonce = did
+            .nonce
+            .checked_add(1)
+            .ok_or(DidError::ArithmeticOverflow)?;
+
+        Ok(())
+    }
+
+    /// Set or change the recovery public key on a PDA merchant DID.
+    /// Requires the current controller as signer + valid nonce.
+    #[cfg(not(feature = "zk-compression"))]
+    pub fn set_recovery_key(
+        ctx: Context<SetRecoveryKey>,
+        recovery_pk: Pubkey,
+        nonce: u64,
+    ) -> Result<()> {
+        let did = &mut ctx.accounts.merchant_did;
+
+        require!(did.nonce == nonce, DidError::NonceMismatch);
+
+        did.recovery_pk = recovery_pk;
+        did.last_updated = Clock::get()?.unix_timestamp;
+        did.nonce = did
+            .nonce
+            .checked_add(1)
+            .ok_or(DidError::ArithmeticOverflow)?;
+
+        Ok(())
+    }
+
+    /// Recover controller by proving ownership of the recovery key.
+    /// Sets controller_pk to new_controller_pk.
+    #[cfg(not(feature = "zk-compression"))]
+    pub fn recover_controller(
+        ctx: Context<RecoverController>,
+        new_controller_pk: Pubkey,
+        nonce: u64,
+    ) -> Result<()> {
+        let did = &mut ctx.accounts.merchant_did;
+
+        require!(did.nonce == nonce, DidError::NonceMismatch);
+
+        did.controller_pk = new_controller_pk;
+        did.last_updated = Clock::get()?.unix_timestamp;
+        did.nonce = did
+            .nonce
+            .checked_add(1)
+            .ok_or(DidError::ArithmeticOverflow)?;
+
+        Ok(())
+    }
+
+    // ─── ZK Compression version instructions (optional) ────────────────
+
+    /// Create a new compressed merchant DID via ZK Compression.
+    #[cfg(feature = "zk-compression")]
     pub fn initialize_did<'info>(
         ctx: Context<'_, '_, '_, 'info, DidWithPlatformAccounts<'info>>,
         proof: light_sdk::borsh_compat::ValidityProof,
@@ -139,13 +340,11 @@ pub mod ignite_pay_did_program {
         platform_signature: [u8; 64],
         credential_subject_pk: Pubkey,
     ) -> Result<()> {
-        // Subject binding: credential subject must be the signer
         require!(
             credential_subject_pk == ctx.accounts.signer.key(),
             DidError::VcSubjectMismatch
         );
 
-        // Verify platform signature: sign(credential_subject_pk || vc_hash)
         let platform_pk_bytes = ctx.accounts.platform_config.platform_ed25519_pubkey;
         let mut message = Vec::with_capacity(64);
         message.extend_from_slice(credential_subject_pk.as_ref());
@@ -169,7 +368,6 @@ pub mod ignite_pay_did_program {
             .get_tree_pubkey(&light_cpi_accounts)
             .map_err(|_| DidError::InsufficientCpiAccounts)?;
 
-        // Derive deterministic compressed PDA address
         let (address, address_seed) = derive_address(
             &[b"merchant-did", ctx.accounts.signer.key().as_ref()],
             &address_tree_pubkey,
@@ -197,12 +395,8 @@ pub mod ignite_pay_did_program {
         Ok(())
     }
 
-    // ─── 2. update_did_with_vc ───
-
-    /// Bind or update a platform verifiable credential hash on an existing
-    /// compressed DID. Requires the current controller as signer.
-    /// Verifies platform signature over (credential_subject_pk || vc_hash)
-    /// and enforces subject binding on-chain.
+    /// Update the VC hash on an existing compressed DID via ZK Compression.
+    #[cfg(feature = "zk-compression")]
     pub fn update_did_with_vc<'info>(
         ctx: Context<'_, '_, '_, 'info, DidWithPlatformAccounts<'info>>,
         proof: light_sdk::borsh_compat::ValidityProof,
@@ -213,21 +407,17 @@ pub mod ignite_pay_did_program {
         platform_signature: [u8; 64],
         credential_subject_pk: Pubkey,
     ) -> Result<()> {
-        // Verify controller authorization
         require!(
             current_did.controller_pk == ctx.accounts.signer.key(),
             DidError::InvalidControllerKey
         );
-        // Anti-replay: caller must supply the current nonce
         require!(current_did.nonce == nonce, DidError::NonceMismatch);
 
-        // Subject binding: credential subject must be the signer
         require!(
             credential_subject_pk == ctx.accounts.signer.key(),
             DidError::VcSubjectMismatch
         );
 
-        // Verify platform signature: sign(credential_subject_pk || vc_hash)
         let platform_pk_bytes = ctx.accounts.platform_config.platform_ed25519_pubkey;
         let mut message = Vec::with_capacity(64);
         message.extend_from_slice(credential_subject_pk.as_ref());
@@ -267,10 +457,8 @@ pub mod ignite_pay_did_program {
         Ok(())
     }
 
-    // ─── 3. set_recovery_key ───
-
-    /// Set or change the recovery public key on a compressed DID.
-    /// Requires the current controller as signer + valid nonce.
+    /// Set or change the recovery key on a compressed DID via ZK Compression.
+    #[cfg(feature = "zk-compression")]
     pub fn set_recovery_key<'info>(
         ctx: Context<'_, '_, '_, 'info, GenericAnchorAccounts<'info>>,
         proof: light_sdk::borsh_compat::ValidityProof,
@@ -311,10 +499,8 @@ pub mod ignite_pay_did_program {
         Ok(())
     }
 
-    // ─── 4. recover_controller ───
-
-    /// Recover controller by proving ownership of the recovery key.
-    /// Sets controller_pk to new_controller_pk.
+    /// Recover controller on a compressed DID via ZK Compression.
+    #[cfg(feature = "zk-compression")]
     pub fn recover_controller<'info>(
         ctx: Context<'_, '_, '_, 'info, GenericAnchorAccounts<'info>>,
         proof: light_sdk::borsh_compat::ValidityProof,
@@ -323,7 +509,6 @@ pub mod ignite_pay_did_program {
         new_controller_pk: Pubkey,
         nonce: u64,
     ) -> Result<()> {
-        // Verify recovery key authorization
         require!(
             current_did.recovery_pk == ctx.accounts.signer.key(),
             DidError::InvalidRecoveryKey
@@ -356,12 +541,9 @@ pub mod ignite_pay_did_program {
         Ok(())
     }
 
-    // ─── 5. revoke_vc ───
+    // ─── 5. revoke_vc (shared) ───
 
     /// Revoke a VC by creating an on-chain RevokedVc PDA.
-    /// Only the platform authority (stored in PlatformConfig) can invoke.
-    /// Verifiers check PDA existence to determine revocation status.
-    /// Seeds: [b"revoked-vc", vc_hash]
     pub fn revoke_vc(
         ctx: Context<RevokeVc>,
         vc_hash: [u8; 32],
@@ -476,5 +658,14 @@ mod tests {
             &crate::id(),
         );
         assert_ne!(pda1, pda3);
+    }
+
+    #[test]
+    fn test_merchant_did_account_space() {
+        // 8(discriminator) + 32 + 32 + 32 + 32 + 8 + 8 + 1 = 153
+        assert_eq!(
+            8 + std::mem::size_of::<Pubkey>() * 3 + 32 + 8 + 8 + 1,
+            153
+        );
     }
 }

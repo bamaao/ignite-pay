@@ -130,9 +130,11 @@ struct SolanaConfig {
     rpc_url: String,
     #[serde(default)]
     did_program_id: String,
+    #[cfg(feature = "zk-compression")]
     #[serde(default)]
     photon_url: String,
     /// Address Merkle tree pubkey (for compressed DID address derivation)
+    #[cfg(feature = "zk-compression")]
     #[serde(default)]
     address_tree: String,
     #[serde(default = "default_pay_mode")]
@@ -1431,7 +1433,7 @@ impl IgnitePayMcpServer {
     ) -> String {
         let _did_service = match &self.did_service {
             Some(s) => s,
-            None => return "Error: DID service not configured (need solana.did_program_id + solana.photon_url)".to_string(),
+            None => return "Error: DID service not configured (need solana.did_program_id)".to_string(),
         };
 
         let payment_address = match input.payment_address.parse::<Pubkey>() {
@@ -1446,16 +1448,16 @@ impl IgnitePayMcpServer {
         );
 
         // NOTE: In production, the caller must provide a validity proof from
-        // Photon RPC and remaining accounts. This tool provides the scaffold;
-        // full integration requires a Photon endpoint configured in solana.photon_url.
+        // Photon RPC and remaining accounts (when using ZK Compression).
+        // In PDA mode, standard Solana RPC is sufficient.
         format!(
-            "Merchant DID initialization requested.\nDID: {}\nPayment address: {}\n\nNote: Full ZK Compression requires Photon RPC proof. Configure solana.photon_url in config.toml.",
+            "Merchant DID initialization requested.\nDID: {}\nPayment address: {}",
             input.merchant_did, input.payment_address
         )
     }
 
     #[tool(
-        description = "Update a merchant's on-chain ZK compressed DID data. Requires Photon RPC proof for the update operation."
+        description = "Update a merchant's on-chain DID data."
     )]
     async fn update_merchant(
         &self,
@@ -1487,9 +1489,9 @@ impl IgnitePayMcpServer {
             new_status,
         );
 
-        // NOTE: Full ZK Compression update requires Photon RPC proof.
+        // NOTE: DID update uses PDA (standard Solana RPC) or ZK Compression.
         format!(
-            "Merchant DID update requested.\nDID: {}\nNew payment address: {}\nNew status: {}\n\nNote: Full ZK Compression requires Photon RPC proof. Configure solana.photon_url in config.toml.",
+            "Merchant DID update requested.\nDID: {}\nNew payment address: {}\nNew status: {}",
             input.merchant_did, new_payment_address, new_status
         )
     }
@@ -2573,6 +2575,26 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // V2.0: Initialize Solana DID bridge if DID program is configured
+    #[cfg(not(feature = "zk-compression"))]
+    let solana_bridge = if !config.solana.did_program_id.is_empty() {
+        match SolanaDidBridge::new(
+            &config.solana.rpc_url,
+            &config.solana.did_program_id,
+        ) {
+            Ok(bridge) => {
+                tracing::info!("Solana DID bridge initialized for on-chain verification");
+                Some(Arc::new(bridge))
+            }
+            Err(e) => {
+                tracing::error!("Failed to initialize Solana DID bridge: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    #[cfg(feature = "zk-compression")]
     let solana_bridge = if !config.solana.did_program_id.is_empty()
         && !config.solana.photon_url.is_empty()
         && !config.solana.address_tree.is_empty()

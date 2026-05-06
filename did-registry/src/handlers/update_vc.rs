@@ -5,13 +5,16 @@ use base64::Engine;
 use serde::Deserialize;
 use tracing::info;
 
-use light_client::rpc::Rpc;
-use light_client::indexer::Indexer;
-
 use crate::did::resolver::compute_did_hash;
 use crate::handlers::nonce::verify_and_consume_nonce;
 use crate::state::RegistryState;
 use ignite_pay_solana::types::OnchainMode;
+
+#[cfg(feature = "zk-compression")]
+use light_client::rpc::Rpc;
+#[cfg(feature = "zk-compression")]
+use light_client::indexer::Indexer;
+#[cfg(feature = "zk-compression")]
 use light_sdk::instruction::account_meta::CompressedAccountMeta;
 
 /// Request body for updating the platform VC hash.
@@ -25,6 +28,7 @@ pub struct UpdateVcRequest {
     /// Server-issued nonce to prevent replay. Obtain from GET /v1/auth/nonce.
     pub nonce: String,
     /// Borsh-serialized CompressedAccountMeta for the current account.
+    #[cfg(feature = "zk-compression")]
     #[serde(default)]
     pub account_meta_b64: Option<String>,
     /// On-chain submission mode. Defaults to `sponsored` (backward compatible).
@@ -32,7 +36,175 @@ pub struct UpdateVcRequest {
     pub mode: OnchainMode,
 }
 
-/// `POST /v1/merchants/update-vc` — Update the platform VC hash for a merchant.
+// ─── PDA version (default) ──────────────────────────────────────────
+
+/// `POST /v1/merchants/update-vc` — Update the platform VC hash for a merchant (PDA DID).
+#[cfg(not(feature = "zk-compression"))]
+pub async fn update_vc(
+    State(state): State<RegistryState>,
+    axum::Json(req): axum::Json<UpdateVcRequest>,
+) -> impl IntoResponse {
+    if !req.merchant_did.starts_with("did:ignite:") {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({ "error": "Invalid DID format" })),
+        )
+            .into_response();
+    }
+
+    // Parse new VC hash
+    let new_vc_hash = match hex_to_bytes32(&req.new_vc_hash) {
+        Ok(h) => h,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                axum::Json(serde_json::json!({ "error": format!("Invalid new_vc_hash: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    // Verify nonce was issued by this server and consume it (prevents replay)
+    if !verify_and_consume_nonce(&state, &req.nonce) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "Invalid or expired nonce" })),
+        )
+            .into_response();
+    }
+
+    // Verify platform_signature using config.auth.platform_public_key
+    let message = format!("update-vc:{}:{}:{}", req.merchant_did, req.new_vc_hash, req.nonce);
+    if !verify_platform_signature(&state.config.auth.platform_public_key, &message, &req.platform_signature) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "Invalid platform signature" })),
+        )
+            .into_response();
+    }
+
+    info!("Updating VC hash for merchant {} (PDA)", req.merchant_did);
+
+    let did_hash = compute_did_hash(&req.merchant_did);
+
+    // Look up current DID account from cache
+    let current_did = match state.get_cached_merchant(&did_hash) {
+        Some(did) => did,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                axum::Json(serde_json::json!({ "error": "Merchant not found" })),
+            )
+                .into_response();
+        }
+    };
+
+    // Generate platform signature over (credential_subject_pk || new_vc_hash)
+    let platform_signature = state.sign_vc_binding(&current_did.controller_pk, &new_vc_hash);
+    let credential_subject_pk = current_did.controller_pk;
+
+    match req.mode {
+        OnchainMode::Sponsored => {
+            match state
+                .did_service
+                .update_did_with_vc(
+                    &state.payer,
+                    new_vc_hash,
+                    current_did.nonce,
+                    platform_signature,
+                    &credential_subject_pk,
+                )
+                .await
+            {
+                Ok(sig) => {
+                    // Update cached merchant
+                    let mut updated_did = current_did.clone();
+                    updated_did.vc_hash = new_vc_hash;
+                    updated_did.last_updated = chrono::Utc::now().timestamp();
+                    updated_did.nonce = current_did.nonce + 1;
+                    state.cache_merchant(&did_hash, &updated_did);
+
+                    // Record fee
+                    let store = crate::storage::sled_store::MerchantStore::new((*state.db).clone());
+                    if let Err(e) = store.record_fee(
+                        &did_hash,
+                        "update_vc",
+                        state.config.fees.update_vc_fee_lamports,
+                        "sponsored",
+                        &req.merchant_did,
+                    ) {
+                        tracing::warn!("Failed to record fee: {}", e);
+                    }
+
+                    info!("VC updated for {}: sig={}", req.merchant_did, sig);
+                    (StatusCode::OK, axum::Json(serde_json::json!({
+                        "signature": sig.to_string(),
+                    })))
+                    .into_response()
+                }
+                Err(e) => {
+                    tracing::error!("Failed to update VC on-chain: {}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(serde_json::json!({ "error": format!("On-chain error: {}", e) })),
+                    )
+                        .into_response()
+                }
+            }
+        }
+        OnchainMode::SelfOnchain => {
+            // Use the current controller as signer
+            let signer_pubkey = current_did.controller_pk;
+
+            let tx = match state
+                .did_service
+                .prepare_update_did_with_vc(
+                    &signer_pubkey,
+                    new_vc_hash,
+                    current_did.nonce,
+                    platform_signature,
+                    &credential_subject_pk,
+                )
+                .await
+            {
+                Ok(tx) => tx,
+                Err(e) => {
+                    tracing::error!("Failed to prepare unsigned transaction: {}", e);
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(serde_json::json!({ "error": format!("Prepare error: {}", e) })),
+                    )
+                        .into_response();
+                }
+            };
+
+            let tx_bytes = match bincode::serialize(&tx) {
+                Ok(b) => b,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(serde_json::json!({ "error": format!("Serialization error: {}", e) })),
+                    )
+                        .into_response();
+                }
+            };
+
+            let tx_b64 = base64::engine::general_purpose::STANDARD.encode(&tx_bytes);
+
+            info!("Prepared unsigned update-vc transaction for merchant {}", req.merchant_did);
+            (StatusCode::OK, axum::Json(serde_json::json!({
+                "transaction": tx_b64,
+                "message": "sign and broadcast within 90 seconds; blockhash expires",
+            })))
+            .into_response()
+        }
+    }
+}
+
+// ─── ZK Compression version (optional) ──────────────────────────────
+
+/// `POST /v1/merchants/update-vc` — Update the platform VC hash for a merchant (compressed DID).
+#[cfg(feature = "zk-compression")]
 pub async fn update_vc(
     State(state): State<RegistryState>,
     axum::Json(req): axum::Json<UpdateVcRequest>,
@@ -174,7 +346,6 @@ pub async fn update_vc(
         }
     };
 
-    // Submit update on-chain
     // Generate platform signature over (credential_subject_pk || new_vc_hash)
     let platform_signature = state.sign_vc_binding(&current_did.controller_pk, &new_vc_hash);
     let platform_config_address = state.platform_config_address();

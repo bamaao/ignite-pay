@@ -34,21 +34,14 @@ kubo_url = "http://127.0.0.1:5001"
 rpc_url = "https://api.devnet.solana.com"
 # DID program ID (ignite-pay-did-program) — enables on-chain DID verification
 did_program_id = ""
-# Photon RPC URL for ZK Compression queries (e.g. https://photon.helius.com?api-key=KEY)
-photon_url = ""
-# Address Merkle tree pubkey — used to derive compressed DID addresses
-address_tree = ""
-# Concurrent Merkle Tree address (deployed once, holds merchant DID hashes)
-tree_address = ""
-# Tree authority (platform keypair that controls the tree)
-tree_authority = ""
-# Helius DAS API endpoint for Merkle proof queries
-das_endpoint = ""
 # Payment mode: "self_funded" or "sponsored"
 pay_mode = "self_funded"
 # Relayer URL (only used when pay_mode = "sponsored")
 relayer_url = ""
 # Default owner pubkey (base58) for local session lookup
 default_owner = ""
-# Tree authority keypair (base58 64-byte) for admin operations
-tree_authority_keypair_b58 = ""
+# --- ZK Compression fields (only needed with --features zk-compression) ---
+# Photon RPC URL for ZK Compression queries (e.g. https://photon.helius.com?api-key=KEY)
+# photon_url = ""
+# Address Merkle tree pubkey — used to derive compressed DID addresses
+# address_tree = ""

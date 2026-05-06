@@ -1,10 +1,37 @@
 use anchor_lang::prelude::*;
+
+// ─── PDA version (default) ─────────────────────────────────────────────
+/// On-chain PDA storing merchant DID data.
+/// Seeds: [b"merchant-did", original_pk]. Created via `initialize_did`.
+#[cfg(not(feature = "zk-compression"))]
+#[account]
+pub struct MerchantDidAccount {
+    /// Initial anchor public key (immutable).
+    pub original_pk: Pubkey,     // 32
+    /// Current controller public key.
+    pub controller_pk: Pubkey,   // 32
+    /// Recovery public key.
+    pub recovery_pk: Pubkey,     // 32
+    /// Platform verifiable credential hash.
+    pub vc_hash: [u8; 32],       // 32
+    /// Last update timestamp (Unix seconds).
+    pub last_updated: i64,       // 8
+    /// Anti-replay counter.
+    pub nonce: u64,              // 8
+    /// PDA bump seed.
+    pub bump: u8,                // 1
+}
+// Space = 8(discriminator) + 32 + 32 + 32 + 32 + 8 + 8 + 1 = 153 bytes
+
+// ─── ZK Compression version (optional) ─────────────────────────────────
+#[cfg(feature = "zk-compression")]
 use light_sdk::LightDiscriminator;
 
 /// Compressed merchant DID account stored via ZK Compression.
 /// Uses `#[event]` (not `#[account]`) so Anchor includes it in the IDL
 /// without allocating on-chain account space. The actual data lives as
 /// a compressed account hash in a Light Protocol state tree.
+#[cfg(feature = "zk-compression")]
 #[event]
 #[derive(Clone, Debug, Default, LightDiscriminator)]
 pub struct MerchantCompressedDid {

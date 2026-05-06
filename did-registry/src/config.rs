@@ -4,6 +4,7 @@ use serde::Deserialize;
 pub struct Config {
     pub server: ServerConfig,
     pub solana: SolanaConfig,
+    #[cfg(feature = "zk-compression")]
     pub light: LightConfig,
     pub auth: AuthConfig,
     pub fees: FeesConfig,
@@ -23,6 +24,7 @@ pub struct SolanaConfig {
     pub payer_keypair_path: String,
 }
 
+#[cfg(feature = "zk-compression")]
 #[derive(Debug, Deserialize, Clone)]
 pub struct LightConfig {
     /// Photon RPC URL for ZK Compression (e.g., https://photon.helius.com?api-key=KEY)
