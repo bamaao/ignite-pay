@@ -18,6 +18,7 @@ import 'package:ignite_pay_app/services/didcomm_service.dart';
 import 'package:ignite_pay_app/services/channel_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
 import 'package:ignite_pay_app/services/direct_payment_service.dart';
+import 'package:ignite_pay_app/cctp_transfer_screen.dart';
 import 'package:ignite_pay_app/onboarding_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:app_links/app_links.dart';
@@ -425,6 +426,14 @@ class _MainNavigatorState extends State<_MainNavigator> {
             errorCode: errorCode ?? 'Sponsored signing failed',
           );
         }
+      case 'cctp_approve':
+        // CCTP: MetaMask approve callback — user returns after approving USDC
+        debugPrint('CCTP approve callback received');
+      case 'cctp_burn':
+        // CCTP: MetaMask burn callback — user returns after depositForBurnWithHook
+        // MetaMask deep links don't reliably return tx hash, so we rely on
+        // the user entering it manually or polling starts from the burn tx hash
+        debugPrint('CCTP burn callback received');
     }
   }
 
@@ -750,46 +759,64 @@ class _QuickNavRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    return Column(
       children: [
-        Expanded(
-          child: _QuickNavCard(
-            icon: LucideIcons.scanLine,
-            label: 'Scan',
-            subtitle: '扫码支付',
-            gradientColors: [const Color(0xFF00E5FF), const Color(0xFF0097A7)],
-            onTap: () => _scanAndPay(context),
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: _QuickNavCard(
+                icon: LucideIcons.scanLine,
+                label: 'Scan',
+                subtitle: '扫码支付',
+                gradientColors: [const Color(0xFF00E5FF), const Color(0xFF0097A7)],
+                onTap: () => _scanAndPay(context),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _QuickNavCard(
+                icon: LucideIcons.lock,
+                label: 'Vault',
+                subtitle: 'Keys & Identity',
+                gradientColors: [const Color(0xFFFF8A50), const Color(0xFFE64A19)],
+                onTap: () => openVaultIdentity(context),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _QuickNavCard(
+                icon: LucideIcons.shield,
+                label: 'Policies',
+                subtitle: 'Spending rules',
+                gradientColors: [_kNeonCyan, _kNeonCyanDim],
+                onTap: () => openPolicyArchitect(context),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _QuickNavCard(
-            icon: LucideIcons.lock,
-            label: 'Vault',
-            subtitle: 'Keys & Identity',
-            gradientColors: [const Color(0xFFFF8A50), const Color(0xFFE64A19)],
-            onTap: () => openVaultIdentity(context),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _QuickNavCard(
-            icon: LucideIcons.shield,
-            label: 'Policies',
-            subtitle: 'Spending rules',
-            gradientColors: [_kNeonCyan, _kNeonCyanDim],
-            onTap: () => openPolicyArchitect(context),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _QuickNavCard(
-            icon: LucideIcons.layers,
-            label: 'Channels',
-            subtitle: 'State channels',
-            gradientColors: [const Color(0xFFFF6E40), const Color(0xFFE65100)],
-            onTap: () => openChannelTopology(context),
-          ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _QuickNavCard(
+                icon: LucideIcons.arrowDownToLine,
+                label: 'Deposit',
+                subtitle: 'Cross-chain USDC',
+                gradientColors: [const Color(0xFF4CAF50), const Color(0xFF2E7D32)],
+                onTap: () => openCctpTransfer(context),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _QuickNavCard(
+                icon: LucideIcons.layers,
+                label: 'Channels',
+                subtitle: 'State channels',
+                gradientColors: [const Color(0xFFFF6E40), const Color(0xFFE65100)],
+                onTap: () => openChannelTopology(context),
+              ),
+            ),
+          ],
         ),
       ],
     );

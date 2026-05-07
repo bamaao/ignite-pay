@@ -6,6 +6,7 @@
 // Static analysis wrongly picks the IO variant, thus ignore this
 // ignore_for_file: argument_type_not_assignable
 
+import 'api/cctp_transfer.dart';
 import 'api/channel.dart';
 import 'api/channel_store.dart';
 import 'api/mb_voucher.dart';
@@ -38,6 +39,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
+
+  @protected
   MerchantPolicy dco_decode_box_autoadd_merchant_policy(dynamic raw);
 
   @protected
@@ -51,6 +55,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BigInt dco_decode_box_autoadd_u_64(dynamic raw);
+
+  @protected
+  CctpFeeQuote dco_decode_cctp_fee_quote(dynamic raw);
+
+  @protected
+  CctpTransferStatus dco_decode_cctp_transfer_status(dynamic raw);
 
   @protected
   ChannelInfo dco_decode_channel_info(dynamic raw);
@@ -107,6 +117,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
+  PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
+
+  @protected
   MerchantPolicy? dco_decode_opt_box_autoadd_merchant_policy(dynamic raw);
 
   @protected
@@ -120,6 +133,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
+
+  @protected
+  List<String>? dco_decode_opt_list_String(dynamic raw);
 
   @protected
   PaymentQrData dco_decode_payment_qr_data(dynamic raw);
@@ -164,6 +180,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
   MerchantPolicy sse_decode_box_autoadd_merchant_policy(
     SseDeserializer deserializer,
   );
@@ -183,6 +202,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
+
+  @protected
+  CctpFeeQuote sse_decode_cctp_fee_quote(SseDeserializer deserializer);
+
+  @protected
+  CctpTransferStatus sse_decode_cctp_transfer_status(
+    SseDeserializer deserializer,
+  );
 
   @protected
   ChannelInfo sse_decode_channel_info(SseDeserializer deserializer);
@@ -247,6 +274,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
+  PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
   MerchantPolicy? sse_decode_opt_box_autoadd_merchant_policy(
     SseDeserializer deserializer,
   );
@@ -266,6 +296,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
+
+  @protected
+  List<String>? sse_decode_opt_list_String(SseDeserializer deserializer);
 
   @protected
   PaymentQrData sse_decode_payment_qr_data(SseDeserializer deserializer);
@@ -318,6 +351,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_i_64(
+    PlatformInt64 self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_merchant_policy(
     MerchantPolicy self,
     SseSerializer serializer,
@@ -340,6 +379,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cctp_fee_quote(CctpFeeQuote self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cctp_transfer_status(
+    CctpTransferStatus self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_channel_info(ChannelInfo self, SseSerializer serializer);
@@ -429,6 +477,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_i_64(
+    PlatformInt64? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_merchant_policy(
     MerchantPolicy? self,
     SseSerializer serializer,
@@ -451,6 +505,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_list_String(List<String>? self, SseSerializer serializer);
 
   @protected
   void sse_encode_payment_qr_data(PaymentQrData self, SseSerializer serializer);

@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `build_raw_transaction`, `build_register_ix_data`, `compact_u64_encode`, `derive_session_pda_simple`, `get_recent_blockhash`, `get_session_program_id_bytes`, `is_on_curve`, `send_transaction`
+// These functions are ignored because they are not marked as `pub`: `build_raw_transaction`, `build_register_ix_data`, `compact_u64_encode`, `derive_ata`, `derive_session_pda_simple`, `get_recent_blockhash`, `get_session_program_id_bytes`, `is_on_curve`, `send_transaction`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Create a session key for payment authorization.
@@ -53,6 +53,81 @@ Future<SessionKeyInfo> createAndRegisterSessionKey({
   scopes: scopes,
   spendingLimit: spendingLimit,
   durationSecs: durationSecs,
+);
+
+/// Register an externally-provided session key on-chain.
+/// Used when MCP creates the ephemeral keypair and the phone just needs to register it.
+/// The logic mirrors `create_and_register_session_key()` but skips keypair generation.
+Future<SessionKeyInfo> registerExternalSessionKey({
+  required String storagePath,
+  required String rpcUrl,
+  required String ownerSecretKey,
+  required String ephemeralPubkey,
+  required String ephemeralSecretKey,
+  required String targetProgram,
+  required List<String> scopes,
+  required BigInt spendingLimit,
+  required PlatformInt64 durationSecs,
+  String? tokenMint,
+}) => RustLib.instance.api.crateApiSessionRegisterExternalSessionKey(
+  storagePath: storagePath,
+  rpcUrl: rpcUrl,
+  ownerSecretKey: ownerSecretKey,
+  ephemeralPubkey: ephemeralPubkey,
+  ephemeralSecretKey: ephemeralSecretKey,
+  targetProgram: targetProgram,
+  scopes: scopes,
+  spendingLimit: spendingLimit,
+  durationSecs: durationSecs,
+  tokenMint: tokenMint,
+);
+
+/// Fund a session key by transferring SOL (and optionally SPL token) from the owner.
+/// Uses raw JSON-RPC to build System Program transfer (and Token Program transfer) instructions.
+Future<List<String>> fundSessionKey({
+  required String rpcUrl,
+  required String ownerSecretKey,
+  required String ephemeralPubkey,
+  required BigInt solAmount,
+  String? splTokenMint,
+  BigInt? splAmount,
+}) => RustLib.instance.api.crateApiSessionFundSessionKey(
+  rpcUrl: rpcUrl,
+  ownerSecretKey: ownerSecretKey,
+  ephemeralPubkey: ephemeralPubkey,
+  solAmount: solAmount,
+  splTokenMint: splTokenMint,
+  splAmount: splAmount,
+);
+
+/// Register an externally-provided session key and fund it in one operation.
+/// Calls `register_external_session_key` then `fund_session_key`.
+Future<SessionKeyInfo> registerAndFundSessionKey({
+  required String storagePath,
+  required String rpcUrl,
+  required String ownerSecretKey,
+  required String ephemeralPubkey,
+  required String ephemeralSecretKey,
+  required String targetProgram,
+  required List<String> scopes,
+  required BigInt spendingLimit,
+  required PlatformInt64 durationSecs,
+  String? tokenMint,
+  required BigInt solFunding,
+  BigInt? tokenFunding,
+}) => RustLib.instance.api.crateApiSessionRegisterAndFundSessionKey(
+  storagePath: storagePath,
+  rpcUrl: rpcUrl,
+  ownerSecretKey: ownerSecretKey,
+  ephemeralPubkey: ephemeralPubkey,
+  ephemeralSecretKey: ephemeralSecretKey,
+  targetProgram: targetProgram,
+  scopes: scopes,
+  spendingLimit: spendingLimit,
+  durationSecs: durationSecs,
+  tokenMint: tokenMint,
+  solFunding: solFunding,
+  tokenFunding: tokenFunding,
 );
 
 /// List all session keys stored locally in sled.
@@ -141,6 +216,108 @@ Future<MerchantPolicy?> loadMerchantPolicy({
 }) => RustLib.instance.api.crateApiSessionLoadMerchantPolicy(
   storagePath: storagePath,
   merchantDid: merchantDid,
+);
+
+/// Build an unsigned SOL transfer transaction for direct wallet signing.
+///
+/// Constructs a legacy Solana transaction with a SystemProgram Transfer instruction.
+/// The first signature slot is filled with 64 zero bytes (placeholder) so that
+/// the receiving wallet can replace it with the real signature.
+///
+/// Returns the base58-encoded unsigned transaction bytes.
+Future<String> buildUnsignedTransferTx({
+  required String rpcUrl,
+  required String walletPubkeyB58,
+  required String merchantDid,
+  required BigInt amountLamports,
+}) => RustLib.instance.api.crateApiSessionBuildUnsignedTransferTx(
+  rpcUrl: rpcUrl,
+  walletPubkeyB58: walletPubkeyB58,
+  merchantDid: merchantDid,
+  amountLamports: amountLamports,
+);
+
+/// Build an unsigned SPL Token transfer transaction for direct wallet signing.
+///
+/// Constructs a legacy Solana transaction with a Token Program Transfer instruction.
+/// Uses ATA derivation locally (no RPC needed for ATA lookup).
+///
+/// Account ordering:
+/// 0: wallet (signer, writable)
+/// 1: wallet_ata (writable, non-signer) — source ATA
+/// 2: merchant_ata (writable, non-signer) — destination ATA
+/// 3: token_program (readonly, non-signer)
+Future<String> buildUnsignedSplTransferTx({
+  required String rpcUrl,
+  required String walletPubkeyB58,
+  required String merchantWalletB58,
+  required BigInt amount,
+  required String tokenMintB58,
+}) => RustLib.instance.api.crateApiSessionBuildUnsignedSplTransferTx(
+  rpcUrl: rpcUrl,
+  walletPubkeyB58: walletPubkeyB58,
+  merchantWalletB58: merchantWalletB58,
+  amount: amount,
+  tokenMintB58: tokenMintB58,
+);
+
+/// Build an unsigned sponsored SPL Token transfer transaction for direct wallet signing.
+///
+/// Has 2 signature slots:
+/// - slot 0: relayer (fee payer, placeholder)
+/// - slot 1: wallet (signer, placeholder)
+///
+/// Account ordering:
+/// 0: relayer (signer, writable — fee payer)
+/// 1: wallet (signer, writable)
+/// 2: wallet_ata (writable, non-signer) — source
+/// 3: merchant_ata (writable, non-signer) — dest
+/// 4: token_program (readonly, non-signer)
+Future<String> buildUnsignedSponsoredSplTransferTx({
+  required String rpcUrl,
+  required String walletPubkeyB58,
+  required String merchantWalletB58,
+  required BigInt amount,
+  required String tokenMintB58,
+  required String relayerPubkeyB58,
+}) => RustLib.instance.api.crateApiSessionBuildUnsignedSponsoredSplTransferTx(
+  rpcUrl: rpcUrl,
+  walletPubkeyB58: walletPubkeyB58,
+  merchantWalletB58: merchantWalletB58,
+  amount: amount,
+  tokenMintB58: tokenMintB58,
+  relayerPubkeyB58: relayerPubkeyB58,
+);
+
+/// Fetch the relayer's fee-payer public key from GET /info.
+Future<String> fetchRelayerPubkey({required String relayerUrl}) => RustLib
+    .instance
+    .api
+    .crateApiSessionFetchRelayerPubkey(relayerUrl: relayerUrl);
+
+/// Build an unsigned sponsored SOL transfer transaction for direct wallet signing.
+///
+/// Unlike `build_unsigned_transfer_tx`, this has 2 signature slots:
+/// - slot 0: relayer (fee payer, placeholder — relayer will sign)
+/// - slot 1: wallet (signer, placeholder — wallet will sign via signTransaction)
+///
+/// Account ordering:
+/// 0: relayer (signer, writable — fee payer)
+/// 1: wallet (signer, writable)
+/// 2: merchant (writable, non-signer)
+/// 3: system_program (readonly, non-signer)
+Future<String> buildUnsignedSponsoredTransferTx({
+  required String rpcUrl,
+  required String walletPubkeyB58,
+  required String merchantDid,
+  required BigInt amountLamports,
+  required String relayerPubkeyB58,
+}) => RustLib.instance.api.crateApiSessionBuildUnsignedSponsoredTransferTx(
+  rpcUrl: rpcUrl,
+  walletPubkeyB58: walletPubkeyB58,
+  merchantDid: merchantDid,
+  amountLamports: amountLamports,
+  relayerPubkeyB58: relayerPubkeyB58,
 );
 
 /// Per-merchant authorization policy stored locally in sled.

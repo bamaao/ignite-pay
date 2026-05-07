@@ -4,6 +4,7 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
+import 'cctp_transfer.dart';
 import 'channel.dart';
 import 'channel_store.dart';
 import 'mb_voucher.dart';
@@ -85,6 +86,40 @@ Future<DecryptedMessage> decryptMessage({
 }) => RustLib.instance.api.crateApiSimpleDecryptMessage(
   storagePath: storagePath,
   jwe: jwe,
+);
+
+/// Send a session fund response back to the MCP server.
+Future<void> sendSessionFundResponse({
+  required String storagePath,
+  required String mcpDid,
+  required String sessionKeyPubkey,
+  required bool funded,
+  required BigInt newBalance,
+  String? txSignature,
+}) => RustLib.instance.api.crateApiSimpleSendSessionFundResponse(
+  storagePath: storagePath,
+  mcpDid: mcpDid,
+  sessionKeyPubkey: sessionKeyPubkey,
+  funded: funded,
+  newBalance: newBalance,
+  txSignature: txSignature,
+);
+
+/// Send a session renew response back to the MCP server.
+Future<void> sendSessionRenewResponse({
+  required String storagePath,
+  required String mcpDid,
+  required String oldSessionKeyPubkey,
+  required String newSessionKeyPubkey,
+  required bool renewed,
+  String? txSignature,
+}) => RustLib.instance.api.crateApiSimpleSendSessionRenewResponse(
+  storagePath: storagePath,
+  mcpDid: mcpDid,
+  oldSessionKeyPubkey: oldSessionKeyPubkey,
+  newSessionKeyPubkey: newSessionKeyPubkey,
+  renewed: renewed,
+  txSignature: txSignature,
 );
 
 /// Mock payment signing (placeholder for real signing).
@@ -196,6 +231,77 @@ Future<void> deleteSessionKeyLocal({
 }) => RustLib.instance.api.crateApiSimpleDeleteSessionKeyLocal(
   storagePath: storagePath,
   sessionPubkey: sessionPubkey,
+);
+
+/// Register an externally-provided session key on-chain (MCP created the keypair).
+Future<SessionKeyInfo> registerExternalSessionKey({
+  required String storagePath,
+  required String rpcUrl,
+  required String ownerSecretKey,
+  required String ephemeralPubkey,
+  required String ephemeralSecretKey,
+  required String targetProgram,
+  required List<String> scopes,
+  required BigInt spendingLimit,
+  required PlatformInt64 durationSecs,
+  String? tokenMint,
+}) => RustLib.instance.api.crateApiSimpleRegisterExternalSessionKey(
+  storagePath: storagePath,
+  rpcUrl: rpcUrl,
+  ownerSecretKey: ownerSecretKey,
+  ephemeralPubkey: ephemeralPubkey,
+  ephemeralSecretKey: ephemeralSecretKey,
+  targetProgram: targetProgram,
+  scopes: scopes,
+  spendingLimit: spendingLimit,
+  durationSecs: durationSecs,
+  tokenMint: tokenMint,
+);
+
+/// Fund a session key by transferring SOL (and optionally SPL token) from the owner.
+Future<List<String>> fundSessionKey({
+  required String rpcUrl,
+  required String ownerSecretKey,
+  required String ephemeralPubkey,
+  required BigInt solAmount,
+  String? splTokenMint,
+  BigInt? splAmount,
+}) => RustLib.instance.api.crateApiSimpleFundSessionKey(
+  rpcUrl: rpcUrl,
+  ownerSecretKey: ownerSecretKey,
+  ephemeralPubkey: ephemeralPubkey,
+  solAmount: solAmount,
+  splTokenMint: splTokenMint,
+  splAmount: splAmount,
+);
+
+/// Register an externally-provided session key and fund it in one operation.
+Future<SessionKeyInfo> registerAndFundSessionKey({
+  required String storagePath,
+  required String rpcUrl,
+  required String ownerSecretKey,
+  required String ephemeralPubkey,
+  required String ephemeralSecretKey,
+  required String targetProgram,
+  required List<String> scopes,
+  required BigInt spendingLimit,
+  required PlatformInt64 durationSecs,
+  String? tokenMint,
+  required BigInt solFunding,
+  BigInt? tokenFunding,
+}) => RustLib.instance.api.crateApiSimpleRegisterAndFundSessionKey(
+  storagePath: storagePath,
+  rpcUrl: rpcUrl,
+  ownerSecretKey: ownerSecretKey,
+  ephemeralPubkey: ephemeralPubkey,
+  ephemeralSecretKey: ephemeralSecretKey,
+  targetProgram: targetProgram,
+  scopes: scopes,
+  spendingLimit: spendingLimit,
+  durationSecs: durationSecs,
+  tokenMint: tokenMint,
+  solFunding: solFunding,
+  tokenFunding: tokenFunding,
 );
 
 /// Sign a nonce string with the phone's Ed25519 signing key.
@@ -358,6 +464,18 @@ Future<void> sendCreateChannelRequest({
   treeDepth: treeDepth,
 );
 
+/// Send an MB deposit request to the MCP server.
+/// The MCP deposits into the MagicBlock shared vault and returns mb-deposit-response.
+Future<void> sendMbDepositRequest({
+  required String storagePath,
+  required BigInt amount,
+  required String token,
+}) => RustLib.instance.api.crateApiSimpleSendMbDepositRequest(
+  storagePath: storagePath,
+  amount: amount,
+  token: token,
+);
+
 /// Get or generate the buyer MB keypair, return base58 pubkey.
 Future<String> mbGetBuyerPubkey({required String storagePath}) => RustLib
     .instance
@@ -377,18 +495,6 @@ Future<MbVoucherResult> mbSignVoucher({
   merchantMbPubkey: merchantMbPubkey,
   seq: seq,
   amount: amount,
-);
-
-/// Send an MB deposit request to the MCP server.
-/// The MCP deposits into the MagicBlock shared vault and returns mb-deposit-response.
-Future<void> sendMbDepositRequest({
-  required String storagePath,
-  required BigInt amount,
-  required String token,
-}) => RustLib.instance.api.crateApiSimpleSendMbDepositRequest(
-  storagePath: storagePath,
-  amount: amount,
-  token: token,
 );
 
 /// Send a QR payment request to the MCP server.
@@ -414,6 +520,20 @@ Future<void> sendQrPaymentRequest({
   merchantMediatorUrl: merchantMediatorUrl,
 );
 
+/// Build an unsigned SOL transfer transaction for direct wallet signing.
+/// Bridge wrapper around `session::build_unsigned_transfer_tx`.
+Future<String> buildUnsignedTransferTx({
+  required String rpcUrl,
+  required String walletPubkeyB58,
+  required String merchantDid,
+  required BigInt amountLamports,
+}) => RustLib.instance.api.crateApiSimpleBuildUnsignedTransferTx(
+  rpcUrl: rpcUrl,
+  walletPubkeyB58: walletPubkeyB58,
+  merchantDid: merchantDid,
+  amountLamports: amountLamports,
+);
+
 /// Send a signed MB voucher to the merchant via DIDComm.
 Future<void> mbSendVoucher({
   required String storagePath,
@@ -435,26 +555,11 @@ Future<void> mbSendVoucher({
   buyerSig: buyerSig,
 );
 
-/// Build an unsigned SOL transfer transaction for direct wallet signing.
-/// Bridge wrapper around `session::build_unsigned_transfer_tx`.
-Future<String> buildUnsignedTransferTx({
-  required String rpcUrl,
-  required String walletPubkeyB58,
-  required String merchantDid,
-  required BigInt amountLamports,
-}) => RustLib.instance.api.crateApiSimpleBuildUnsignedTransferTx(
-  rpcUrl: rpcUrl,
-  walletPubkeyB58: walletPubkeyB58,
-  merchantDid: merchantDid,
-  amountLamports: amountLamports,
-);
-
 /// Fetch the relayer's fee-payer public key from GET /info.
-Future<String> fetchRelayerPubkey({
-  required String relayerUrl,
-}) => RustLib.instance.api.crateApiSimpleFetchRelayerPubkey(
-  relayerUrl: relayerUrl,
-);
+Future<String> fetchRelayerPubkey({required String relayerUrl}) => RustLib
+    .instance
+    .api
+    .crateApiSimpleFetchRelayerPubkey(relayerUrl: relayerUrl);
 
 /// Build an unsigned sponsored SOL transfer transaction for direct wallet signing.
 /// Bridge wrapper around `session::build_unsigned_sponsored_transfer_tx`.
@@ -506,78 +611,60 @@ Future<String> buildUnsignedSponsoredSplTransferTx({
   relayerPubkeyB58: relayerPubkeyB58,
 );
 
-/// Register an externally-provided session key on-chain (MCP created the keypair).
-/// Bridge wrapper around `session::register_external_session_key`.
-Future<SessionKeyInfo> registerExternalSessionKey({
-  required String storagePath,
-  required String rpcUrl,
-  required String ownerSecretKey,
-  required String ephemeralPubkey,
-  required String ephemeralSecretKey,
-  required String targetProgram,
-  required List<String> scopes,
-  required BigInt spendingLimit,
-  required PlatformInt64 durationSecs,
-  String? tokenMint,
-}) => RustLib.instance.api.crateApiSimpleRegisterExternalSessionKey(
-  storagePath: storagePath,
-  rpcUrl: rpcUrl,
-  ownerSecretKey: ownerSecretKey,
-  ephemeralPubkey: ephemeralPubkey,
-  ephemeralSecretKey: ephemeralSecretKey,
-  targetProgram: targetProgram,
-  scopes: scopes,
-  spendingLimit: spendingLimit,
-  durationSecs: durationSecs,
-  tokenMint: tokenMint,
+/// Query CCTP forwarding fees from Circle Iris API.
+Future<CctpFeeQuote> cctpGetFees({
+  required String irisApiUrl,
+  required int srcDomain,
+  required int dstDomain,
+}) => RustLib.instance.api.crateApiSimpleCctpGetFees(
+  irisApiUrl: irisApiUrl,
+  srcDomain: srcDomain,
+  dstDomain: dstDomain,
 );
 
-/// Fund a session key by transferring SOL (and optionally SPL token) from the owner.
-/// Bridge wrapper around `session::fund_session_key`.
-Future<List<String>> fundSessionKey({
-  required String rpcUrl,
-  required String ownerSecretKey,
-  required String ephemeralPubkey,
-  required BigInt solAmount,
-  String? splTokenMint,
-  BigInt? splAmount,
-}) => RustLib.instance.api.crateApiSimpleFundSessionKey(
-  rpcUrl: rpcUrl,
-  ownerSecretKey: ownerSecretKey,
-  ephemeralPubkey: ephemeralPubkey,
-  solAmount: solAmount,
-  splTokenMint: splTokenMint,
-  splAmount: splAmount,
+/// Build ERC-20 approve calldata (USDC → TokenMessengerV2).
+Future<String> cctpBuildApproveCalldata({
+  required String spender,
+  required BigInt amount,
+}) => RustLib.instance.api.crateApiSimpleCctpBuildApproveCalldata(
+  spender: spender,
+  amount: amount,
 );
 
-/// Register an externally-provided session key and fund it in one operation.
-/// Bridge wrapper around `session::register_and_fund_session_key`.
-Future<SessionKeyInfo> registerAndFundSessionKey({
-  required String storagePath,
-  required String rpcUrl,
-  required String ownerSecretKey,
-  required String ephemeralPubkey,
-  required String ephemeralSecretKey,
-  required String targetProgram,
-  required List<String> scopes,
-  required BigInt spendingLimit,
-  required PlatformInt64 durationSecs,
-  String? tokenMint,
-  required BigInt solFunding,
-  BigInt? tokenFunding,
-}) => RustLib.instance.api.crateApiSimpleRegisterAndFundSessionKey(
-  storagePath: storagePath,
-  rpcUrl: rpcUrl,
-  ownerSecretKey: ownerSecretKey,
-  ephemeralPubkey: ephemeralPubkey,
-  ephemeralSecretKey: ephemeralSecretKey,
-  targetProgram: targetProgram,
-  scopes: scopes,
-  spendingLimit: spendingLimit,
-  durationSecs: durationSecs,
-  tokenMint: tokenMint,
-  solFunding: solFunding,
-  tokenFunding: tokenFunding,
+/// Build depositForBurnWithHook calldata for TokenMessengerV2.
+Future<String> cctpBuildDepositForBurnCalldata({
+  required BigInt amount,
+  required int dstDomain,
+  required String mintRecipient,
+  required String burnToken,
+  required String dstCaller,
+  required int maxFee,
+  required int minFinalityThreshold,
+}) => RustLib.instance.api.crateApiSimpleCctpBuildDepositForBurnCalldata(
+  amount: amount,
+  dstDomain: dstDomain,
+  mintRecipient: mintRecipient,
+  burnToken: burnToken,
+  dstCaller: dstCaller,
+  maxFee: maxFee,
+  minFinalityThreshold: minFinalityThreshold,
+);
+
+/// Derive the Solana USDC ATA for a wallet address (returns hex bytes32).
+Future<String> cctpDeriveSolanaUsdcAta({required String walletB58}) => RustLib
+    .instance
+    .api
+    .crateApiSimpleCctpDeriveSolanaUsdcAta(walletB58: walletB58);
+
+/// Poll Circle Iris API for CCTP transfer status.
+Future<CctpTransferStatus> cctpPollStatus({
+  required String irisApiUrl,
+  required int srcDomain,
+  required String burnTxHash,
+}) => RustLib.instance.api.crateApiSimpleCctpPollStatus(
+  irisApiUrl: irisApiUrl,
+  srcDomain: srcDomain,
+  burnTxHash: burnTxHash,
 );
 
 /// Auth grant returned from payment signing.
@@ -724,39 +811,3 @@ class OobInvitationData {
           mediatorWsUrl == other.mediatorWsUrl &&
           label == other.label;
 }
-
-/// Send a session fund response back to the MCP server.
-Future<void> sendSessionFundResponse({
-  required String storagePath,
-  required String mcpDid,
-  required String sessionKeyPubkey,
-  required bool funded,
-  required BigInt newBalance,
-  String? txSignature,
-}) =>
-    RustLib.instance.api.crateApiSimpleSendSessionFundResponse(
-      storagePath: storagePath,
-      mcpDid: mcpDid,
-      sessionKeyPubkey: sessionKeyPubkey,
-      funded: funded,
-      newBalance: newBalance,
-      txSignature: txSignature,
-    );
-
-/// Send a session renew response back to the MCP server.
-Future<void> sendSessionRenewResponse({
-  required String storagePath,
-  required String mcpDid,
-  required String oldSessionKeyPubkey,
-  required String newSessionKeyPubkey,
-  required bool renewed,
-  String? txSignature,
-}) =>
-    RustLib.instance.api.crateApiSimpleSendSessionRenewResponse(
-      storagePath: storagePath,
-      mcpDid: mcpDid,
-      oldSessionKeyPubkey: oldSessionKeyPubkey,
-      newSessionKeyPubkey: newSessionKeyPubkey,
-      renewed: renewed,
-      txSignature: txSignature,
-    );

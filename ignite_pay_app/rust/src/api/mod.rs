@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod cctp_transfer;
 pub mod channel;
 pub mod channel_store;
 pub mod identity;

@@ -8,6 +8,7 @@ import 'package:ignite_pay_app/src/rust/api/channel_store.dart';
 import 'package:ignite_pay_app/src/rust/api/notification.dart';
 import 'package:ignite_pay_app/src/rust/api/session.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart';
+import 'package:ignite_pay_app/src/rust/api/cctp_transfer.dart';
 import 'package:ignite_pay_app/src/rust/api/mb_voucher.dart';
 import 'package:ignite_pay_app/src/rust/frb_generated.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
@@ -56,7 +57,7 @@ class _MockRustLibApi extends RustLibApi {
     int? dailyTxCountLimit,
     BigInt? perTxLimit,
     String? tokenMint,
-    required String? paymentMethod,
+    String? paymentMethod,
   }) async {}
 
   @override
@@ -543,7 +544,7 @@ class _MockRustLibApi extends RustLibApi {
     required String sessionKeyPubkey,
     required bool funded,
     required BigInt newBalance,
-    required String? txSignature,
+    String? txSignature,
   }) async {}
 
   @override
@@ -553,7 +554,7 @@ class _MockRustLibApi extends RustLibApi {
     required String oldSessionKeyPubkey,
     required String newSessionKeyPubkey,
     required bool renewed,
-    required String? txSignature,
+    String? txSignature,
   }) async {}
 
   @override
@@ -603,6 +604,160 @@ class _MockRustLibApi extends RustLibApi {
     String? tokenMint,
     required BigInt solFunding,
     BigInt? tokenFunding,
+  }) async =>
+      SessionKeyInfo(
+        ephemeralPubkey: ephemeralPubkey,
+        ephemeralSecretKey: ephemeralSecretKey,
+        expiresAt: DateTime.now().millisecondsSinceEpoch + durationSecs * 1000,
+        spendingLimit: spendingLimit,
+        scopes: scopes,
+        txSignature: 'mock_tx_sig',
+        sessionPda: 'mock_pda',
+      );
+
+  // --- CCTP bridge mocks ---
+
+  @override
+  Future<CctpFeeQuote> crateApiSimpleCctpGetFees({
+    required String irisApiUrl,
+    required int srcDomain,
+    required int dstDomain,
+  }) async =>
+      CctpFeeQuote(
+        forwardFeeLow: '0.000500',
+        forwardFeeMed: '0.001000',
+        forwardFeeHigh: '0.003000',
+        minimumFee: '0.000100',
+      );
+
+  @override
+  Future<String> crateApiSimpleCctpBuildApproveCalldata({
+    required String spender,
+    required BigInt amount,
+  }) async =>
+      '0x095ea7b3' + '0' * 64 + amount.toRadixString(16).padLeft(64, '0');
+
+  @override
+  Future<String> crateApiSimpleCctpBuildDepositForBurnCalldata({
+    required BigInt amount,
+    required int dstDomain,
+    required String mintRecipient,
+    required String burnToken,
+    required String dstCaller,
+    required int maxFee,
+    required int minFinalityThreshold,
+  }) async =>
+      '0xf93a5932' + '0' * 512;
+
+  @override
+  Future<String> crateApiSimpleCctpDeriveSolanaUsdcAta({
+    required String walletB58,
+  }) async =>
+      '0' * 64;
+
+  @override
+  Future<CctpTransferStatus> crateApiSimpleCctpPollStatus({
+    required String irisApiUrl,
+    required int srcDomain,
+    required String burnTxHash,
+  }) async =>
+      CctpTransferStatus(
+        state: 'complete',
+        burnTxHash: burnTxHash,
+        forwardTxHash: 'mock_forward_tx_hash',
+        message: null,
+      );
+
+  // --- Session transfer bridge mocks ---
+
+  @override
+  Future<String> crateApiSessionBuildUnsignedTransferTx({
+    required String rpcUrl,
+    required String walletPubkeyB58,
+    required String merchantDid,
+    required BigInt amountLamports,
+  }) async => 'unsigned_tx_b58_mock';
+
+  @override
+  Future<String> crateApiSessionBuildUnsignedSplTransferTx({
+    required String rpcUrl,
+    required String walletPubkeyB58,
+    required String merchantWalletB58,
+    required BigInt amount,
+    required String tokenMintB58,
+  }) async => 'unsigned_spl_tx_b58_mock';
+
+  @override
+  Future<String> crateApiSessionBuildUnsignedSponsoredTransferTx({
+    required String rpcUrl,
+    required String walletPubkeyB58,
+    required String merchantDid,
+    required BigInt amountLamports,
+    required String relayerPubkeyB58,
+  }) async => 'unsigned_sponsored_tx_b58_mock';
+
+  @override
+  Future<String> crateApiSessionBuildUnsignedSponsoredSplTransferTx({
+    required String rpcUrl,
+    required String walletPubkeyB58,
+    required String merchantWalletB58,
+    required BigInt amount,
+    required String tokenMintB58,
+    required String relayerPubkeyB58,
+  }) async => 'unsigned_sponsored_spl_tx_b58_mock';
+
+  @override
+  Future<String> crateApiSessionFetchRelayerPubkey({
+    required String relayerUrl,
+  }) async => 'mockRelayerPubkey11111111111111111111111111111111';
+
+  @override
+  Future<List<String>> crateApiSessionFundSessionKey({
+    required String rpcUrl,
+    required String ownerSecretKey,
+    required String ephemeralPubkey,
+    required BigInt solAmount,
+    String? splTokenMint,
+    BigInt? splAmount,
+  }) async => ['mock_fund_tx_sig'];
+
+  @override
+  Future<SessionKeyInfo> crateApiSessionRegisterAndFundSessionKey({
+    required String storagePath,
+    required String rpcUrl,
+    required String ownerSecretKey,
+    required String ephemeralPubkey,
+    required String ephemeralSecretKey,
+    required String targetProgram,
+    required List<String> scopes,
+    required BigInt spendingLimit,
+    required PlatformInt64 durationSecs,
+    String? tokenMint,
+    required BigInt solFunding,
+    BigInt? tokenFunding,
+  }) async =>
+      SessionKeyInfo(
+        ephemeralPubkey: ephemeralPubkey,
+        ephemeralSecretKey: ephemeralSecretKey,
+        expiresAt: DateTime.now().millisecondsSinceEpoch + durationSecs * 1000,
+        spendingLimit: spendingLimit,
+        scopes: scopes,
+        txSignature: 'mock_tx_sig',
+        sessionPda: 'mock_pda',
+      );
+
+  @override
+  Future<SessionKeyInfo> crateApiSessionRegisterExternalSessionKey({
+    required String storagePath,
+    required String rpcUrl,
+    required String ownerSecretKey,
+    required String ephemeralPubkey,
+    required String ephemeralSecretKey,
+    required String targetProgram,
+    required List<String> scopes,
+    required BigInt spendingLimit,
+    required PlatformInt64 durationSecs,
+    String? tokenMint,
   }) async =>
       SessionKeyInfo(
         ephemeralPubkey: ephemeralPubkey,

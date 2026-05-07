@@ -60,6 +60,7 @@ MagicBlock ER 即时记录 (<50ms)   双签提交链上结算
 | **Session Key** | ~400ms | 正常 | 链上直接支付，临时密钥授权 |
 | **钱包直连** | ~400ms | 正常 | Phantom/Solflare deep link，MCP 不接触私钥 |
 | **Relayer 代付** | ~400ms | 代付 | 用户无 gas 的赞助支付模式 |
+| **CCTP 跨链充值** | 10-30min | 源链 gas | EVM → Solana USDC 跨链充值 (Circle CCTP V2 Forwarding) |
 
 ### 6. DIDComm v2 端到端加密
 
@@ -349,6 +350,7 @@ python server.py
 | [docs/session-key-payment-flow.md](docs/session-key-payment-flow.md) | Session Key 支付流程 |
 | [docs/direct-wallet-payment-flow.md](docs/direct-wallet-payment-flow.md) | 钱包直连支付流程 |
 | [docs/sponsored-relayer-payment-flow.md](docs/sponsored-relayer-payment-flow.md) | 赞助支付流程 |
+| [docs/cctp-cross-chain-deposit.md](docs/cctp-cross-chain-deposit.md) | CCTP Forwarding EVM→Solana 跨链 USDC 充值 |
 
 ---
 

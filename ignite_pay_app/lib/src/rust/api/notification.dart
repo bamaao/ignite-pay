@@ -43,67 +43,43 @@ class DecryptedMessage {
   /// User-assigned label for the merchant.
   final String? label;
 
-  /// F2: MCP-provided ephemeral public key for session key registration.
+  /// Base58-encoded ephemeral public key from MCP.
   final String? newSessionKeyPubkey;
 
-  /// F2: MCP-provided ephemeral secret key (64-byte keypair, base58) for session key registration.
+  /// Base58-encoded 64-byte ephemeral keypair (secret key) from MCP.
   final String? newSessionKeySecretKey;
 
-  /// F2: Spending limit in lamports for the MCP-provided session key.
+  /// Spending limit in lamports.
   final BigInt? newSessionKeySpendingLimit;
 
-  /// F2: Session duration in seconds for the MCP-provided session key.
+  /// Session duration in seconds.
   final PlatformInt64? newSessionKeyDurationSecs;
 
-  /// F2: Permission scopes for the MCP-provided session key.
+  /// Permission scopes.
   final List<String>? newSessionKeyScopes;
 
-  /// F2: SPL Token mint address (base58).
+  /// SPL Token mint address (base58).
   final String? newSessionKeyTokenMint;
 
-  /// F2: Suggested SOL funding amount (lamports).
+  /// Suggested SOL funding amount (lamports).
   final BigInt? newSessionKeySuggestedSolFunding;
 
-  /// F2: Suggested token funding amount.
+  /// Suggested token funding amount.
   final BigInt? newSessionKeySuggestedTokenFunding;
 
-  /// F2: Available payment methods (e.g., ["session_key", "magicblock"]).
+  /// Available payment methods (e.g., ["session_key", "magicblock"]).
   final List<String>? availablePaymentMethods;
-
-  /// F3/F7: Required funding amount for session key.
   final BigInt? sessionFundRequiredAmount;
-
-  /// F3/F7: Current balance of the session key.
   final BigInt? sessionFundCurrentBalance;
-
-  /// F3/F7: Remaining spending limit.
   final BigInt? sessionFundSpendingLimitRemaining;
-
-  /// F3/F7: Token mint address.
   final String? sessionFundTokenMint;
-
-  /// F3/F7: Reason for fund request.
   final String? sessionFundReason;
-
-  /// F13: Current session balance in balance notification.
   final BigInt? balanceNotificationBalance;
-
-  /// F13: Threshold that triggered notification.
   final BigInt? balanceNotificationThreshold;
-
-  /// F13: Remaining spending limit in notification.
   final BigInt? balanceNotificationSpendingLimitRemaining;
-
-  /// F14: Old session key pubkey being renewed.
   final String? oldSessionKeyPubkey;
-
-  /// F14: Expiry timestamp of the old session key.
   final PlatformInt64? sessionRenewExpiresAt;
-
-  /// F16: Relayer fee-payer public key (base58).
   final String? relayerPubkey;
-
-  /// F16: Relayer service URL.
   final String? relayerUrl;
 
   const DecryptedMessage({

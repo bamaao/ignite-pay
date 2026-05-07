@@ -1315,3 +1315,54 @@ pub async fn build_unsigned_sponsored_spl_transfer_tx(
     )
     .await
 }
+
+// ── CCTP Forwarding ─────────────────────────────────────────────────────────
+
+/// Query CCTP forwarding fees from Circle Iris API.
+pub async fn cctp_get_fees(
+    iris_api_url: String,
+    src_domain: u32,
+    dst_domain: u32,
+) -> Result<crate::api::cctp_transfer::CctpFeeQuote> {
+    crate::api::cctp_transfer::cctp_get_fees(iris_api_url, src_domain, dst_domain).await
+}
+
+/// Build ERC-20 approve calldata (USDC → TokenMessengerV2).
+pub fn cctp_build_approve_calldata(spender: String, amount: u64) -> Result<String> {
+    crate::api::cctp_transfer::cctp_build_approve_calldata(spender, amount)
+}
+
+/// Build depositForBurnWithHook calldata for TokenMessengerV2.
+pub fn cctp_build_deposit_for_burn_calldata(
+    amount: u64,
+    dst_domain: u32,
+    mint_recipient: String,
+    burn_token: String,
+    dst_caller: String,
+    max_fee: u32,
+    min_finality_threshold: u32,
+) -> Result<String> {
+    crate::api::cctp_transfer::cctp_build_deposit_for_burn_calldata(
+        amount,
+        dst_domain,
+        mint_recipient,
+        burn_token,
+        dst_caller,
+        max_fee,
+        min_finality_threshold,
+    )
+}
+
+/// Derive the Solana USDC ATA for a wallet address (returns hex bytes32).
+pub fn cctp_derive_solana_usdc_ata(wallet_b58: String) -> Result<String> {
+    crate::api::cctp_transfer::cctp_derive_solana_usdc_ata(wallet_b58)
+}
+
+/// Poll Circle Iris API for CCTP transfer status.
+pub async fn cctp_poll_status(
+    iris_api_url: String,
+    src_domain: u32,
+    burn_tx_hash: String,
+) -> Result<crate::api::cctp_transfer::CctpTransferStatus> {
+    crate::api::cctp_transfer::cctp_poll_status(iris_api_url, src_domain, burn_tx_hash).await
+}
