@@ -60,16 +60,35 @@ Automatically selects the optimal payment path per scenario:
 | **Session Key** | ~400ms | Normal | On-chain direct payment, temporary key authorization |
 | **Direct Wallet** | ~400ms | Normal | Phantom/Solflare deep link, MCP never touches private keys |
 | **Relayer** | ~400ms | Sponsored | Gasless sponsored payment mode |
+| **CCTP Cross-chain Deposit** | 10-30min | Source chain gas | EVM → Solana USDC cross-chain deposit (Circle CCTP V2 Forwarding) |
 
-### 6. DIDComm v2 End-to-End Encryption
+### 6. CCTP Cross-Chain USDC Deposit
+
+Based on the [Circle CCTP V2 Forwarding](https://developers.circle.com/stablecoins/docs/cctp-forwarding) protocol, the buyer app supports one-tap USDC transfers from EVM chains (Ethereum / Base / Arbitrum / OP) to Solana wallets. Users complete on-chain operations (approve + depositForBurnWithHook) via MetaMask, and Circle automatically mints equivalent USDC to the target ATA on Solana.
+
+```
+User selects source chain + enters amount + Solana address
+       ↓
+Rust layer: query Iris fees + derive Solana ATA + ABI-encode calldata
+       ↓
+MetaMask: approve USDC → TokenMessengerV2 → depositForBurnWithHook
+       ↓
+Circle Iris: verify → attestation → mint USDC on Solana
+       ↓
+App polls for confirmation → show Solana tx hash + Solscan link
+```
+
+See [docs/cctp-cross-chain-deposit.md](docs/cctp-cross-chain-deposit.md) for details.
+
+### 7. DIDComm v2 End-to-End Encryption
 
 All communication between Agent and phone is encrypted via DIDComm v2 protocol (JWE authcrypt) — relay servers cannot read plaintext. Based on Ed25519 signing + X25519 key agreement, DID identifier format `did:ignite:z<multicodec>`.
 
-### 7. PDA On-Chain Identity
+### 8. PDA On-Chain Identity
 
 Merchant DIDs are registered on Solana via PDA accounts. Standard Solana RPC for read/write — no additional infrastructure needed. Supports platform VC (Verifiable Credential) issuance + on-chain registration + on-chain signature verification.
 
-### 8. Six-Level Risk Control
+### 9. Six-Level Risk Control
 
 | Priority | Policy | Behavior |
 |----------|--------|----------|
@@ -343,12 +362,13 @@ python server.py
 | Document | Description |
 |----------|-------------|
 | [AGENTS_en.md](AGENTS_en.md) | Complete crate-level architecture docs (English) |
-| [docs/agent-payment-flow.md](docs/agent-payment-flow.md) | Agent x402 payment flow |
+| [docs/agent-payment-flow_en.md](docs/agent-payment-flow_en.md) | Agent x402 payment flow |
 | [docs/business-flows.md](docs/business-flows.md) | All business flows (18 flows) |
 | [docs/ignite-pay-magicblock.md](docs/ignite-pay-magicblock.md) | MagicBlock payment channel design |
 | [docs/session-key-payment-flow.md](docs/session-key-payment-flow.md) | Session Key payment flow |
 | [docs/direct-wallet-payment-flow.md](docs/direct-wallet-payment-flow.md) | Direct wallet payment flow |
 | [docs/sponsored-relayer-payment-flow.md](docs/sponsored-relayer-payment-flow.md) | Sponsored relayer payment flow |
+| [docs/cctp-cross-chain-deposit.md](docs/cctp-cross-chain-deposit.md) | CCTP Forwarding EVM→Solana cross-chain USDC deposit |
 
 ---
 
