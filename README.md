@@ -62,15 +62,33 @@ MagicBlock ER 即时记录 (<50ms)   双签提交链上结算
 | **Relayer 代付** | ~400ms | 代付 | 用户无 gas 的赞助支付模式 |
 | **CCTP 跨链充值** | 10-30min | 源链 gas | EVM → Solana USDC 跨链充值 (Circle CCTP V2 Forwarding) |
 
-### 6. DIDComm v2 端到端加密
+### 6. CCTP 跨链 USDC 充值
+
+基于 [Circle CCTP V2 Forwarding](https://developers.circle.com/stablecoins/docs/cctp-forwarding) 协议，买家手机应用支持一键将 USDC 从 EVM 链（Ethereum / Base / Arbitrum / OP）跨链转移到 Solana 钱包。用户通过 MetaMask 完成链上操作（approve + depositForBurnWithHook），Circle 自动在 Solana 上 mint 等额 USDC 到目标 ATA。
+
+```
+用户选源链 + 输入金额 + Solana 地址
+       ↓
+Rust 层: 查询 Iris 手续费 + 推导 Solana ATA + ABI 编码 calldata
+       ↓
+MetaMask: approve USDC → TokenMessengerV2 → depositForBurnWithHook
+       ↓
+Circle Iris: 验证 → Attestation → Solana 上 mint USDC
+       ↓
+App 轮询确认到账 → 展示 Solana tx hash + Solscan 链接
+```
+
+详见 [docs/cctp-cross-chain-deposit.md](docs/cctp-cross-chain-deposit.md)。
+
+### 7. DIDComm v2 端到端加密
 
 Agent 与手机之间的所有通信通过 DIDComm v2 协议加密（JWE authcrypt），中继服务器无法读取明文。基于 Ed25519 签名 + X25519 密钥协商，DID 标识符格式 `did:ignite:z<multicodec>`。
 
-### 7. PDA 链上身份
+### 8. PDA 链上身份
 
 商户 DID 通过 PDA 账户注册到 Solana 链上，标准 Solana RPC 即可读写，无需额外基础设施。支持平台 VC（Verifiable Credential）签发 + 链上注册 + 链上签名验证。
 
-### 8. 六级风控
+### 9. 六级风控
 
 | 优先级 | 策略 | 行为 |
 |--------|------|------|
