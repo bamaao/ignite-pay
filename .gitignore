@@ -86,5 +86,11 @@ deploy/certs/*.pem
 # Env file
 .env
 
+# Node.js (presentation generator deps)
+node_modules/
+package.json
+package-lock.json
+generate-pptx*.js
+
 # Claude Code
 .claude/
