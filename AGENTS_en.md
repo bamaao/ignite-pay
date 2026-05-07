@@ -2,7 +2,7 @@
 
 ## Repository Overview
 
-Ignite Pay is a Solana-based decentralized payment system comprising on-chain programs (Anchor), off-chain state channels, DID identity management, DIDComm secure communication, AI Agent payment orchestration, and a mobile SDK. The project uses a multi-crate repository structure with a total of 15 Rust crates + documentation.
+Ignite Pay is a Solana-based decentralized payment system comprising on-chain programs (Anchor), <!-- State Channel: Exploration phase, not enabled off-chain state channels, --> DID identity management, DIDComm secure communication, AI Agent payment orchestration, and a mobile SDK. The project uses a multi-crate repository structure with a total of 15 Rust crates + documentation.
 
 ---
 
@@ -11,28 +11,36 @@ Ignite Pay is a Solana-based decentralized payment system comprising on-chain pr
 ```
 Layer 0 — Foundation Libraries
   ignite-pay-core              Shared types, DID identity, DIDComm, VC, audit logging
+  <!-- State Channel: Exploration phase, not enabled
   ignite-pay-state-channel     Off-chain UTXO Merkle Tree state channel engine
+  -->
 
 Layer 1 — Solana Integration
   ignite-pay-solana            Solana RPC client, payment execution, ZK DID queries, session keys
 
 Layer 2 — On-Chain Programs (no in-repo dependencies)
+  <!-- State Channel: Exploration phase, not enabled
   ignite-pay-program           State channel on-chain program (10 instructions)
+  -->
   ignite-pay-did-program       Merchant DID on-chain program (ZK Compression, 6 instructions)
   ignite-pay-session-program   Session key on-chain program (4 instructions)
 
 Layer 3 — Services and Applications
+  <!-- State Channel: Exploration phase, not enabled
   ignite-pay-channel-service   State channel HTTP service (User / Provider / Hub roles)
+  -->
   didcomm-router               DIDComm message routing and mediator service
   did-registry                 DID on-chain registration and query service
-  ignite-pay-mcp               AI Agent payment orchestration MCP server (includes state channel payments)
-  ignite-pay-merchant-mcp      Merchant-side MCP server (QR payment code + state channel payment receipt)
+  ignite-pay-mcp               AI Agent payment orchestration MCP server
+  ignite-pay-merchant-mcp      Merchant-side MCP server (QR payment code)
   ignite-pay-skill             Python SDK (PyO3)
   ignite_pay_app               Flutter mobile app (Rust Bridge, includes QR code payment)
 
 Layer 4 — Tests
+  <!-- State Channel: Exploration phase, not enabled
   ignite-pay-litesvm-tests     State channel on-chain program tests (litesvm simulator)
   ignite-pay-mollusk-tests     State channel on-chain program tests (mollusk simulator)
+  -->
 ```
 
 ---
@@ -64,6 +72,7 @@ Layer 4 — Tests
 
 ---
 
+<!-- State Channel: Exploration phase, not enabled
 ### 2. ignite-pay-state-channel
 
 **Location**: `ignite-pay-state-channel/`
@@ -86,18 +95,21 @@ Layer 4 — Tests
 | `compliance` | `ComplianceManager` — Spending limits, sliding windows, compliance flags, audit trails |
 
 ---
+-->
 
 ### 3. ignite-pay-solana
 
 **Location**: `ignite-pay-solana/`
 **Type**: Library (lib)
-**Purpose**: Solana blockchain integration layer, providing RPC client wrappers, on-chain payment execution, ZK Compression DID queries, session key management, and state channel on-chain instruction builders.
+**Purpose**: Solana blockchain integration layer, providing RPC client wrappers, on-chain payment execution, ZK Compression DID queries, <!-- State Channel: Exploration phase, not enabled and state channel on-chain instruction builders --> session key management.
 
 **Key Modules**:
 
 | Module | Description |
 |:-------|:------------|
+<!-- State Channel: Exploration phase, not enabled
 | `channel` | 10 on-chain instruction builders (open, fund, settle, challenge, claim, HTLC, etc.) |
+-->
 | `payment` | `IgnitePayClient` — On-chain payment execution (supports Sponsored and SelfFunded modes) |
 | `compression` | ZK Compression DID queries (Light Protocol `light-sdk`) |
 | `session` | Session key management (`SessionKeypair`, `SessionTokenData`) |
@@ -106,6 +118,7 @@ Layer 4 — Tests
 
 ---
 
+<!-- State Channel: Exploration phase, not enabled
 ### 4. ignite-pay-program
 
 **Location**: `ignite-pay-program/`
@@ -131,6 +144,7 @@ Layer 4 — Tests
 **Key Data Structures**: `ChannelAccount` (channel account), `ChannelStatus` (status enum)
 
 ---
+-->
 
 ### 5. ignite-pay-did-program
 
@@ -171,6 +185,7 @@ Layer 4 — Tests
 
 ---
 
+<!-- State Channel: Exploration phase, not enabled
 ### 7. ignite-pay-channel-service
 
 **Location**: `ignite-pay-channel-service/`
@@ -199,6 +214,7 @@ Layer 4 — Tests
 | `storage` | sled storage layer (channel index, node registry) |
 
 ---
+-->
 
 ### 8. didcomm-router
 
@@ -241,13 +257,13 @@ Layer 4 — Tests
 
 **Location**: `ignite-pay-mcp/`
 **Type**: Binary (bin) — MCP server
-**Purpose**: AI Agent payment orchestration server, exposing payment tools via the Model Context Protocol (MCP), processing x402 HTTP payment challenges, integrating DIDComm encrypted authorization and on-chain Solana payments. V3.0 adds state channel payment capabilities, automatically falling back to state channel payments when no active session key is available.
+**Purpose**: AI Agent payment orchestration server, exposing payment tools via the Model Context Protocol (MCP), processing x402 HTTP payment challenges, integrating DIDComm encrypted authorization and on-chain Solana payments. <!-- State Channel: Exploration phase, not enabled V3.0 adds state channel payment capabilities, automatically falling back to state channel payments when no active session key is available. -->
 
 **MCP Tools**:
 
 | Tool | Description |
 |:-----|:------------|
-| `process_x402_challenge` | Complete x402 payment flow (parse challenge -> verify VC -> on-chain DID check -> risk control -> phone authentication -> execute payment), supporting both session key and state channel payment modes |
+| `process_x402_challenge` | Complete x402 payment flow (parse challenge -> verify VC -> on-chain DID check -> risk control -> phone authentication -> execute payment) <!-- State Channel: Exploration phase, not enabled supporting both session key and state channel payment modes --> |
 | `check_authorization` | Check payment status |
 | `get_payment_history` | Query payment history |
 | `get_identity` | View DID and connection status |
@@ -255,17 +271,21 @@ Layer 4 — Tests
 | `create_session` / `get_session_status` / `close_session` | Session key management |
 | `execute_spl_payment` | Execute SPL Token transfer via session key |
 | `add_merchant` / `update_merchant` / `verify_merchant` | On-chain ZK DID management |
+<!-- State Channel: Exploration phase, not enabled
 | `open_channel` | Establish a state channel with a Hub (User role) |
 | `channel_pay` | Initiate a payment through a state channel |
 | `get_channel_status` | Query channel status (balance, sequence number, leaf count) |
 | `close_channel` | Cooperatively close a state channel |
 | `settle_channel` | Initiate on-chain settlement |
+-->
 
 **Key Modules**:
 
 | Module | Description |
 |:-------|:------------|
+<!-- State Channel: Exploration phase, not enabled
 | `channel` | State channel User-side client (`ChannelClient`), communicating with Hub HTTP API |
+-->
 | `payment` | Payment storage, pending authorization storage, payment types |
 | `mediator` | DIDComm Mediator WebSocket connection (pairing/invitation) |
 | `audit` | Payment and list event audit storage |
@@ -300,14 +320,16 @@ Layer 4 — Tests
 
 **Location**: `ignite_pay_app/rust/`
 **Type**: Flutter Rust Bridge library (cdylib + staticlib)
-**Purpose**: Rust native layer for the Ignite Pay mobile Flutter app, providing DID identity, DIDComm communication, and other native functionality via Flutter Rust Bridge. Supports QR code payment: parse merchant QR code -> confirm payment -> complete payment via state channel.
+**Purpose**: Rust native layer for the Ignite Pay mobile Flutter app, providing DID identity, DIDComm communication, and other native functionality via Flutter Rust Bridge. Supports QR code payment: parse merchant QR code -> confirm payment <!-- State Channel: Exploration phase, not enabled -> complete payment via state channel -->.
 
 **Key Modules**:
 
 | Module | Description |
 |:-------|:------------|
+<!-- State Channel: Exploration phase, not enabled
 | `api/channel` | State channel bridge functions (parse QR, open channel, pay, close, settle) |
 | `api/channel_store` | Channel state sled persistence (`ChannelStore`) |
+-->
 | `api` | Flutter-callable API functions |
 | `frb_generated` | Flutter Rust Bridge auto-generated bindings |
 
@@ -315,7 +337,9 @@ Layer 4 — Tests
 
 | File | Description |
 |:-----|:------------|
+<!-- State Channel: Exploration phase, not enabled
 | `lib/services/channel_service.dart` | Dart channel service layer (`ChannelService`) |
+-->
 | `lib/qr_payment_screen.dart` | QR code payment confirmation UI (dark glassmorphism style) |
 
 ---
@@ -324,7 +348,7 @@ Layer 4 — Tests
 
 **Location**: `ignite-pay-merchant-mcp/`
 **Type**: Binary (bin) — MCP server
-**Purpose**: Merchant-side AI Agent MCP server. Generates payment QR codes, receives state channel payments, manages orders and payment records. The merchant acts as the Provider role in the state channel.
+**Purpose**: Merchant-side AI Agent MCP server. Generates payment QR codes, <!-- State Channel: Exploration phase, not enabled receives state channel payments, --> manages orders and payment records. <!-- State Channel: Exploration phase, not enabled The merchant acts as the Provider role in the state channel. -->
 
 **MCP Tools**:
 
@@ -333,17 +357,21 @@ Layer 4 — Tests
 | `generate_payment_qr` | Generate a payment QR code (`ignite://pay?d=<base64url>` format) |
 | `check_payment` | Query payment status by order_id |
 | `get_payment_history` | Payment receipt history |
+<!-- State Channel: Exploration phase, not enabled
 | `get_channel_status` | Channel status (balance, sequence number, Provider balance) |
 | `open_channel_with_hub` | Prompt merchant Provider pubkey for user to open a channel |
 | `close_channel` | Cooperatively close channel |
 | `settle_channel` | On-chain settlement (claim + finalize) |
+-->
 | `get_identity` | Merchant DID, Hub connection status |
 
 **Key Modules**:
 
 | Module | Description |
 |:-------|:------------|
+<!-- State Channel: Exploration phase, not enabled
 | `channel` | `MerchantChannelClient` — Provider role state channel client (receive payments, co-sign, settle) |
+-->
 | `payment` | `PaymentOrderStore` — Order sled persistence (create, confirm, query, list) |
 | `qr` | QR code generation and parsing (`PaymentQrData` struct, `ignite://pay` protocol format) |
 | `mediator` | `MerchantMediator` — DIDComm Mediator connection (send payment confirmation messages) |
@@ -351,7 +379,7 @@ Layer 4 — Tests
 | `config` | TOML configuration loading (merchant, mediator, storage, solana, hub) |
 | `tools` | MCP tool input type definitions |
 
-**QR Code Format**: `ignite://pay?d=<base64url(JSON)>`, where JSON contains `type: "ignite-pay-request"`, `merchant_did`, `amount`, `description`, `order_id`, `hub_endpoint`, `timestamp`.
+**QR Code Format**: `ignite://pay?d=<base64url(JSON)>`, where JSON contains `type: "ignite-pay-request"`, `merchant_did`, `amount`, `description`, `order_id`, <!-- State Channel: Exploration phase, not enabled `hub_endpoint`, --> `timestamp`.
 
 ---
 
@@ -377,10 +405,12 @@ Layer 4 — Tests
 
 | Directory | Description |
 |:----------|:------------|
-| `docs/` | Design documents: state channel specification, DID identity scheme, DIDComm communication protocol, session keys, audit logging, etc. |
-| `docs/deploy/` | Deployment documents: ZK DID deployment guide, merchant DID on-chain walkthrough, state channel implementation details |
+| `docs/` | Design documents: <!-- State Channel: Exploration phase, not enabled state channel specification, --> DID identity scheme, DIDComm communication protocol, session keys, audit logging, etc. |
+| `docs/deploy/` | Deployment documents: ZK DID deployment guide, merchant DID on-chain walkthrough <!-- State Channel: Exploration phase, not enabled, state channel implementation details --> |
+<!-- State Channel: Exploration phase, not enabled
 | `docs/deploy/state-channel/` | State channel deployment configuration: User, Hub, and Merchant service deployment documentation |
 | `docs/deploy/state-channel/scenarios/` | 12 business scenario implementation documents: channel opening, off-chain payments, batch pipeline, HTLC, cooperative close, dispute resolution, HTLC settlement, Hub routing, multi-hop payments, auto-close, compliance audit, WebSocket real-time communication |
+-->
 
 ---
 
@@ -396,5 +426,5 @@ Layer 4 — Tests
 | On-Chain Testing | litesvm, mollusk |
 | Python Bindings | PyO3 |
 | Mobile | Flutter + Flutter Rust Bridge |
-| AI Integration | MCP (Model Context Protocol), x402 payment protocol, state channel QR code payment |
+| AI Integration | MCP (Model Context Protocol), x402 payment protocol <!-- State Channel: Exploration phase, not enabled, state channel QR code payment --> |
 | Message Mediation | DIDComm Router (WebSocket) |

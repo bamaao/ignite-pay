@@ -38,10 +38,21 @@ fn setup_svm() -> (litesvm::LiteSVM, Pubkey) {
     budget.compute_unit_limit = 10_000_000;
     let mut svm = litesvm::LiteSVM::new().with_compute_budget(budget);
     let pid = Pubkey::from_str(PROGRAM_ID_STR).unwrap();
-    let so_path = std::env::var("DID_PROGRAM_SO")
-        .unwrap_or_else(|_| "/home/zouyc/anchor-workspace/target/deploy/ignite_pay_did_program.so".to_string());
+    let sbf_out = std::env::var("SBF_OUT_DIR")
+        .unwrap_or_else(|_| "target/deploy".to_string());
+    let sbf_out = if std::path::Path::new(&sbf_out).is_absolute() {
+        sbf_out
+    } else {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+            .expect("CARGO_MANIFEST_DIR not set");
+        let project_root = std::path::Path::new(&manifest_dir)
+            .parent().unwrap()
+            .parent().unwrap();
+        project_root.join(&sbf_out).to_str().unwrap().to_string()
+    };
+    let so_path = format!("{}/ignite_pay_did_program.so", sbf_out);
     let bytes = std::fs::read(&so_path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {} — set DID_PROGRAM_SO env var", so_path, e));
+        .unwrap_or_else(|e| panic!("Failed to read {}: {} — run 'make build-sbf' or set SBF_OUT_DIR", so_path, e));
     let _ = svm.add_program(pid, &bytes);
     (svm, pid)
 }

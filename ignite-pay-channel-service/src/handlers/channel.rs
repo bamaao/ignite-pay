@@ -5,7 +5,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use ignite_pay_solana::channel::{build_fund_channel_ix, build_open_channel_ix, derive_channel_pda};
+use ignite_pay_solana::channel::{build_fund_channel_ix, build_open_channel_ix, build_open_channel_ed25519_ix, derive_channel_pda};
 use solana_sdk::pubkey::Pubkey;
 
 use crate::error::ChannelServiceError;
@@ -130,6 +130,12 @@ pub async fn open_channel(
         challenge_duration,
         min_challenge_delay,
         &channel_state.metadata.current_root,
+    );
+
+    // Build ed25519 verification instruction
+    let ed25519_ix = build_open_channel_ed25519_ix(
+        &our_pubkey,
+        &on_chain_msg,
         &sig_a_bytes,
     );
 
@@ -137,6 +143,11 @@ pub async fn open_channel(
         "channel_id": hex::encode(channel_id),
         "sequence": channel_state.metadata.sequence,
         "current_root": hex::encode(channel_state.metadata.current_root),
+        "ed25519_instructions": [{
+            "program_id": ed25519_ix.program_id.to_string(),
+            "accounts": [],
+            "data": bs58::encode(&ed25519_ix.data).into_string(),
+        }],
         "on_chain_instruction": {
             "program_id": ix.program_id.to_string(),
             "accounts": ix.accounts.iter().map(|a| {

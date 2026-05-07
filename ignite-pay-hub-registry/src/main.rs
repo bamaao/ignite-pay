@@ -44,6 +44,7 @@ async fn main() -> anyhow::Result<()> {
     let bind_addr = config.bind_addr();
 
     let app = Router::new()
+        .route("/health", get(handlers::health))
         .route("/v1/hubs", post(handlers::register_hub))
         .route("/v1/hubs", get(handlers::list_hubs))
         .route("/v1/hubs/{hub_id}", get(handlers::get_hub))

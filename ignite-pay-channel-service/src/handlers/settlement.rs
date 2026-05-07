@@ -7,8 +7,11 @@ use serde_json::{json, Value};
 
 use ed25519_dalek::Signer;
 use ignite_pay_solana::channel::{
-    build_cooperative_settle_ix, build_trigger_challenge_ix, build_settle_after_timeout_ix,
-    build_finalize_settlement_ix, build_submit_counter_state_ix,
+    build_cooperative_settle_ix, build_cooperative_settle_ed25519_ixs,
+    build_trigger_challenge_ix, build_trigger_challenge_ed25519_ix,
+    build_settle_after_timeout_ix,
+    build_finalize_settlement_ix, build_finalize_settlement_ed25519_ix,
+    build_submit_counter_state_ix, build_submit_counter_state_ed25519_ixs,
     derive_channel_pda, derive_escrow_pda,
 };
 use ignite_pay_state_channel::signing::sign_state;
@@ -36,6 +39,17 @@ fn decode_64bytes(hex_str: &str, field: &str) -> Result<[u8; 64], ChannelService
         .map_err(|_| ChannelServiceError::BadRequest(format!("invalid {} hex", field)))?
         .try_into()
         .map_err(|_| ChannelServiceError::BadRequest(format!("{} must be 64 bytes", field)))
+}
+
+/// Helper to serialize ed25519 instructions into JSON.
+fn ed25519_ixs_to_json(ixs: &[solana_sdk::instruction::Instruction]) -> Vec<Value> {
+    ixs.iter().map(|ix| {
+        json!({
+            "program_id": ix.program_id.to_string(),
+            "accounts": [],
+            "data": bs58::encode(&ix.data).into_string(),
+        })
+    }).collect()
 }
 
 #[derive(Debug, Deserialize)]
@@ -110,7 +124,7 @@ pub async fn cooperative_close(
         settle_window,
     ).map_err(ChannelServiceError::StateChannel)?;
 
-    // Build on-chain instruction
+    // Build on-chain instruction (no signatures in data)
     let (channel_pda, _) = derive_channel_pda(&channel_id, &state.program_id);
     let ix = build_cooperative_settle_ix(
         &state.program_id,
@@ -118,6 +132,17 @@ pub async fn cooperative_close(
         signed_state.sequence,
         &signed_state.root,
         settle_window,
+    );
+
+    // Build ed25519 verification instructions (2 signatures)
+    let mut coop_msg = Vec::with_capacity(32 + 8 + 32);
+    coop_msg.extend_from_slice(&channel_id);
+    coop_msg.extend_from_slice(&signed_state.sequence.to_le_bytes());
+    coop_msg.extend_from_slice(&signed_state.root);
+    let ed25519_ixs = build_cooperative_settle_ed25519_ixs(
+        &user_pk,
+        &provider_pk,
+        &coop_msg,
         &signed_state.sig_a,
         &signed_state.sig_b,
     );
@@ -126,6 +151,7 @@ pub async fn cooperative_close(
         "channel_id": channel_id_hex,
         "status": "settling",
         "settle_window": settle_window,
+        "ed25519_instructions": ed25519_ixs_to_json(&ed25519_ixs),
         "on_chain_instruction": {
             "program_id": ix.program_id.to_string(),
             "data": bs58::encode(&ix.data).into_string(),
@@ -215,7 +241,7 @@ pub async fn trigger_challenge(
         &sig_bytes,
     ).map_err(ChannelServiceError::StateChannel)?;
 
-    // Build on-chain instruction
+    // Build on-chain instruction (no signature in data)
     let (channel_pda, _) = derive_channel_pda(&channel_id, &state.program_id);
     let ix = build_trigger_challenge_ix(
         &state.program_id,
@@ -223,6 +249,12 @@ pub async fn trigger_challenge(
         &our_pubkey,
         &submitted_root,
         req.submitted_sequence,
+    );
+
+    // Build ed25519 verification instruction
+    let ed25519_ix = build_trigger_challenge_ed25519_ix(
+        &our_pubkey,
+        &msg,
         &sig_bytes,
     );
 
@@ -230,6 +262,7 @@ pub async fn trigger_challenge(
         "channel_id": channel_id_hex,
         "status": "challenged",
         "challenge_slot": current_slot,
+        "ed25519_instructions": ed25519_ixs_to_json(&[ed25519_ix]),
         "on_chain_instruction": {
             "program_id": ix.program_id.to_string(),
             "data": bs58::encode(&ix.data).into_string(),
@@ -272,13 +305,24 @@ pub async fn submit_counter(
         &provider_pk,
     ).map_err(ChannelServiceError::StateChannel)?;
 
-    // Build on-chain instruction
+    // Build on-chain instruction (no signatures in data)
     let (channel_pda, _) = derive_channel_pda(&channel_id, &state.program_id);
     let ix = build_submit_counter_state_ix(
         &state.program_id,
         &channel_pda,
         counter_sequence,
         &counter_root,
+    );
+
+    // Build ed25519 verification instructions (2 signatures)
+    let mut counter_msg = Vec::with_capacity(32 + 8 + 32);
+    counter_msg.extend_from_slice(&channel_id);
+    counter_msg.extend_from_slice(&counter_sequence.to_le_bytes());
+    counter_msg.extend_from_slice(&counter_root);
+    let ed25519_ixs = build_submit_counter_state_ed25519_ixs(
+        &user_pk,
+        &provider_pk,
+        &counter_msg,
         &sig_a,
         &sig_b,
     );
@@ -286,6 +330,7 @@ pub async fn submit_counter(
     Ok(Json(json!({
         "channel_id": channel_id_hex,
         "sequence": counter_sequence,
+        "ed25519_instructions": ed25519_ixs_to_json(&ed25519_ixs),
         "on_chain_instruction": {
             "program_id": ix.program_id.to_string(),
             "data": bs58::encode(&ix.data).into_string(),
@@ -409,7 +454,7 @@ pub async fn finalize(
         &caller_sig.to_bytes(),
     ).map_err(ChannelServiceError::StateChannel)?;
 
-    // Build on-chain instruction
+    // Build on-chain instruction (no signature in data)
     let (channel_pda, _) = derive_channel_pda(&channel_id, &state.program_id);
     let (escrow_pda, _) = derive_escrow_pda(&channel_id, &state.program_id);
 
@@ -420,12 +465,19 @@ pub async fn finalize(
         &channel_state.metadata.vault_a,
         &channel_state.metadata.vault_b,
         &escrow_pda,
+    );
+
+    // Build ed25519 verification instruction
+    let ed25519_ix = build_finalize_settlement_ed25519_ix(
+        &our_pubkey,
+        &fin_msg,
         &caller_sig.to_bytes(),
     );
 
     Ok(Json(json!({
         "channel_id": channel_id_hex,
         "status": "closed",
+        "ed25519_instructions": ed25519_ixs_to_json(&[ed25519_ix]),
         "on_chain_instruction": {
             "program_id": ix.program_id.to_string(),
             "data": bs58::encode(&ix.data).into_string(),

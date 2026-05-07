@@ -3,6 +3,10 @@
 //! Constructs `solana_sdk::instruction::Instruction` for all 10 operations
 //! defined in `ignite-pay-program`. Each builder mirrors the exact
 //! `#[derive(Accounts)]` layout and argument order from the on-chain program.
+//!
+//! Signature verification is done via ed25519 instruction introspection:
+//! callers must prepend ed25519 instructions to the transaction before the
+//! program instruction.
 
 use solana_sdk::{
     hash,
@@ -10,6 +14,54 @@ use solana_sdk::{
     pubkey::Pubkey,
     sysvar,
 };
+
+// ── Ed25519 instruction introspection helpers ──
+
+/// Ed25519 precompile program ID.
+const ED25519_PROGRAM_ID_STR: &str = "Ed25519SigVerify1111111111111111111111111111";
+
+/// Build a native ed25519 verification instruction.
+///
+/// Uses the official `Ed25519SignatureOffsets` layout:
+///   [0]     num_signatures: u8
+///   [1]     padding: u8
+///   [2..16] Ed25519SignatureOffsets (7 x u16 = 14 bytes):
+///           signature_offset, signature_instruction_index,
+///           public_key_offset, public_key_instruction_index,
+///           message_data_offset, message_data_size, message_instruction_index
+///   [16..]  signature(64) + pubkey(32) + message(variable)
+///
+/// When instruction_index fields are `u16::MAX`, the data is read from the
+/// ed25519 instruction itself (self-referencing).
+pub fn build_ed25519_ix(public_key: &Pubkey, message: &[u8], signature: &[u8; 64]) -> Instruction {
+    let data_start: u16 = 16; // 2 bytes header + 14 bytes offsets
+    let sig_offset = data_start;            // 16
+    let pk_offset = sig_offset + 64;        // 80
+    let msg_offset = pk_offset + 32;        // 112
+    let msg_size = message.len() as u16;
+    let self_ix_index = u16::MAX;
+
+    let mut data = Vec::with_capacity(16 + 64 + 32 + message.len());
+    data.push(1u8);                                    // num_signatures = 1
+    data.push(0u8);                                    // padding
+    data.extend_from_slice(&sig_offset.to_le_bytes()); // signature_offset
+    data.extend_from_slice(&self_ix_index.to_le_bytes()); // signature_instruction_index
+    data.extend_from_slice(&pk_offset.to_le_bytes());  // public_key_offset
+    data.extend_from_slice(&self_ix_index.to_le_bytes()); // public_key_instruction_index
+    data.extend_from_slice(&msg_offset.to_le_bytes()); // message_data_offset
+    data.extend_from_slice(&msg_size.to_le_bytes());   // message_data_size
+    data.extend_from_slice(&self_ix_index.to_le_bytes()); // message_instruction_index
+    data.extend_from_slice(signature);                  // signature (64 bytes)
+    data.extend_from_slice(public_key.as_ref());        // pubkey (32 bytes)
+    data.extend_from_slice(message);                    // message (variable)
+
+    let ed25519_pid: Pubkey = ED25519_PROGRAM_ID_STR.parse().unwrap();
+    Instruction {
+        program_id: ed25519_pid,
+        accounts: vec![],
+        data,
+    }
+}
 
 // Anchor discriminator: sha256("global:<name>")[..8]
 fn anchor_discriminator(name: &str) -> [u8; 8] {
@@ -66,12 +118,17 @@ fn push_vec(buf: &mut Vec<u8>, data: &[u8]) {
     buf.extend_from_slice(data);
 }
 
+/// Instructions sysvar pubkey.
+fn instructions_sysvar_id() -> Pubkey {
+    sysvar::instructions::id()
+}
+
 // ── 1. OPEN CHANNEL ──
 
 /// Build an `open_channel` instruction.
 ///
-/// On-chain verifies `sig_a` over `channel_id || deposit_a || tree_depth || initial_root`
-/// (raw concatenation, NOT the off-chain `state_message` format).
+/// On-chain verifies the user signature via ed25519 instruction introspection
+/// over `channel_id || deposit_a || tree_depth || initial_root`.
 #[allow(clippy::too_many_arguments)]
 pub fn build_open_channel_ix(
     program_id: &Pubkey,
@@ -90,9 +147,8 @@ pub fn build_open_channel_ix(
     challenge_duration: u64,
     min_challenge_delay: u64,
     initial_root: &[u8; 32],
-    sig_a: &[u8; 64],
 ) -> Instruction {
-    let mut data = Vec::with_capacity(8 + 32 + 8 + 4 + 8 + 8 + 8 + 32 + 64);
+    let mut data = Vec::with_capacity(8 + 32 + 8 + 4 + 8 + 8 + 8 + 32);
     data.extend_from_slice(&anchor_discriminator("open_channel"));
     push_bytes32(&mut data, channel_id);
     push_u64(&mut data, deposit_a);
@@ -101,7 +157,6 @@ pub fn build_open_channel_ix(
     push_u64(&mut data, challenge_duration);
     push_u64(&mut data, min_challenge_delay);
     push_bytes32(&mut data, initial_root);
-    data.extend_from_slice(sig_a);
 
     let accounts = vec![
         AccountMeta::new(*channel_pda, false),
@@ -115,6 +170,7 @@ pub fn build_open_channel_ix(
         AccountMeta::new_readonly(solana_sdk::system_program::id(), false),
         AccountMeta::new_readonly(spl_token::id(), false),
         AccountMeta::new_readonly(sysvar::rent::id(), false),
+        AccountMeta::new_readonly(instructions_sysvar_id(), false),
     ];
 
     Instruction {
@@ -122,6 +178,15 @@ pub fn build_open_channel_ix(
         accounts,
         data,
     }
+}
+
+/// Build the ed25519 verification instruction for `open_channel`.
+pub fn build_open_channel_ed25519_ix(
+    user_pubkey: &Pubkey,
+    message: &[u8],
+    signature: &[u8; 64],
+) -> Instruction {
+    build_ed25519_ix(user_pubkey, message, signature)
 }
 
 // ── 2. FUND CHANNEL ──
@@ -163,20 +228,17 @@ pub fn build_cooperative_settle_ix(
     sequence: u64,
     root: &[u8; 32],
     settle_window: u64,
-    sig_a: &[u8; 64],
-    sig_b: &[u8; 64],
 ) -> Instruction {
-    let mut data = Vec::with_capacity(8 + 8 + 32 + 8 + 64 + 64);
+    let mut data = Vec::with_capacity(8 + 8 + 32 + 8);
     data.extend_from_slice(&anchor_discriminator("cooperative_settle"));
     push_u64(&mut data, sequence);
     push_bytes32(&mut data, root);
     push_u64(&mut data, settle_window);
-    data.extend_from_slice(sig_a);
-    data.extend_from_slice(sig_b);
 
     let accounts = vec![
         AccountMeta::new(*channel_pda, false),
         AccountMeta::new_readonly(sysvar::clock::id(), false),
+        AccountMeta::new_readonly(instructions_sysvar_id(), false),
     ];
 
     Instruction {
@@ -184,6 +246,20 @@ pub fn build_cooperative_settle_ix(
         accounts,
         data,
     }
+}
+
+/// Build ed25519 verification instructions for `cooperative_settle` (2 signatures).
+pub fn build_cooperative_settle_ed25519_ixs(
+    user_pubkey: &Pubkey,
+    provider_pubkey: &Pubkey,
+    message: &[u8],
+    sig_a: &[u8; 64],
+    sig_b: &[u8; 64],
+) -> Vec<Instruction> {
+    vec![
+        build_ed25519_ix(user_pubkey, message, sig_a),
+        build_ed25519_ix(provider_pubkey, message, sig_b),
+    ]
 }
 
 // ── 4. TRIGGER CHALLENGE ──
@@ -195,18 +271,17 @@ pub fn build_trigger_challenge_ix(
     challenger: &Pubkey,    // signer
     submitted_root: &[u8; 32],
     submitted_sequence: u64,
-    challenger_signature: &[u8; 64],
 ) -> Instruction {
-    let mut data = Vec::with_capacity(8 + 32 + 8 + 64);
+    let mut data = Vec::with_capacity(8 + 32 + 8);
     data.extend_from_slice(&anchor_discriminator("trigger_challenge"));
     push_bytes32(&mut data, submitted_root);
     push_u64(&mut data, submitted_sequence);
-    data.extend_from_slice(challenger_signature);
 
     let accounts = vec![
         AccountMeta::new(*channel_pda, false),
         AccountMeta::new_readonly(*challenger, true),
         AccountMeta::new_readonly(sysvar::clock::id(), false),
+        AccountMeta::new_readonly(instructions_sysvar_id(), false),
     ];
 
     Instruction {
@@ -214,6 +289,15 @@ pub fn build_trigger_challenge_ix(
         accounts,
         data,
     }
+}
+
+/// Build the ed25519 verification instruction for `trigger_challenge`.
+pub fn build_trigger_challenge_ed25519_ix(
+    challenger_pubkey: &Pubkey,
+    message: &[u8],
+    signature: &[u8; 64],
+) -> Instruction {
+    build_ed25519_ix(challenger_pubkey, message, signature)
 }
 
 // ── 5. SUBMIT COUNTER STATE ──
@@ -224,18 +308,15 @@ pub fn build_submit_counter_state_ix(
     channel_pda: &Pubkey,   // mut
     sequence: u64,
     root: &[u8; 32],
-    sig_a: &[u8; 64],
-    sig_b: &[u8; 64],
 ) -> Instruction {
-    let mut data = Vec::with_capacity(8 + 8 + 32 + 64 + 64);
+    let mut data = Vec::with_capacity(8 + 8 + 32);
     data.extend_from_slice(&anchor_discriminator("submit_counter_state"));
     push_u64(&mut data, sequence);
     push_bytes32(&mut data, root);
-    data.extend_from_slice(sig_a);
-    data.extend_from_slice(sig_b);
 
     let accounts = vec![
         AccountMeta::new(*channel_pda, false),
+        AccountMeta::new_readonly(instructions_sysvar_id(), false),
     ];
 
     Instruction {
@@ -243,6 +324,20 @@ pub fn build_submit_counter_state_ix(
         accounts,
         data,
     }
+}
+
+/// Build ed25519 verification instructions for `submit_counter_state` (2 signatures).
+pub fn build_submit_counter_state_ed25519_ixs(
+    user_pubkey: &Pubkey,
+    provider_pubkey: &Pubkey,
+    message: &[u8],
+    sig_a: &[u8; 64],
+    sig_b: &[u8; 64],
+) -> Vec<Instruction> {
+    vec![
+        build_ed25519_ix(user_pubkey, message, sig_a),
+        build_ed25519_ix(provider_pubkey, message, sig_b),
+    ]
 }
 
 // ── 6. SETTLE AFTER TIMEOUT ──
@@ -285,7 +380,6 @@ pub fn build_claim_ix(
     leaf_hash: &[u8; 32],
     proof: &[[u8; 32]],
     leaf_data: &[u8],
-    claimer_signature: &[u8; 64],
 ) -> Instruction {
     let mut data = Vec::with_capacity(256);
     data.extend_from_slice(&anchor_discriminator("claim"));
@@ -295,7 +389,6 @@ pub fn build_claim_ix(
     push_bytes32(&mut data, leaf_hash);
     push_proof(&mut data, proof);
     push_vec(&mut data, leaf_data);
-    data.extend_from_slice(claimer_signature);
 
     let accounts = vec![
         AccountMeta::new(*channel_pda, false),
@@ -304,6 +397,7 @@ pub fn build_claim_ix(
         AccountMeta::new(*escrow_vault, false),
         AccountMeta::new_readonly(spl_token::id(), false),
         AccountMeta::new_readonly(sysvar::clock::id(), false),
+        AccountMeta::new_readonly(instructions_sysvar_id(), false),
     ];
 
     Instruction {
@@ -311,6 +405,15 @@ pub fn build_claim_ix(
         accounts,
         data,
     }
+}
+
+/// Build the ed25519 verification instruction for `claim`.
+pub fn build_claim_ed25519_ix(
+    claimer_pubkey: &Pubkey,
+    message: &[u8],
+    signature: &[u8; 64],
+) -> Instruction {
+    build_ed25519_ix(claimer_pubkey, message, signature)
 }
 
 // ── 8. VERIFY HTLC ──
@@ -332,7 +435,6 @@ pub fn build_verify_htlc_ix(
     proof: &[[u8; 32]],
     timelock_slot: u64,
     leaf_data: &[u8],
-    claimer_signature: &[u8; 64],
 ) -> Instruction {
     let mut data = Vec::with_capacity(256);
     data.extend_from_slice(&anchor_discriminator("verify_htlc"));
@@ -345,7 +447,6 @@ pub fn build_verify_htlc_ix(
     push_proof(&mut data, proof);
     push_u64(&mut data, timelock_slot);
     push_vec(&mut data, leaf_data);
-    data.extend_from_slice(claimer_signature);
 
     let accounts = vec![
         AccountMeta::new(*channel_pda, false),
@@ -354,6 +455,7 @@ pub fn build_verify_htlc_ix(
         AccountMeta::new(*escrow_vault, false),
         AccountMeta::new_readonly(spl_token::id(), false),
         AccountMeta::new_readonly(sysvar::clock::id(), false),
+        AccountMeta::new_readonly(instructions_sysvar_id(), false),
     ];
 
     Instruction {
@@ -361,6 +463,15 @@ pub fn build_verify_htlc_ix(
         accounts,
         data,
     }
+}
+
+/// Build the ed25519 verification instruction for `verify_htlc`.
+pub fn build_verify_htlc_ed25519_ix(
+    claimer_pubkey: &Pubkey,
+    message: &[u8],
+    signature: &[u8; 64],
+) -> Instruction {
+    build_ed25519_ix(claimer_pubkey, message, signature)
 }
 
 // ── 9. HTLC REFUND ──
@@ -380,7 +491,6 @@ pub fn build_htlc_refund_ix(
     leaf_hash: &[u8; 32],
     proof: &[[u8; 32]],
     leaf_data: &[u8],
-    claimer_signature: &[u8; 64],
 ) -> Instruction {
     let mut data = Vec::with_capacity(256);
     data.extend_from_slice(&anchor_discriminator("htlc_refund"));
@@ -391,7 +501,6 @@ pub fn build_htlc_refund_ix(
     push_bytes32(&mut data, leaf_hash);
     push_proof(&mut data, proof);
     push_vec(&mut data, leaf_data);
-    data.extend_from_slice(claimer_signature);
 
     let accounts = vec![
         AccountMeta::new(*channel_pda, false),
@@ -400,6 +509,7 @@ pub fn build_htlc_refund_ix(
         AccountMeta::new(*escrow_vault, false),
         AccountMeta::new_readonly(spl_token::id(), false),
         AccountMeta::new_readonly(sysvar::clock::id(), false),
+        AccountMeta::new_readonly(instructions_sysvar_id(), false),
     ];
 
     Instruction {
@@ -407,6 +517,15 @@ pub fn build_htlc_refund_ix(
         accounts,
         data,
     }
+}
+
+/// Build the ed25519 verification instruction for `htlc_refund`.
+pub fn build_htlc_refund_ed25519_ix(
+    claimer_pubkey: &Pubkey,
+    message: &[u8],
+    signature: &[u8; 64],
+) -> Instruction {
+    build_ed25519_ix(claimer_pubkey, message, signature)
 }
 
 // ── 10. FINALIZE SETTLEMENT ──
@@ -419,11 +538,9 @@ pub fn build_finalize_settlement_ix(
     vault_a: &Pubkey,       // mut
     vault_b: &Pubkey,       // mut
     escrow_vault: &Pubkey,  // mut
-    caller_signature: &[u8; 64],
 ) -> Instruction {
-    let mut data = Vec::with_capacity(8 + 64);
+    let mut data = Vec::with_capacity(8);
     data.extend_from_slice(&anchor_discriminator("finalize_settlement"));
-    data.extend_from_slice(caller_signature);
 
     let accounts = vec![
         AccountMeta::new(*channel_pda, false),
@@ -433,6 +550,7 @@ pub fn build_finalize_settlement_ix(
         AccountMeta::new(*escrow_vault, false),
         AccountMeta::new_readonly(spl_token::id(), false),
         AccountMeta::new_readonly(sysvar::clock::id(), false),
+        AccountMeta::new_readonly(instructions_sysvar_id(), false),
     ];
 
     Instruction {
@@ -440,6 +558,15 @@ pub fn build_finalize_settlement_ix(
         accounts,
         data,
     }
+}
+
+/// Build the ed25519 verification instruction for `finalize_settlement`.
+pub fn build_finalize_settlement_ed25519_ix(
+    caller_pubkey: &Pubkey,
+    message: &[u8],
+    signature: &[u8; 64],
+) -> Instruction {
+    build_ed25519_ix(caller_pubkey, message, signature)
 }
 
 #[cfg(test)]
@@ -529,13 +656,13 @@ mod tests {
             5000,
             1000,
             &[2u8; 32],
-            &[3u8; 64],
         );
 
         // discriminator(8) + channel_id(32) + deposit_a(8) + tree_depth(4) + open_slot(8)
-        // + challenge_duration(8) + min_challenge_delay(8) + initial_root(32) + sig_a(64) = 172
-        assert_eq!(ix.data.len(), 172);
-        assert_eq!(ix.accounts.len(), 11);
+        // + challenge_duration(8) + min_challenge_delay(8) + initial_root(32) = 108
+        assert_eq!(ix.data.len(), 108);
+        // 11 original accounts + 1 instruction_sysvar = 12
+        assert_eq!(ix.accounts.len(), 12);
         assert_eq!(ix.program_id, program_id);
     }
 
@@ -561,12 +688,13 @@ mod tests {
         let channel_pda = Pubkey::new_unique();
 
         let ix = build_cooperative_settle_ix(
-            &program_id, &channel_pda, 10, &[1u8; 32], 10000, &[2u8; 64], &[3u8; 64],
+            &program_id, &channel_pda, 10, &[1u8; 32], 10000,
         );
 
-        // disc(8) + sequence(8) + root(32) + settle_window(8) + sig_a(64) + sig_b(64) = 184
-        assert_eq!(ix.data.len(), 184);
-        assert_eq!(ix.accounts.len(), 2);
+        // disc(8) + sequence(8) + root(32) + settle_window(8) = 56
+        assert_eq!(ix.data.len(), 56);
+        // channel_pda + clock + instruction_sysvar = 3
+        assert_eq!(ix.accounts.len(), 3);
     }
 
     #[test]
@@ -576,12 +704,13 @@ mod tests {
         let challenger = Pubkey::new_unique();
 
         let ix = build_trigger_challenge_ix(
-            &program_id, &channel_pda, &challenger, &[1u8; 32], 5, &[2u8; 64],
+            &program_id, &channel_pda, &challenger, &[1u8; 32], 5,
         );
 
-        // disc(8) + submitted_root(32) + submitted_sequence(8) + sig(64) = 112
-        assert_eq!(ix.data.len(), 112);
-        assert_eq!(ix.accounts.len(), 3);
+        // disc(8) + submitted_root(32) + submitted_sequence(8) = 48
+        assert_eq!(ix.data.len(), 48);
+        // channel_pda + challenger + clock + instruction_sysvar = 4
+        assert_eq!(ix.accounts.len(), 4);
     }
 
     #[test]
@@ -590,12 +719,13 @@ mod tests {
         let channel_pda = Pubkey::new_unique();
 
         let ix = build_submit_counter_state_ix(
-            &program_id, &channel_pda, 10, &[1u8; 32], &[2u8; 64], &[3u8; 64],
+            &program_id, &channel_pda, 10, &[1u8; 32],
         );
 
-        // disc(8) + sequence(8) + root(32) + sig_a(64) + sig_b(64) = 176
-        assert_eq!(ix.data.len(), 176);
-        assert_eq!(ix.accounts.len(), 1);
+        // disc(8) + sequence(8) + root(32) = 48
+        assert_eq!(ix.data.len(), 48);
+        // channel_pda + instruction_sysvar = 2
+        assert_eq!(ix.accounts.len(), 2);
     }
 
     #[test]
@@ -622,10 +752,11 @@ mod tests {
 
         let ix = build_claim_ix(
             &program_id, &channel_pda, &claimer, &vault, &escrow,
-            0, 500, &leaf_owner, &[1u8; 32], &proof, &leaf_data, &[2u8; 64],
+            0, 500, &leaf_owner, &[1u8; 32], &proof, &leaf_data,
         );
 
-        assert_eq!(ix.accounts.len(), 6);
+        // 7 accounts: channel_pda + claimer + vault + escrow + token_program + clock + instruction_sysvar
+        assert_eq!(ix.accounts.len(), 7);
         assert_eq!(ix.program_id, program_id);
     }
 
@@ -643,10 +774,11 @@ mod tests {
         let ix = build_verify_htlc_ix(
             &program_id, &channel_pda, &claimer, &vault, &escrow,
             1, &[10u8; 32], &[11u8; 32], 1000, &beneficiary,
-            &[1u8; 32], &proof, 5000, &leaf_data, &[2u8; 64],
+            &[1u8; 32], &proof, 5000, &leaf_data,
         );
 
-        assert_eq!(ix.accounts.len(), 6);
+        // 7 accounts: channel_pda + claimer + vault + escrow + token_program + clock + instruction_sysvar
+        assert_eq!(ix.accounts.len(), 7);
     }
 
     #[test]
@@ -662,10 +794,11 @@ mod tests {
 
         let ix = build_htlc_refund_ix(
             &program_id, &channel_pda, &claimer, &vault, &escrow,
-            2, 100, 500, &leaf_owner, &[1u8; 32], &proof, &leaf_data, &[3u8; 64],
+            2, 100, 500, &leaf_owner, &[1u8; 32], &proof, &leaf_data,
         );
 
-        assert_eq!(ix.accounts.len(), 6);
+        // 7 accounts
+        assert_eq!(ix.accounts.len(), 7);
     }
 
     #[test]
@@ -678,11 +811,12 @@ mod tests {
         let escrow = Pubkey::new_unique();
 
         let ix = build_finalize_settlement_ix(
-            &program_id, &channel_pda, &caller, &vault_a, &vault_b, &escrow, &[1u8; 64],
+            &program_id, &channel_pda, &caller, &vault_a, &vault_b, &escrow,
         );
 
-        assert_eq!(ix.data.len(), 72); // disc(8) + sig(64)
-        assert_eq!(ix.accounts.len(), 7);
+        assert_eq!(ix.data.len(), 8); // disc only
+        // channel_pda + caller + vault_a + vault_b + escrow + token_program + clock + instruction_sysvar = 8
+        assert_eq!(ix.accounts.len(), 8);
     }
 
     // ── Deep data-content tests ──
@@ -700,12 +834,11 @@ mod tests {
         let vault_b = Pubkey::new_unique();
         let payer = Pubkey::new_unique();
         let initial_root = [0xBB; 32];
-        let sig_a = [0xCC; 64];
 
         let ix = build_open_channel_ix(
             &program_id, &channel_pda, &user, &user_pk, &provider_pk,
             &mint, &vault_a, &vault_b, &payer,
-            &channel_id, 1000, 4, 200, 5000, 1000, &initial_root, &sig_a,
+            &channel_id, 1000, 4, 200, 5000, 1000, &initial_root,
         );
 
         // Verify discriminator
@@ -733,10 +866,10 @@ mod tests {
         // Verify initial_root at offset 76
         assert_eq!(&ix.data[76..108], &initial_root);
 
-        // Verify sig_a at offset 108
-        assert_eq!(&ix.data[108..172], &sig_a);
+        // No signature at the end — data ends at 108
+        assert_eq!(ix.data.len(), 108);
 
-        // Verify account ordering: channel_pda, user(signer), user_pk, provider_pk, mint, vault_a, vault_b, payer(signer+mut), system_program, spl_token, rent
+        // Verify account ordering includes instruction_sysvar
         assert_eq!(ix.accounts[0].pubkey, channel_pda);
         assert!(ix.accounts[0].is_writable);
         assert!(!ix.accounts[0].is_signer);
@@ -755,6 +888,10 @@ mod tests {
         assert_eq!(ix.accounts[7].pubkey, payer);
         assert!(ix.accounts[7].is_signer);
         assert!(ix.accounts[7].is_writable);
+
+        // instruction_sysvar is last
+        assert_eq!(ix.accounts[11].pubkey, instructions_sysvar_id());
+        assert!(!ix.accounts[11].is_signer);
     }
 
     #[test]
@@ -784,11 +921,9 @@ mod tests {
         let program_id = test_program_id();
         let channel_pda = Pubkey::new_unique();
         let root = [0x11; 32];
-        let sig_a = [0x22; 64];
-        let sig_b = [0x33; 64];
 
         let ix = build_cooperative_settle_ix(
-            &program_id, &channel_pda, 42, &root, 10000, &sig_a, &sig_b,
+            &program_id, &channel_pda, 42, &root, 10000,
         );
 
         let disc = anchor_discriminator("cooperative_settle");
@@ -796,13 +931,12 @@ mod tests {
         assert_eq!(u64::from_le_bytes(ix.data[8..16].try_into().unwrap()), 42);
         assert_eq!(&ix.data[16..48], &root);
         assert_eq!(u64::from_le_bytes(ix.data[48..56].try_into().unwrap()), 10000);
-        assert_eq!(&ix.data[56..120], &sig_a);
-        assert_eq!(&ix.data[120..184], &sig_b);
 
-        // channel_pda is writable, clock is readonly
+        // channel_pda is writable, clock is readonly, instruction_sysvar is readonly
         assert!(ix.accounts[0].is_writable);
         assert_eq!(ix.accounts[0].pubkey, channel_pda);
         assert_eq!(ix.accounts[1].pubkey, sysvar::clock::id());
+        assert_eq!(ix.accounts[2].pubkey, instructions_sysvar_id());
     }
 
     #[test]
@@ -811,22 +945,22 @@ mod tests {
         let channel_pda = Pubkey::new_unique();
         let challenger = Pubkey::new_unique();
         let submitted_root = [0xDD; 32];
-        let challenger_sig = [0xEE; 64];
 
         let ix = build_trigger_challenge_ix(
-            &program_id, &channel_pda, &challenger, &submitted_root, 77, &challenger_sig,
+            &program_id, &channel_pda, &challenger, &submitted_root, 77,
         );
 
         let disc = anchor_discriminator("trigger_challenge");
         assert_eq!(&ix.data[0..8], &disc);
         assert_eq!(&ix.data[8..40], &submitted_root);
         assert_eq!(u64::from_le_bytes(ix.data[40..48].try_into().unwrap()), 77);
-        assert_eq!(&ix.data[48..112], &challenger_sig);
 
         assert_eq!(ix.accounts[0].pubkey, channel_pda);
         assert!(ix.accounts[0].is_writable);
         assert_eq!(ix.accounts[1].pubkey, challenger);
         assert!(ix.accounts[1].is_signer);
+        // instruction_sysvar is last
+        assert_eq!(ix.accounts[3].pubkey, instructions_sysvar_id());
     }
 
     #[test]
@@ -834,23 +968,20 @@ mod tests {
         let program_id = test_program_id();
         let channel_pda = Pubkey::new_unique();
         let root = [0xFF; 32];
-        let sig_a = [0x11; 64];
-        let sig_b = [0x22; 64];
 
         let ix = build_submit_counter_state_ix(
-            &program_id, &channel_pda, 99, &root, &sig_a, &sig_b,
+            &program_id, &channel_pda, 99, &root,
         );
 
         let disc = anchor_discriminator("submit_counter_state");
         assert_eq!(&ix.data[0..8], &disc);
         assert_eq!(u64::from_le_bytes(ix.data[8..16].try_into().unwrap()), 99);
         assert_eq!(&ix.data[16..48], &root);
-        assert_eq!(&ix.data[48..112], &sig_a);
-        assert_eq!(&ix.data[112..176], &sig_b);
 
-        // Only channel_pda account
-        assert_eq!(ix.accounts.len(), 1);
+        // channel_pda + instruction_sysvar
+        assert_eq!(ix.accounts.len(), 2);
         assert!(ix.accounts[0].is_writable);
+        assert_eq!(ix.accounts[1].pubkey, instructions_sysvar_id());
     }
 
     #[test]
@@ -876,11 +1007,10 @@ mod tests {
         let leaf_hash = [0xAB; 32];
         let proof = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
         let leaf_data = vec![0xFF; 10];
-        let claimer_sig = [0xCC; 64];
 
         let ix = build_claim_ix(
             &program_id, &channel_pda, &claimer, &vault, &escrow,
-            5, 7500, &leaf_owner, &leaf_hash, &proof, &leaf_data, &claimer_sig,
+            5, 7500, &leaf_owner, &leaf_hash, &proof, &leaf_data,
         );
 
         let disc = anchor_discriminator("claim");
@@ -927,12 +1057,11 @@ mod tests {
         let leaf_hash = [0xCC; 32];
         let proof: Vec<[u8; 32]> = vec![];
         let leaf_data: Vec<u8> = vec![];
-        let claimer_sig = [0xDD; 64];
 
         let ix = build_verify_htlc_ix(
             &program_id, &channel_pda, &claimer, &vault, &escrow,
             3, &preimage, &hash_lock, 2000, &beneficiary,
-            &leaf_hash, &proof, 100, &leaf_data, &claimer_sig,
+            &leaf_hash, &proof, 100, &leaf_data,
         );
 
         let disc = anchor_discriminator("verify_htlc");
@@ -963,11 +1092,10 @@ mod tests {
         let escrow = Pubkey::new_unique();
         let leaf_owner = Pubkey::new_unique();
         let leaf_hash = [0x11; 32];
-        let claimer_sig = [0x22; 64];
 
         let ix = build_htlc_refund_ix(
             &program_id, &channel_pda, &claimer, &vault, &escrow,
-            7, 300, 5000, &leaf_owner, &leaf_hash, &[], &[], &claimer_sig,
+            7, 300, 5000, &leaf_owner, &leaf_hash, &[], &[],
         );
 
         let disc = anchor_discriminator("htlc_refund");
@@ -994,10 +1122,9 @@ mod tests {
         let vault_a = Pubkey::new_unique();
         let vault_b = Pubkey::new_unique();
         let escrow = Pubkey::new_unique();
-        let caller_sig = [0xFF; 64];
 
         let ix = build_finalize_settlement_ix(
-            &program_id, &channel_pda, &caller, &vault_a, &vault_b, &escrow, &caller_sig,
+            &program_id, &channel_pda, &caller, &vault_a, &vault_b, &escrow,
         );
 
         // Verify all accounts are present in correct order
@@ -1013,11 +1140,12 @@ mod tests {
         assert!(ix.accounts[4].is_writable);
         assert_eq!(ix.accounts[5].pubkey, spl_token::id());
         assert_eq!(ix.accounts[6].pubkey, sysvar::clock::id());
+        assert_eq!(ix.accounts[7].pubkey, instructions_sysvar_id());
 
-        // Verify discriminator + sig
+        // Verify discriminator only (no sig)
         let disc = anchor_discriminator("finalize_settlement");
         assert_eq!(&ix.data[0..8], &disc);
-        assert_eq!(&ix.data[8..72], &caller_sig);
+        assert_eq!(ix.data.len(), 8);
     }
 
     #[test]
@@ -1048,5 +1176,34 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_build_ed25519_ix_layout() {
+        let pk = Pubkey::new_from_array([1u8; 32]);
+        let msg = b"test message for ed25519";
+        let sig = [2u8; 64];
+
+        let ix = build_ed25519_ix(&pk, msg, &sig);
+
+        // Verify header
+        assert_eq!(ix.data[0], 1, "num_signatures");
+        assert_eq!(ix.data[1], 0, "padding");
+
+        // Verify offsets
+        assert_eq!(u16::from_le_bytes([ix.data[2], ix.data[3]]), 16, "sig_offset");
+        assert_eq!(u16::from_le_bytes([ix.data[6], ix.data[7]]), 80, "pk_offset");
+        assert_eq!(u16::from_le_bytes([ix.data[10], ix.data[11]]), 112, "msg_offset");
+        assert_eq!(u16::from_le_bytes([ix.data[12], ix.data[13]]), msg.len() as u16, "msg_size");
+
+        // Verify self-referencing
+        assert_eq!(u16::from_le_bytes([ix.data[4], ix.data[5]]), u16::MAX);
+        assert_eq!(u16::from_le_bytes([ix.data[8], ix.data[9]]), u16::MAX);
+        assert_eq!(u16::from_le_bytes([ix.data[14], ix.data[15]]), u16::MAX);
+
+        // Verify data payload
+        assert_eq!(&ix.data[16..80], &sig[..], "signature");
+        assert_eq!(&ix.data[80..112], pk.as_ref(), "pubkey");
+        assert_eq!(&ix.data[112..112 + msg.len()], msg, "message");
     }
 }

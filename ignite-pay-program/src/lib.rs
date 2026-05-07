@@ -7,7 +7,6 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use crate::state::{ChannelAccount, ChannelStatus};
 use crate::error::ChannelError;
-use crate::utils::ed25519::verify_ed25519_signature;
 use crate::utils::merkle::verify_merkle_proof;
 
 declare_id!("DJBHr35jL3JAGoU7bKMsEFmpeNMrCSK7oYQE4HJ3GBUe");
@@ -29,7 +28,6 @@ pub mod ignite_pay_program {
         challenge_duration: u64,
         min_challenge_delay: u64,
         initial_root: [u8; 32],
-        sig_a: [u8; 64],
     )]
     pub struct OpenChannel<'info> {
         #[account(
@@ -71,6 +69,9 @@ pub mod ignite_pay_program {
         pub system_program: Program<'info, System>,
         pub token_program: Program<'info, Token>,
         pub rent: Sysvar<'info, Rent>,
+
+        /// CHECK: Instruction sysvar for ed25519 introspection
+        pub instruction_sysvar: UncheckedAccount<'info>,
     }
 
     pub fn open_channel(
@@ -82,7 +83,6 @@ pub mod ignite_pay_program {
         challenge_duration: u64,
         min_challenge_delay: u64,
         initial_root: [u8; 32],
-        sig_a: [u8; 64],
     ) -> Result<()> {
         require!(tree_depth <= 12, ChannelError::LeafIndexOutOfBounds);
         require!(deposit_a > 0, ChannelError::ZeroDeposit);
@@ -117,10 +117,13 @@ pub mod ignite_pay_program {
         msg.extend_from_slice(&tree_depth.to_le_bytes());
         msg.extend_from_slice(&initial_root);
 
-        require!(
-            verify_ed25519_signature(&msg, &sig_a, &channel.user_pubkey),
-            ChannelError::InvalidSignature
-        );
+        let current_ix = read_current_ix_index(&ctx.accounts.instruction_sysvar)?;
+        verify_ed25519_signature_introspection(
+            &ctx.accounts.instruction_sysvar,
+            &channel.user_pubkey,
+            &msg,
+            current_ix,
+        )?;
 
         Ok(())
     }
@@ -186,6 +189,9 @@ pub mod ignite_pay_program {
         pub channel: Account<'info, ChannelAccount>,
 
         pub clock: Sysvar<'info, Clock>,
+
+        /// CHECK: Instruction sysvar for ed25519 introspection
+        pub instruction_sysvar: UncheckedAccount<'info>,
     }
 
     pub fn cooperative_settle(
@@ -193,8 +199,6 @@ pub mod ignite_pay_program {
         sequence: u64,
         root: [u8; 32],
         settle_window: u64,
-        sig_a: [u8; 64],
-        sig_b: [u8; 64],
     ) -> Result<()> {
         let channel = &mut ctx.accounts.channel;
         let current_slot = ctx.accounts.clock.slot;
@@ -207,14 +211,21 @@ pub mod ignite_pay_program {
         msg.extend_from_slice(&sequence.to_le_bytes());
         msg.extend_from_slice(&root);
 
-        require!(
-            verify_ed25519_signature(&msg, &sig_a, &channel.user_pubkey),
-            ChannelError::InvalidSignature
-        );
-        require!(
-            verify_ed25519_signature(&msg, &sig_b, &channel.provider_pubkey),
-            ChannelError::InvalidSignature
-        );
+        let current_ix = read_current_ix_index(&ctx.accounts.instruction_sysvar)?;
+        // Two signatures: sig_a (user) and sig_b (provider)
+        // Both must be verified via preceding ed25519 instructions
+        verify_ed25519_signature_introspection(
+            &ctx.accounts.instruction_sysvar,
+            &channel.user_pubkey,
+            &msg,
+            current_ix,
+        )?;
+        verify_ed25519_signature_introspection(
+            &ctx.accounts.instruction_sysvar,
+            &channel.provider_pubkey,
+            &msg,
+            current_ix,
+        )?;
 
         channel.status = ChannelStatus::Settling;
         channel.settle_deadline = Some(current_slot + settle_window);
@@ -240,13 +251,15 @@ pub mod ignite_pay_program {
         pub challenger: Signer<'info>,
 
         pub clock: Sysvar<'info, Clock>,
+
+        /// CHECK: Instruction sysvar for ed25519 introspection
+        pub instruction_sysvar: UncheckedAccount<'info>,
     }
 
     pub fn trigger_challenge(
         ctx: Context<TriggerChallenge>,
         submitted_root: [u8; 32],
         submitted_sequence: u64,
-        challenger_signature: [u8; 64],
     ) -> Result<()> {
         let channel = &mut ctx.accounts.channel;
         let current_slot = ctx.accounts.clock.slot;
@@ -260,10 +273,13 @@ pub mod ignite_pay_program {
         msg.extend_from_slice(&current_slot.to_le_bytes());
         msg.extend_from_slice(&submitted_root);
 
-        require!(
-            verify_ed25519_signature(&msg, &challenger_signature, &ctx.accounts.challenger.key()),
-            ChannelError::InvalidSignature
-        );
+        let current_ix = read_current_ix_index(&ctx.accounts.instruction_sysvar)?;
+        verify_ed25519_signature_introspection(
+            &ctx.accounts.instruction_sysvar,
+            &ctx.accounts.challenger.key(),
+            &msg,
+            current_ix,
+        )?;
 
         channel.status = ChannelStatus::Challenged;
         channel.challenge_slot = Some(current_slot);
@@ -282,14 +298,15 @@ pub mod ignite_pay_program {
             constraint = channel.status == ChannelStatus::Challenged @ ChannelError::InvalidStatus,
         )]
         pub channel: Account<'info, ChannelAccount>,
+
+        /// CHECK: Instruction sysvar for ed25519 introspection
+        pub instruction_sysvar: UncheckedAccount<'info>,
     }
 
     pub fn submit_counter_state(
         ctx: Context<SubmitCounterState>,
         sequence: u64,
         root: [u8; 32],
-        sig_a: [u8; 64],
-        sig_b: [u8; 64],
     ) -> Result<()> {
         let channel = &mut ctx.accounts.channel;
         require!(sequence > channel.sequence, ChannelError::InvalidSequence);
@@ -299,14 +316,19 @@ pub mod ignite_pay_program {
         msg.extend_from_slice(&sequence.to_le_bytes());
         msg.extend_from_slice(&root);
 
-        require!(
-            verify_ed25519_signature(&msg, &sig_a, &channel.user_pubkey),
-            ChannelError::InvalidSignature
-        );
-        require!(
-            verify_ed25519_signature(&msg, &sig_b, &channel.provider_pubkey),
-            ChannelError::InvalidSignature
-        );
+        let current_ix = read_current_ix_index(&ctx.accounts.instruction_sysvar)?;
+        verify_ed25519_signature_introspection(
+            &ctx.accounts.instruction_sysvar,
+            &channel.user_pubkey,
+            &msg,
+            current_ix,
+        )?;
+        verify_ed25519_signature_introspection(
+            &ctx.accounts.instruction_sysvar,
+            &channel.provider_pubkey,
+            &msg,
+            current_ix,
+        )?;
 
         channel.sequence = sequence;
         channel.current_root = root;
@@ -386,6 +408,9 @@ pub mod ignite_pay_program {
 
         pub token_program: Program<'info, Token>,
         pub clock: Sysvar<'info, Clock>,
+
+        /// CHECK: Instruction sysvar for ed25519 introspection
+        pub instruction_sysvar: UncheckedAccount<'info>,
     }
 
     pub fn claim(
@@ -396,7 +421,6 @@ pub mod ignite_pay_program {
         leaf_hash: [u8; 32],
         proof: Vec<[u8; 32]>,
         leaf_data: Vec<u8>,
-        claimer_signature: [u8; 64],
     ) -> Result<()> {
         let channel = &mut ctx.accounts.channel;
         let current_slot = ctx.accounts.clock.slot;
@@ -430,10 +454,14 @@ pub mod ignite_pay_program {
         claim_msg.extend_from_slice(&channel.channel_id);
         claim_msg.extend_from_slice(&current_slot.to_le_bytes());
         claim_msg.extend_from_slice(&channel.current_root);
-        require!(
-            verify_ed25519_signature(&claim_msg, &claimer_signature, &ctx.accounts.claimer.key()),
-            ChannelError::InvalidSignature
-        );
+
+        let current_ix = read_current_ix_index(&ctx.accounts.instruction_sysvar)?;
+        verify_ed25519_signature_introspection(
+            &ctx.accounts.instruction_sysvar,
+            &ctx.accounts.claimer.key(),
+            &claim_msg,
+            current_ix,
+        )?;
 
         channel.total_claimed = channel.total_claimed
             .checked_add(claim_amount)
@@ -497,6 +525,9 @@ pub mod ignite_pay_program {
 
         pub token_program: Program<'info, Token>,
         pub clock: Sysvar<'info, Clock>,
+
+        /// CHECK: Instruction sysvar for ed25519 introspection
+        pub instruction_sysvar: UncheckedAccount<'info>,
     }
 
     pub fn verify_htlc(
@@ -510,7 +541,6 @@ pub mod ignite_pay_program {
         proof: Vec<[u8; 32]>,
         timelock_slot: u64,
         leaf_data: Vec<u8>,
-        claimer_signature: [u8; 64],
     ) -> Result<()> {
         let channel = &mut ctx.accounts.channel;
         let current_slot = ctx.accounts.clock.slot;
@@ -562,10 +592,14 @@ pub mod ignite_pay_program {
         htlc_msg.extend_from_slice(&channel.channel_id);
         htlc_msg.extend_from_slice(&current_slot.to_le_bytes());
         htlc_msg.extend_from_slice(&channel.current_root);
-        require!(
-            verify_ed25519_signature(&htlc_msg, &claimer_signature, &ctx.accounts.claimer.key()),
-            ChannelError::InvalidSignature
-        );
+
+        let current_ix = read_current_ix_index(&ctx.accounts.instruction_sysvar)?;
+        verify_ed25519_signature_introspection(
+            &ctx.accounts.instruction_sysvar,
+            &ctx.accounts.claimer.key(),
+            &htlc_msg,
+            current_ix,
+        )?;
 
         channel.total_claimed = channel.total_claimed
             .checked_add(leaf_amount)
@@ -629,6 +663,9 @@ pub mod ignite_pay_program {
 
         pub token_program: Program<'info, Token>,
         pub clock: Sysvar<'info, Clock>,
+
+        /// CHECK: Instruction sysvar for ed25519 introspection
+        pub instruction_sysvar: UncheckedAccount<'info>,
     }
 
     pub fn htlc_refund(
@@ -640,7 +677,6 @@ pub mod ignite_pay_program {
         leaf_hash: [u8; 32],
         proof: Vec<[u8; 32]>,
         leaf_data: Vec<u8>,
-        claimer_signature: [u8; 64],
     ) -> Result<()> {
         let channel = &mut ctx.accounts.channel;
         let current_slot = ctx.accounts.clock.slot;
@@ -690,10 +726,14 @@ pub mod ignite_pay_program {
         refund_msg.extend_from_slice(&channel.channel_id);
         refund_msg.extend_from_slice(&current_slot.to_le_bytes());
         refund_msg.extend_from_slice(&channel.current_root);
-        require!(
-            verify_ed25519_signature(&refund_msg, &claimer_signature, &ctx.accounts.claimer.key()),
-            ChannelError::InvalidSignature
-        );
+
+        let current_ix = read_current_ix_index(&ctx.accounts.instruction_sysvar)?;
+        verify_ed25519_signature_introspection(
+            &ctx.accounts.instruction_sysvar,
+            &ctx.accounts.claimer.key(),
+            &refund_msg,
+            current_ix,
+        )?;
 
         channel.total_claimed = channel.total_claimed
             .checked_add(leaf_amount)
@@ -758,11 +798,13 @@ pub mod ignite_pay_program {
 
         pub token_program: Program<'info, Token>,
         pub clock: Sysvar<'info, Clock>,
+
+        /// CHECK: Instruction sysvar for ed25519 introspection
+        pub instruction_sysvar: UncheckedAccount<'info>,
     }
 
     pub fn finalize_settlement(
         ctx: Context<FinalizeSettlement>,
-        caller_signature: [u8; 64],
     ) -> Result<()> {
         let channel = &mut ctx.accounts.channel;
         let current_slot = ctx.accounts.clock.slot;
@@ -775,10 +817,14 @@ pub mod ignite_pay_program {
         fin_msg.extend_from_slice(&channel.channel_id);
         fin_msg.extend_from_slice(&current_slot.to_le_bytes());
         fin_msg.extend_from_slice(&channel.current_root);
-        require!(
-            verify_ed25519_signature(&fin_msg, &caller_signature, &ctx.accounts.caller.key()),
-            ChannelError::InvalidSignature
-        );
+
+        let current_ix = read_current_ix_index(&ctx.accounts.instruction_sysvar)?;
+        verify_ed25519_signature_introspection(
+            &ctx.accounts.instruction_sysvar,
+            &ctx.accounts.caller.key(),
+            &fin_msg,
+            current_ix,
+        )?;
 
         let unclaimed = channel.total_deposited
             .checked_sub(channel.total_claimed)
@@ -846,4 +892,147 @@ pub mod ignite_pay_program {
 
         Ok(())
     }
+}
+
+/// Verify ed25519 signature via instruction introspection.
+/// Since signatures are no longer in instruction data, we don't have a specific signature
+/// to match against. Instead, we verify that the runtime has validated an ed25519 signature
+/// for the given pubkey and message by checking that the corresponding ed25519 instruction
+/// exists and was executed.
+/// Read the current instruction index from the instructions sysvar raw data.
+/// The current index is stored as a u16 LE at the end of the sysvar data.
+fn read_current_ix_index(instruction_sysvar: &UncheckedAccount<'_>) -> Result<u16> {
+    let ix_account = instruction_sysvar.to_account_info();
+    let data = ix_account.try_borrow_data()
+        .map_err(|_| ChannelError::InvalidSignature)?;
+    if data.len() < 2 {
+        return Err(ChannelError::InvalidSignature.into());
+    }
+    let len = data.len();
+    Ok(u16::from_le_bytes([data[len - 2], data[len - 1]]))
+}
+
+/// Verify ed25519 signature via instruction introspection.
+///
+/// Walks preceding ed25519 instructions in the transaction and checks if any contains
+/// a matching pubkey and message. The runtime guarantees the signature was valid if
+/// the ed25519 instruction executed successfully.
+///
+/// Instructions sysvar data layout (NOT bincode):
+///   [0..2]   num_instructions (u16 LE)
+///   [2..2+2*N] offset_table: N x u16 LE byte offsets to each instruction
+///   Each instruction at its offset:
+///     u16 LE num_accounts
+///     per account: u8 flags + [u8;32] pubkey
+///     [u8;32] program_id
+///     u16 LE data_len
+///     [u8; data_len] instruction data
+///   Last 2 bytes: u16 LE current_index
+fn verify_ed25519_signature_introspection(
+    instruction_sysvar: &UncheckedAccount<'_>,
+    expected_pubkey: &Pubkey,
+    message: &[u8],
+    current_ix_index: u16,
+) -> Result<()> {
+    let ix_account = instruction_sysvar.to_account_info();
+    let ix_data = ix_account.try_borrow_data()
+        .map_err(|_| ChannelError::InvalidSignature)?;
+
+    if ix_data.len() < 4 {
+        return Err(ChannelError::InvalidSignature.into());
+    }
+
+    let num_instructions = u16::from_le_bytes([ix_data[0], ix_data[1]]) as usize;
+
+    for ix_idx in 0..num_instructions {
+        if ix_idx as u16 >= current_ix_index {
+            break;
+        }
+
+        // Read offset from the offset table at bytes [2 + 2*ix_idx .. 2 + 2*ix_idx + 2]
+        let table_pos = 2 + 2 * ix_idx;
+        if table_pos + 2 > ix_data.len() - 2 {
+            break;
+        }
+        let ix_offset = u16::from_le_bytes([ix_data[table_pos], ix_data[table_pos + 1]]) as usize;
+        if ix_offset >= ix_data.len() - 2 {
+            continue;
+        }
+
+        // Parse instruction at ix_offset
+        let mut pos = ix_offset;
+
+        // Read num_accounts (u16)
+        if pos + 2 > ix_data.len() - 2 {
+            continue;
+        }
+        let num_accounts = u16::from_le_bytes([ix_data[pos], ix_data[pos + 1]]) as usize;
+        pos += 2;
+
+        // Skip accounts: each is u8 flags + 32 bytes pubkey = 33 bytes
+        pos += num_accounts * 33;
+
+        // Read program_id (32 bytes)
+        if pos + 32 > ix_data.len() - 2 {
+            continue;
+        }
+        let program_id = &ix_data[pos..pos + 32];
+        pos += 32;
+
+        // Check if this is an ed25519 program instruction
+        // Ed25519SigVerify1111111111111111111111111111 (base58-decoded)
+        let ed25519_program_id: [u8; 32] = [
+            0xca, 0x62, 0x0c, 0x98, 0x39, 0x87, 0x09, 0x10,
+            0x4c, 0x79, 0x14, 0x83, 0xce, 0x00, 0xb9, 0xc7,
+            0x3b, 0x7a, 0x58, 0x93, 0x0d, 0x67, 0x5a, 0xe1,
+            0x45, 0xdd, 0x6f, 0x85, 0x00, 0x00, 0x00, 0x00,
+        ];
+        if program_id != ed25519_program_id {
+            continue;
+        }
+
+        // Read data_len (u16)
+        if pos + 2 > ix_data.len() - 2 {
+            continue;
+        }
+        let data_len = u16::from_le_bytes([ix_data[pos], ix_data[pos + 1]]) as usize;
+        pos += 2;
+
+        if pos + data_len > ix_data.len() - 2 {
+            continue;
+        }
+
+        let ix_slice = &ix_data[pos..pos + data_len];
+
+        // Check ed25519 pattern: data[0]==1 (num_signatures), data[1]==0 (padding)
+        if data_len < 16 || ix_slice[0] != 1 || ix_slice[1] != 0 {
+            continue;
+        }
+
+        let pk_offset = u16::from_le_bytes([ix_slice[6], ix_slice[7]]) as usize;
+        let msg_offset = u16::from_le_bytes([ix_slice[10], ix_slice[11]]) as usize;
+        let msg_size = u16::from_le_bytes([ix_slice[12], ix_slice[13]]) as usize;
+
+        // Only support self-referencing (all instruction index fields == u16::MAX)
+        let self_ref = u16::MAX;
+        if u16::from_le_bytes([ix_slice[4], ix_slice[5]]) != self_ref
+            || u16::from_le_bytes([ix_slice[8], ix_slice[9]]) != self_ref
+            || u16::from_le_bytes([ix_slice[14], ix_slice[15]]) != self_ref
+        {
+            continue;
+        }
+
+        if pk_offset + 32 > data_len || msg_offset + msg_size > data_len {
+            continue;
+        }
+
+        let pk = &ix_slice[pk_offset..pk_offset + 32];
+        let msg = &ix_slice[msg_offset..msg_offset + msg_size];
+
+        if pk == expected_pubkey.as_ref() && msg == message {
+            return Ok(());
+        }
+    }
+
+    Err(ChannelError::InvalidSignature.into())
 }

@@ -7,6 +7,10 @@ use crate::error::RegistryError;
 use crate::models::{ListHubsQuery, RegisterHubRequest, UpdateHubRequest, UpdateMetricsRequest};
 use crate::state::AppState;
 
+pub async fn health() -> &'static str {
+    "OK"
+}
+
 pub async fn register_hub(
     State(state): State<AppState>,
     Json(req): Json<RegisterHubRequest>,

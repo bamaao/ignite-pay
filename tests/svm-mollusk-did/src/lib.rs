@@ -35,7 +35,18 @@ fn sign_ed25519(message: &[u8], keypair: &Keypair) -> [u8; 64] {
 fn setup_mollusk() -> Mollusk {
     let pid = Pubkey::from_str(PROGRAM_ID_STR).unwrap();
     let sbf_out = std::env::var("SBF_OUT_DIR")
-        .unwrap_or_else(|_| "/home/zouyc/anchor-workspace/target/deploy".to_string());
+        .unwrap_or_else(|_| "target/deploy".to_string());
+    let sbf_out = if std::path::Path::new(&sbf_out).is_absolute() {
+        sbf_out
+    } else {
+        // Resolve relative to project root (two levels up from this crate)
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+            .expect("CARGO_MANIFEST_DIR not set");
+        let project_root = std::path::Path::new(&manifest_dir)
+            .parent().unwrap()  // tests/
+            .parent().unwrap(); // project root
+        project_root.join(&sbf_out).to_str().unwrap().to_string()
+    };
     std::env::set_var("SBF_OUT_DIR", &sbf_out);
     let mut mollusk = Mollusk::new(&pid, "ignite_pay_did_program");
     mollusk.compute_budget.compute_unit_limit = 10_000_000;

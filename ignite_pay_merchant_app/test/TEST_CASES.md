@@ -2,7 +2,8 @@
 
 ## 文档说明
 
-覆盖范围：MerchantService、MerchantPushService、ChannelService、VoiceService、FCM、MediatorApi、Onboarding、QR 生成、Settings、Dashboard、PaymentList/Detail、ChannelScreen/Detail、Rust Bridge。
+<!-- State Channel: 探索阶段，暂不启用 - 原覆盖范围含 ChannelService、ChannelScreen/Detail -->
+覆盖范围：MerchantService、MerchantPushService、VoiceService、FCM、MediatorApi、Onboarding、QR 生成、Settings、Dashboard、PaymentList/Detail、Rust Bridge。
 
 标记说明：
 - [E2E] 端到端，需完整环境
@@ -178,7 +179,8 @@
 | 类型 | [Unit] |
 | 前置 | storage 中有 pending 订单 |
 | 步骤 | 1. `confirm_order(storage_path, order_id, "channel_abc", 2, 100)` |
-| 预期 | 订单 `status == "confirmed"`，`confirmed_at` 为当前时间戳，`channel_id == "channel_abc"`, `leaf_index == 2`, `sequence == 100` |
+<!-- State Channel: 探索阶段，暂不启用 - 预期结果含 channel_id, leaf_index, sequence -->
+| 预期 | 订单 `status == "confirmed"`，`confirmed_at` 为当前时间戳 |
 
 ### TC-ORD-02: confirm 不存在的订单静默成功
 
@@ -236,8 +238,9 @@
 | 类型 | [Unit] [Mock] |
 | 前置 | 空 storage |
 | 步骤 | 1. `pushService.initialize()` |
-| 预期 | `commDid` 以 `did:ignite:z` 开头（multicodec 编码格式），与状态通道 DID 不同 |
+| 预期 | `commDid` 以 `did:ignite:z` 开头（multicodec 编码格式）<!-- State Channel: 探索阶段，暂不启用 - 原文含"与状态通道 DID 不同" --> |
 
+<!-- State Channel: 探索阶段，暂不启用
 ### TC-PUSH-02: 双 DID 互不干扰
 
 | 项目 | 内容 |
@@ -246,6 +249,7 @@
 | 前置 | MerchantService 已初始化（状态通道 DID） |
 | 步骤 | 1. MerchantPushService.initialize()<br>2. 比较两个 DID |
 | 预期 | `merchantService.did != pushService.commDid`，两者格式不同（状态通道是 raw base58，DIDComm 是 multicodec base58） |
+-->
 
 ### TC-PUSH-03: 重复初始化幂等
 
@@ -296,6 +300,7 @@
 
 ## 6. 消息解密与确认处理
 
+<!-- State Channel: 探索阶段，暂不启用
 ### TC-MSG-01: 解密 channel-payment-confirm 消息
 
 | 项目 | 内容 |
@@ -304,6 +309,7 @@
 | 前置 | DIDComm 身份已初始化，有一个 pending 订单 |
 | 步骤 | 1. 模拟收到包含 `channel-payment-confirm` 的 JWE<br>2. `_decryptAndProcess(jwe)` |
 | 预期 | 订单状态变为 `confirmed`，`confirmations` stream 发出 `PaymentConfirmation`（orderId, channelId, leafIndex, sequence 均正确） |
+-->
 
 ### TC-MSG-02: 解密 payment-auth-response 消息
 
@@ -323,6 +329,7 @@
 | 步骤 | 1. 模拟 `msg_type = "https://didcomm.org/other/1.0/unknown"` 的消息 |
 | 预期 | 不调用 `confirmOrder`，`confirmations` stream 不发出事件 |
 
+<!-- State Channel: 探索阶段，暂不启用
 ### TC-MSG-04: orderId 为空时不调用 confirmOrder
 
 | 项目 | 内容 |
@@ -340,6 +347,7 @@
 | 前置 | 同上 |
 | 步骤 | 1. 模拟有 `order_id` 但无 `channel_id` 的消息 |
 | 预期 | 不调用 `confirmOrder`，发出 `PaymentConfirmation` |
+-->
 
 ---
 
@@ -552,6 +560,7 @@
 
 ---
 
+<!-- State Channel: 探索阶段，暂不启用
 ## 12. 通道管理 (ChannelService)
 
 ### TC-CH-01: 刷新通道列表
@@ -589,6 +598,7 @@
 | 前置 | 通道有 provider balance |
 | 步骤 | 1. `claimLeaf(channelId, hub, leafIndex: 0, amount)`<br>2. `finalize(channelId, hub)` |
 | 预期 | 两个 Rust 调用依次执行，均返回成功 |
+-->
 
 ---
 
@@ -714,6 +724,7 @@
 | 步骤 | 1. 触发 RefreshIndicator |
 | 预期 | `MerchantService.refreshOrders()` 被调用 |
 
+<!-- State Channel: 探索阶段，暂不启用 - 原前置含 channelId, leafIndex, sequence；原预期含通道信息
 ### TC-PAY-03: 订单详情显示
 
 | 项目 | 内容 |
@@ -722,6 +733,7 @@
 | 前置 | 一笔 confirmed 订单含 channelId, leafIndex, sequence |
 | 步骤 | 1. 点击订单卡片进入详情 |
 | 预期 | 显示金额、状态（绿色 "已确认"）、描述、时间戳、通道信息（channelId, leafIndex, sequence）、订单号可复制 |
+-->
 
 ### TC-PAY-04: 订单详情无通道信息
 
@@ -785,6 +797,7 @@
 | 步骤 | 1. `initialize_merchant_comm(path)` |
 | 预期 | 返回 `DidInfo`，did 以 `did:ignite:z` 开头（multicodec 编码），全局状态 `GLOBAL_COMM_DID` 非空 |
 
+<!-- State Channel: 探索阶段，暂不启用
 ### TC-RUST-DC-02: DIDComm DID 与状态通道 DID 不同
 
 | 项目 | 内容 |
@@ -793,6 +806,7 @@
 | 前置 | 同一 storage |
 | 步骤 | 1. `initialize_merchant(path)` → didA<br>2. `initialize_merchant_comm(path)` → didB |
 | 预期 | didA != didB，didA 是 raw base58 格式，didB 是 multicodec base58 格式 |
+-->
 
 ### TC-RUST-DC-03: decrypt_message 解密失败报错
 
@@ -825,6 +839,7 @@
 
 ## 19. 端到端集成场景
 
+<!-- State Channel: 探索阶段，暂不启用 - 原步骤4引用 channel-payment-confirm
 ### TC-E2E-01: 完整收款流程（WebSocket 通道）
 
 | 项目 | 内容 |
@@ -842,6 +857,7 @@
 | 前置 | 英文用户，Firebase 已配置 |
 | 步骤 | 1-3 同上<br>4. mediator 发送 FCM SIGNAL<br>5. App 收到 FCM → pull messages → 解密 → 确认订单 |
 | 预期 | 同 TC-E2E-01，但播报为英文 "Payment received: 5.00 USDC" |
+-->
 
 ### TC-E2E-03: 离线消息补拉
 
@@ -918,7 +934,9 @@
 |----|------|----------|----------|
 | BUG-01 | `settings_screen.dart:_getPubkey` 传入 `svc.hubEndpoint` 作为 `storagePath`，而非文件系统路径 | settings_screen.dart:231 | TC-SET-01 |
 | BUG-02 | Dashboard "在线"状态始终为绿色，无实际连接检查 | dashboard_screen.dart | TC-DASH-01 |
+<!-- State Channel: 探索阶段，暂不启用
 | BUG-03 | `channel_detail_screen.dart` 结算固定 claim leaf index 0，多 leaf 通道不适用 | channel_detail_screen.dart | TC-CH-04 |
+-->
 | BUG-04 | `OrderStatus::Failed/Expired` 无 Rust 函数触发转换 | merchant.rs | TC-ORD-03 |
 | BUG-05 | audit 日志功能（append_audit/recent_audit）无 Dart 调用方 | merchant.rs | 无对应测试 |
 | BUG-06 | WS 重连无指数退避和最大重试次数 | merchant_push_service.dart | TC-WS-03 |

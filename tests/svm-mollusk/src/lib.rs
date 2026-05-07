@@ -4,11 +4,10 @@ use mollusk_svm::Mollusk;
 use mollusk_svm::program::keyed_account_for_system_program;
 use mollusk_svm::result::InstructionResult;
 use solana_account::{Account, ReadableAccount, WritableAccount};
-use solana_hash::Hash;
 use solana_instruction::{account_meta::AccountMeta, Instruction};
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
-use solana_sdk_ids::{system_program, sysvar};
+use solana_sdk_ids::{bpf_loader, system_program, sysvar};
 use solana_sha256_hasher::{hash, hashv};
 use solana_signer::Signer;
 use std::collections::{HashMap, HashSet};
@@ -32,6 +31,33 @@ fn ixDisc(name: &str) -> [u8; 8] {
 
 fn sign_ed25519(message: &[u8], keypair: &Keypair) -> [u8; 64] {
     *keypair.sign_message(message).as_array()
+}
+
+/// Build a native ed25519 instruction with the standard Solana layout.
+/// All data (signature, pubkey, message) is embedded within the instruction itself
+/// (self-referencing with ix_index = u16::MAX).
+fn build_ed25519_ix(public_key: &Pubkey, message: &[u8], signature: &[u8; 64]) -> Instruction {
+    let ed25519_pid = Pubkey::from_str("Ed25519SigVerify1111111111111111111111111111").unwrap();
+    let data_start: u16 = 16;
+    let sig_offset = data_start;
+    let pk_offset = sig_offset + 64;
+    let msg_offset = pk_offset + 32;
+    let msg_size = message.len() as u16;
+    let self_ix_index = u16::MAX;
+    let mut data = Vec::with_capacity(16 + 64 + 32 + message.len());
+    data.push(1u8);                                    // num_signatures
+    data.push(0u8);                                    // padding
+    data.extend_from_slice(&sig_offset.to_le_bytes());
+    data.extend_from_slice(&self_ix_index.to_le_bytes());
+    data.extend_from_slice(&pk_offset.to_le_bytes());
+    data.extend_from_slice(&self_ix_index.to_le_bytes());
+    data.extend_from_slice(&msg_offset.to_le_bytes());
+    data.extend_from_slice(&msg_size.to_le_bytes());
+    data.extend_from_slice(&self_ix_index.to_le_bytes());
+    data.extend_from_slice(signature);
+    data.extend_from_slice(public_key.as_ref());
+    data.extend_from_slice(message);
+    Instruction { program_id: ed25519_pid, accounts: vec![], data }
 }
 
 fn build_simple_leaf(owner: &Pubkey, amount: u64) -> Vec<u8> {
@@ -93,10 +119,31 @@ fn make_token_acct(mint: &Pubkey, owner: &Pubkey, amount: u64) -> Account {
 fn setup_mollusk() -> Mollusk {
     let pid = Pubkey::from_str(PROGRAM_ID_STR).unwrap();
     let sbf_out = std::env::var("SBF_OUT_DIR")
-        .unwrap_or_else(|_| "/home/zouyc/anchor-workspace/target/deploy".to_string());
+        .unwrap_or_else(|_| "target/deploy".to_string());
+    let sbf_out = if std::path::Path::new(&sbf_out).is_absolute() {
+        sbf_out
+    } else {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+            .expect("CARGO_MANIFEST_DIR not set");
+        let project_root = std::path::Path::new(&manifest_dir)
+            .parent().unwrap()
+            .parent().unwrap();
+        project_root.join(&sbf_out).to_str().unwrap().to_string()
+    };
     std::env::set_var("SBF_OUT_DIR", &sbf_out);
     let mut mollusk = Mollusk::new(&pid, "ignite_pay_program");
-    mollusk.compute_budget.compute_unit_limit = 10_000_000;
+    mollusk.compute_budget.compute_unit_limit = 20_000_000;
+
+    // Register a noop program as the ed25519 precompile so that
+    // ed25519 verification instructions can be included in instruction chains.
+    let ed25519_pid = Pubkey::from_str("Ed25519SigVerify1111111111111111111111111111").unwrap();
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .expect("CARGO_MANIFEST_DIR not set");
+    let noop_path = std::path::Path::new(&manifest_dir).join("noop_ed25519.so");
+    let noop_bytes = std::fs::read(&noop_path)
+        .expect("noop_ed25519.so not found in test directory");
+    mollusk.add_program_with_loader_and_elf(&ed25519_pid, &bpf_loader::id(), &noop_bytes);
+
     mollusk
 }
 
@@ -186,8 +233,9 @@ impl Ctx {
     }
 
     fn build_accounts(&self, ix: &Instruction) -> Vec<(Pubkey, Account)> {
-        // Only skip the program itself — mollusk resolves it from its ELF cache.
-        let skip: HashSet<Pubkey> = [self.pid].into_iter().collect();
+        // Skip the program itself (mollusk resolves from ELF cache) and the
+        // instructions sysvar (mollusk auto-populates it from the instruction chain).
+        let skip: HashSet<Pubkey> = [self.pid, sysvar::instructions::id()].into_iter().collect();
 
         let sys_acct = keyed_account_for_system_program();
         let clock_acct = self.mollusk.sysvars.keyed_account_for_clock_sysvar();
@@ -210,9 +258,29 @@ impl Ctx {
         accounts
     }
 
+    /// Send a single instruction (no ed25519 signatures).
     fn send_ix(&mut self, ix: Instruction) -> InstructionResult {
         let accounts = self.build_accounts(&ix);
         let result = self.mollusk.process_instruction(&ix, &accounts);
+
+        // On success, update state from resulting accounts
+        if result.program_result.is_ok() {
+            let updated: Vec<(Pubkey, Account)> = result.resulting_accounts.clone();
+            for (pk, acct) in updated {
+                self.state.insert(pk, acct);
+            }
+        }
+
+        result
+    }
+
+    /// Send an instruction chain: ed25519 verification instructions + program instruction.
+    /// Mollusk auto-populates the instructions sysvar from the chain (PR #156).
+    fn send_ix_chain(&mut self, chain: &[Instruction]) -> InstructionResult {
+        // The last instruction is the program instruction; build accounts from it.
+        let program_ix = &chain[chain.len() - 1];
+        let accounts = self.build_accounts(program_ix);
+        let result = self.mollusk.process_instruction_chain(chain, &accounts);
 
         // On success, update state from resulting accounts
         if result.program_result.is_ok() {
@@ -234,7 +302,7 @@ impl Ctx {
         msg.extend_from_slice(&self.initial_root);
         let sig_a = sign_ed25519(&msg, &self.user);
 
-        let mut data = Vec::with_capacity(172);
+        let mut data = Vec::with_capacity(108);
         data.extend_from_slice(&ixDisc("open_channel"));
         data.extend_from_slice(&self.channel_id);
         data.extend_from_slice(&deposit_a.to_le_bytes());
@@ -243,9 +311,11 @@ impl Ctx {
         data.extend_from_slice(&challenge_duration.to_le_bytes());
         data.extend_from_slice(&min_challenge_delay.to_le_bytes());
         data.extend_from_slice(&self.initial_root);
-        data.extend_from_slice(&sig_a);
 
         let tp = Pubkey::from_str(TOKEN_PROG).unwrap();
+        let instructions_sysvar = sysvar::instructions::id();
+
+        let ed25519_ix = build_ed25519_ix(&self.user.pubkey(), &msg, &sig_a);
 
         let ix = Instruction {
             program_id: self.pid,
@@ -261,11 +331,12 @@ impl Ctx {
                 AccountMeta::new_readonly(system_program::id(), false),
                 AccountMeta::new_readonly(tp, false),
                 AccountMeta::new_readonly(sysvar::rent::id(), false),
+                AccountMeta::new_readonly(instructions_sysvar, false),
             ],
             data,
         };
 
-        let result = self.send_ix(ix);
+        let result = self.send_ix_chain(&[ed25519_ix, ix]);
         if result.program_result.is_err() {
             panic!("open_channel failed: {:?}", result.raw_result);
         }
@@ -307,24 +378,27 @@ fn test_trigger_challenge() {
     msg.extend_from_slice(&new_root);
     let sig = sign_ed25519(&msg, &ctx.user);
 
-    let mut data = Vec::with_capacity(8 + 32 + 8 + 64);
+    let mut data = Vec::with_capacity(8 + 32 + 8);
     data.extend_from_slice(&ixDisc("trigger_challenge"));
     data.extend_from_slice(&new_root);
     data.extend_from_slice(&1u64.to_le_bytes());
-    data.extend_from_slice(&sig);
 
     let clock = sysvar::clock::id();
+    let instructions_sysvar = sysvar::instructions::id();
+    let ed25519_ix = build_ed25519_ix(&ctx.user.pubkey(), &msg, &sig);
+
     let ix = Instruction {
         program_id: ctx.pid,
         accounts: vec![
             AccountMeta::new(ctx.channel_pda, false),
             AccountMeta::new_readonly(ctx.user.pubkey(), true),
             AccountMeta::new_readonly(clock, false),
+            AccountMeta::new_readonly(instructions_sysvar, false),
         ],
         data,
     };
 
-    let result = ctx.send_ix(ix);
+    let result = ctx.send_ix_chain(&[ed25519_ix, ix]);
     assert!(result.program_result.is_ok(), "trigger_challenge should succeed");
     assert_eq!(ctx.channel_status(), 1, "status should be Challenged");
     println!("PASS: trigger_challenge with valid ed25519 signature");
@@ -342,25 +416,28 @@ fn test_cooperative_settle() {
     let sig_a = sign_ed25519(&msg, &ctx.user);
     let sig_b = sign_ed25519(&msg, &ctx.provider);
 
-    let mut data = Vec::with_capacity(8 + 8 + 32 + 8 + 64 + 64);
+    let mut data = Vec::with_capacity(8 + 8 + 32 + 8);
     data.extend_from_slice(&ixDisc("cooperative_settle"));
     data.extend_from_slice(&1u64.to_le_bytes());
     data.extend_from_slice(&current_root);
     data.extend_from_slice(&50u64.to_le_bytes());
-    data.extend_from_slice(&sig_a);
-    data.extend_from_slice(&sig_b);
 
     let clock = sysvar::clock::id();
+    let instructions_sysvar = sysvar::instructions::id();
+    let ed25519_ix_a = build_ed25519_ix(&ctx.user.pubkey(), &msg, &sig_a);
+    let ed25519_ix_b = build_ed25519_ix(&ctx.provider.pubkey(), &msg, &sig_b);
+
     let ix = Instruction {
         program_id: ctx.pid,
         accounts: vec![
             AccountMeta::new(ctx.channel_pda, false),
             AccountMeta::new_readonly(clock, false),
+            AccountMeta::new_readonly(instructions_sysvar, false),
         ],
         data,
     };
 
-    let result = ctx.send_ix(ix);
+    let result = ctx.send_ix_chain(&[ed25519_ix_a, ed25519_ix_b, ix]);
     assert!(result.program_result.is_ok(), "cooperative_settle should succeed");
     assert_eq!(ctx.channel_status(), 2, "status should be Settling");
     println!("PASS: cooperative_settle with valid ed25519 signatures from both parties");
@@ -384,19 +461,22 @@ fn test_submit_counter_state() {
         data.extend_from_slice(&ixDisc("trigger_challenge"));
         data.extend_from_slice(&root_v1);
         data.extend_from_slice(&1u64.to_le_bytes());
-        data.extend_from_slice(&sig);
 
         let clock = sysvar::clock::id();
+        let instructions_sysvar = sysvar::instructions::id();
+        let ed25519_ix = build_ed25519_ix(&ctx.user.pubkey(), &msg, &sig);
+
         let ix = Instruction {
             program_id: ctx.pid,
             accounts: vec![
                 AccountMeta::new(ctx.channel_pda, false),
                 AccountMeta::new_readonly(ctx.user.pubkey(), true),
                 AccountMeta::new_readonly(clock, false),
+                AccountMeta::new_readonly(instructions_sysvar, false),
             ],
             data,
         };
-        let result = ctx.send_ix(ix);
+        let result = ctx.send_ix_chain(&[ed25519_ix, ix]);
         assert!(result.program_result.is_ok());
     }
 
@@ -409,20 +489,25 @@ fn test_submit_counter_state() {
     let sig_a = sign_ed25519(&msg, &ctx.user);
     let sig_b = sign_ed25519(&msg, &ctx.provider);
 
-    let mut data = Vec::with_capacity(8 + 8 + 32 + 64 + 64);
+    let mut data = Vec::with_capacity(8 + 8 + 32);
     data.extend_from_slice(&ixDisc("submit_counter_state"));
     data.extend_from_slice(&2u64.to_le_bytes());
     data.extend_from_slice(&root_v2);
-    data.extend_from_slice(&sig_a);
-    data.extend_from_slice(&sig_b);
+
+    let instructions_sysvar = sysvar::instructions::id();
+    let ed25519_ix_a = build_ed25519_ix(&ctx.user.pubkey(), &msg, &sig_a);
+    let ed25519_ix_b = build_ed25519_ix(&ctx.provider.pubkey(), &msg, &sig_b);
 
     let ix = Instruction {
         program_id: ctx.pid,
-        accounts: vec![AccountMeta::new(ctx.channel_pda, false)],
+        accounts: vec![
+            AccountMeta::new(ctx.channel_pda, false),
+            AccountMeta::new_readonly(instructions_sysvar, false),
+        ],
         data,
     };
 
-    let result = ctx.send_ix(ix);
+    let result = ctx.send_ix_chain(&[ed25519_ix_a, ed25519_ix_b, ix]);
     assert!(result.program_result.is_ok(), "submit_counter_state should succeed");
     assert_eq!(ctx.channel_sequence(), 2);
     println!("PASS: submit_counter_state with valid ed25519 signatures");
@@ -446,19 +531,22 @@ fn test_settle_after_timeout() {
         data.extend_from_slice(&ixDisc("trigger_challenge"));
         data.extend_from_slice(&new_root);
         data.extend_from_slice(&1u64.to_le_bytes());
-        data.extend_from_slice(&sig);
 
         let clock = sysvar::clock::id();
+        let instructions_sysvar = sysvar::instructions::id();
+        let ed25519_ix = build_ed25519_ix(&ctx.user.pubkey(), &msg, &sig);
+
         let ix = Instruction {
             program_id: ctx.pid,
             accounts: vec![
                 AccountMeta::new(ctx.channel_pda, false),
                 AccountMeta::new_readonly(ctx.user.pubkey(), true),
                 AccountMeta::new_readonly(clock, false),
+                AccountMeta::new_readonly(instructions_sysvar, false),
             ],
             data,
         };
-        ctx.send_ix(ix);
+        ctx.send_ix_chain(&[ed25519_ix, ix]);
     }
 
     // Warp past challenge duration and settle
@@ -495,24 +583,27 @@ fn test_challenge_not_elapsed() {
     msg.extend_from_slice(&new_root);
     let sig = sign_ed25519(&msg, &ctx.user);
 
-    let mut data = Vec::with_capacity(8 + 32 + 8 + 64);
+    let mut data = Vec::with_capacity(8 + 32 + 8);
     data.extend_from_slice(&ixDisc("trigger_challenge"));
     data.extend_from_slice(&new_root);
     data.extend_from_slice(&1u64.to_le_bytes());
-    data.extend_from_slice(&sig);
 
     let clock = sysvar::clock::id();
+    let instructions_sysvar = sysvar::instructions::id();
+    let ed25519_ix = build_ed25519_ix(&ctx.user.pubkey(), &msg, &sig);
+
     let ix = Instruction {
         program_id: ctx.pid,
         accounts: vec![
             AccountMeta::new(ctx.channel_pda, false),
             AccountMeta::new_readonly(ctx.user.pubkey(), true),
             AccountMeta::new_readonly(clock, false),
+            AccountMeta::new_readonly(instructions_sysvar, false),
         ],
         data,
     };
 
-    let result = ctx.send_ix(ix);
+    let result = ctx.send_ix_chain(&[ed25519_ix, ix]);
     assert!(result.program_result.is_err(), "Should fail: min_challenge_delay not elapsed");
     assert_eq!(ctx.channel_status(), 0, "status should still be Open");
     println!("PASS: trigger_challenge correctly rejected before min_challenge_delay");
