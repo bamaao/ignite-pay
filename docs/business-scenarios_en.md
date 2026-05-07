@@ -11,19 +11,27 @@ This document is organized by business events and describes the operational step
 3. [DIDComm Mediator Authentication](#business-event-3-didcomm-mediator-authentication)
 4. [X402 Payment Authorization](#business-event-4-x402-payment-authorization)
 5. [Session Key On-Chain Payment](#business-event-5-session-key-on-chain-payment)
+<!-- State Channel: Exploration phase, not enabled
 6. [State Channel Opening](#business-event-6-state-channel-opening)
 7. [State Channel Off-Chain Payment](#business-event-7-state-channel-off-chain-payment)
+-->
 8. [QR Code Payment Collection](#business-event-8-qr-code-payment-collection)
+<!-- State Channel: Exploration phase, not enabled
 9. [State Channel Closure and Settlement](#business-event-9-state-channel-closure-and-settlement)
 10. [Hub Registration and Discovery](#business-event-10-hub-registration-and-discovery)
 11. [Multi-Hop Routing Payment](#business-event-11-multi-hop-routing-payment)
+-->
 12. [Merchant DID Onboarding](#business-event-12-merchant-did-onboarding)
 13. [Message Push Notifications](#business-event-13-message-push-notifications)
 14. [Merchant DID Lifecycle Management](#business-event-14-merchant-did-lifecycle-management)
+<!-- State Channel: Exploration phase, not enabled
 15. [State Channel Operations](#business-event-15-state-channel-operations)
 16. [Hub Network Topology Management](#business-event-16-hub-network-topology-management)
+-->
 17. [App-Side Management and Settings](#business-event-17-app-side-management-and-settings)
+<!-- State Channel: Exploration phase, not enabled
 18. [Compliance and Risk Control](#business-event-18-compliance-and-risk-control)
+-->
 
 > The titles in the table of contents correspond one-to-one with the section titles in the body. The colons (`:`) in the titles reflect the actual format in the body. GitHub and most Markdown renderers automatically convert titles to lowercase and replace spaces with `-` to generate anchors.
 
@@ -86,7 +94,7 @@ This document is organized by business events and describes the operational step
    - Fill in Mediator WebSocket URL (optional, e.g. `ws://mediator.example.com:8080/ws`)
 3. App calls Rust bridge `initialize_merchant()`:
    - Generate Ed25519 key pair
-   - Generate state channel DID: `did:ignite:<raw_base58>`
+   - <!-- State Channel: Exploration phase, not enabled - originally "Generate state channel DID" -->Generate merchant DID: `did:ignite:<raw_base58>`
    - Store in sled `keypairs` tree
 4. App calls Rust bridge `initialize_merchant_comm()`:
    - Generate independent Ed25519 + X25519 key pair
@@ -699,6 +707,7 @@ This document is organized by business events and describes the operational step
 - Relayer service unreachable -> fallback to self-funded mode or return error
 ---
 
+<!-- State Channel: Exploration phase, not enabled
 ## Business Event 6: State Channel Opening
 
 ### Use Case 6.1: User App Selects Hub → Requests MCP to Create Channel via DIDComm
@@ -822,7 +831,9 @@ This document is organized by business events and describes the operational step
 - User can modify parameters and retry
 
 ---
+-->
 
+<!-- State Channel: Exploration phase, not enabled
 ## Business Event 7: State Channel Off-Chain Payment
 
 ### Use Case 7.1: User App Initiates Payment → MCP Executes LeafUpdate + CoSign via Hub
@@ -935,6 +946,7 @@ This document is organized by business events and describes the operational step
 - Timelock expired → Automatic refund
 
 ---
+-->
 
 ## Business Event 8: QR Code Payment Collection
 
@@ -984,6 +996,7 @@ This document is organized by business events and describes the operational step
 
 ---
 
+<!-- State Channel: Exploration phase, not enabled
 ### Use Case 8.2: User App Scans Merchant QR Code → Initiates State Channel Payment
 
 **Preconditions**:
@@ -1060,6 +1073,7 @@ This document is organized by business events and describes the operational step
 - Push delay → Fallback polling ensures no missed notifications
 
 ---
+-->
 
 ### Use Case 8.4: AI Agent Generates Payment QR Code via Merchant MCP
 
@@ -1093,6 +1107,7 @@ This document is organized by business events and describes the operational step
 
 ---
 
+<!-- State Channel: Exploration phase, not enabled
 ## Business Event 9: State Channel Closure and Settlement
 
 ### Use Case 9.1: Cooperative Close Channel
@@ -1212,7 +1227,9 @@ This document is organized by business events and describes the operational step
 - Some leaves unclaimed → Can retry later
 
 ---
+-->
 
+<!-- State Channel: Exploration phase, not enabled
 ## Business Event 10: Hub Registration and Discovery
 
 ### Use Case 10.1: Channel Hub Auto-Registers to Hub Registry on Startup
@@ -1356,7 +1373,9 @@ This document is organized by business events and describes the operational step
 - Hub goes offline unexpectedly without deregistration → Admin can manually deregister via Registry API
 
 ---
+-->
 
+<!-- State Channel: Exploration phase, not enabled
 ## Business Event 11: Multi-Hop Routing Payment
 
 ### Use Case 11.1: User Pays via Multi-Hop Path User → Hub A → Hub B → Merchant
@@ -1446,6 +1465,7 @@ This document is organized by business events and describes the operational step
 - On-chain failure during refund -> Retry
 
 ---
+-->
 
 ## Business Event 12: Merchant DID Onboarding
 
@@ -1960,6 +1980,7 @@ This document is organized by business events and describes the operational step
 
 ---
 
+<!-- State Channel: Exploration phase, not enabled
 ## Business Event 15: State Channel Operations
 
 ### Use Case 15.1: Channel Fund
@@ -2120,7 +2141,9 @@ This document is organized by business events and describes the operational step
 - Counterparty unresponsive -> unilateral close
 
 ---
+-->
 
+<!-- State Channel: Exploration phase, not enabled
 ## Business Event 16: Hub Network Topology Management
 
 ### Use Case 16.1: Hub Local Registration and Information Query
@@ -2341,6 +2364,7 @@ This document is organized by business events and describes the operational step
 - Incomplete signatures -> counter-evidence invalid
 
 ---
+-->
 
 ## Business Event 17: App-side Management and Settings
 
@@ -2463,7 +2487,9 @@ This document is organized by business events and describes the operational step
    - **Tree Address**: Concurrent Merkle Tree address
    - **Tree Authority**: Tree manager public key
 4. Configure Program IDs (read-only display):
+   <!-- State Channel: Exploration phase, not enabled
    - State Channel Program ID
+   -->
    - DID Program ID
    - Session Key Program ID
 5. Select payment mode: self-funded (self_funded) / sponsored (sponsored)
@@ -2536,6 +2562,7 @@ This document is organized by business events and describes the operational step
 
 ---
 
+<!-- State Channel: Exploration phase, not enabled
 ### Use Case 17.7: Merchant-side Channel List and Operations
 
 **Preconditions**:
@@ -2565,6 +2592,7 @@ This document is organized by business events and describes the operational step
 - Channel already closed -> display Closed status
 
 ---
+-->
 
 ### Use Case 17.8: Merchant Voice Announcement Configuration
 
@@ -2621,6 +2649,7 @@ This document is organized by business events and describes the operational step
 
 ---
 
+<!-- State Channel: Exploration phase, not enabled
 ## Business Event 18: Compliance and Risk Control
 
 ### Use Case 18.1: Sliding Window Spending Threshold Tracking
@@ -2755,3 +2784,4 @@ This document is organized by business events and describes the operational step
 
 **Exception Handling**:
 - Pipeline dropped without calling `build()` -> automatically calls `abort()` to rollback
+-->

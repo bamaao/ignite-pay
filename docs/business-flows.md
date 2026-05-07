@@ -847,10 +847,12 @@ Buyer MCP                  Merchant Mediator         Merchant MCP         Mercha
 | `ignite-pay/1.0/connection-confirm-response` | MCP → Phone | 配对最终确认 |
 | `ignite-pay/1.0/payment-auth-request` | MCP → Phone | 支付授权请求（含 `available_payment_methods`） |
 | `ignite-pay/1.0/payment-auth-response` | Phone → MCP | 支付授权响应（含 session key + `payment_method`） |
+<!-- State Channel: 探索阶段，暂不启用
 | `ignite-pay/1.0/channel-payment-request` | MCP → Phone | 状态通道支付请求 |
 | `ignite-pay/1.0/channel-payment-confirm` | MCP → Phone | 状态通道支付确认 |
 | `ignite-pay/1.0/create-channel-request` | Phone → MCP | 请求创建状态通道 |
 | `ignite-pay/1.0/create-channel-response` | MCP → Phone | 状态通道创建响应 |
+-->
 | `ignite-pay/1.0/list-sync-notification` | MCP → Phone | 白名单/黑名单变更通知 |
 | `ignite-pay/1.0/mb-voucher` | Phone → Merchant | MagicBlock voucher 发送给商家 |
 | `ignite-pay/1.0/qr-payment-request` | Phone → MCP | 用户扫码后发起支付请求（含 payment_method + merchant_mediator_url） |

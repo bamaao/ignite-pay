@@ -26,22 +26,28 @@
 
 ## 1. 系统概述
 
-Ignite Pay 是基于 Solana 区块链的离链支付系统，采用 UTXO + Merkle Tree 状态通道架构，支持单跳和多跳支付、HTLC 条件支付、合规审计和 DID 去中心化身份。
+Ignite Pay 是基于 Solana 区块链的离链支付系统，<!-- State Channel: 探索阶段，暂不启用
+采用 UTXO + Merkle Tree 状态通道架构，支持单跳和多跳支付、HTLC 条件支付、合规审计和
+-->DID 去中心化身份。
 
 ### 1.1 核心组件
 
 | 组件 | 说明 |
 |:-----|:-----|
+<!-- State Channel: 探索阶段，暂不启用
 | **ignite-pay-program** | 链上状态通道程序（Anchor 1.0.0），Program ID: `DJBHr35jL3JAGoU7bKMsEFmpeNMrCSK7oYQE4HJ3GBUe` |
+-->
 | **ignite-pay-did-program** | 链上 DID 程序（Anchor），PDA 存储商户 DID（可选 ZK Compression，需 `--features zk-compression`） |
 | **didcomm-router** | DIDComm 消息路由器，为移动端提供消息中继和 FCM 推送 |
 | **did-registry** | DID 注册服务，管理商户链上身份、VC 签发/吊销 |
+<!-- State Channel: 探索阶段，暂不启用
 | **channel-user** | 用户端状态通道服务（Party A，付款方） |
 | **channel-provider** | 商户端状态通道服务（Party B，收款方） |
 | **channel-hub** | Hub 路由节点，继承 Provider 功能并支持多跳路由 |
 | **ignite-pay-hub-registry** | Hub 注册发现服务，PostgreSQL 后端 |
-| **ignite-pay-mcp** | 用户端 MCP 代理服务，桥接移动端与状态通道 |
-| **ignite-pay-merchant-mcp** | 商户端 MCP 代理服务，桥接商户系统与状态通道 |
+-->
+| **ignite-pay-mcp** | 用户端 MCP 代理服务，桥接移动端 <!-- State Channel: 探索阶段，暂不启用 与状态通道 --> |
+| **ignite-pay-merchant-mcp** | 商户端 MCP 代理服务，桥接商户系统 <!-- State Channel: 探索阶段，暂不启用 与状态通道 --> |
 | **Sentinel (Flutter)** | 用户移动端 App |
 | **Ignite Merchant (Flutter)** | 商户端 App |
 
@@ -50,42 +56,23 @@ Ignite Pay 是基于 Solana 区块链的离链支付系统，采用 UTXO + Merkl
 | 服务 | 二进制/目录 | 端口 | 传输协议 | 存储 |
 |:-----|:-----------|:-----|:---------|:-----|
 | PostgreSQL | 外部依赖 | 5432 | TCP | PostgreSQL |
+<!-- State Channel: 探索阶段，暂不启用
 | Hub Registry | `ignite-pay-hub-registry` | 3004 | HTTP | PostgreSQL |
+-->
 | DIDComm Router | `didcomm-router` | 8080 | HTTP + WS | sled |
 | DIDComm Router (商户侧) | `didcomm-router` (同二进制，不同配置) | 4000 | HTTP + WS | sled |
 | DID Registry | `did-registry` | 8081 | HTTP | sled |
+<!-- State Channel: 探索阶段，暂不启用
 | Channel Hub | `channel-hub` | 3003 | HTTP + WS | sled |
 | Channel Provider | `channel-provider` | 3002 | HTTP + WS | sled |
 | Channel User | `channel-user` | 3001 | HTTP + WS | sled |
+-->
 | User MCP | `ignite-pay-mcp` | stdio | JSON-RPC + WS -> :8080 | sled |
 | Merchant MCP | `ignite-pay-merchant-mcp` | stdio | JSON-RPC + WS -> :4000 (商户侧 Router) | sled |
 
 ### 1.3 依赖关系图
 
-```mermaid
-graph TD
-    PG[PostgreSQL :5432] --> HR[Hub Registry :3004]
-    SOL[Solana Blockchain] --> DU[Channel User :3001]
-    SOL --> DP[Channel Provider :3002]
-    SOL --> DH[Channel Hub :3003]
-    SOL --> DR[DID Registry :8081]
-
-    DR --> SOL
-    DH --> HR
-
-    DCR[DIDComm Router :8080<br/>实例 1] --> UMCP[User MCP stdio]
-    DCR2[DIDComm Router :4000<br/>实例 2，同二进制] --> MMCP[Merchant MCP stdio]
-
-    UMCP --> DCR
-    UMCP --> DU
-    MMCP --> DCR2
-    MMCP --> DH
-
-    APP[Sentinel App] --> UMCP
-    APP --> DCR
-    MAPP[Merchant App] --> MMCP
-    MAPP --> DCR2
-```
+<!-- State Channel: 探索阶段，暂不启用。依赖关系图包含 Channel/Hub Registry 节点，暂不展示。 -->
 
 ---
 
@@ -98,7 +85,7 @@ graph TD
 | Rust | 1.75+ | 编译所有 Rust crate |
 | Solana CLI | 1.18+ | 部署链上程序、生成密钥 |
 | Anchor CLI | 0.31.1+ | 构建链上程序 |
-| PostgreSQL | 14+ | Hub Registry 数据库 |
+| PostgreSQL | 14+ | <!-- State Channel: 探索阶段，暂不启用（Hub Registry 数据库） --> |
 | Flutter | 3.x | 编译移动端 App（可选） |
 
 ### 2.2 运行时依赖
@@ -127,6 +114,7 @@ graph TD
 
 ## 3. 网络拓扑图
 
+<!-- State Channel: 探索阶段，暂不启用
 ```
                               ┌─────────────────────┐
                               │   Solana Blockchain  │
@@ -175,18 +163,23 @@ graph TD
 │ 用户 App  │  │ (Flutter)    │
 └───────────┘  └──────────────┘
 ```
+-->
 
 ### 端口连接矩阵
 
+<!-- State Channel: 探索阶段，暂不启用
 | 源服务 | 目标服务 | 目标端口 | 协议 |
 |:-------|:---------|:---------|:-----|
 | 所有通道服务 | Solana RPC | 443 | HTTPS |
 | Channel Hub | Hub Registry | 3004 | HTTP |
 | Channel Hub/Provider/User | Solana RPC | 443 | HTTPS |
-| User MCP | DIDComm Router | 8080 | WS |
-| Merchant MCP | DIDComm Router (商户侧实例) | 4000 | WS |
 | User MCP | Channel User | 3001 | HTTP |
 | Merchant MCP | Channel Hub | 3003 | HTTP+WS |
+-->
+| 源服务 | 目标服务 | 目标端口 | 协议 |
+|:-------|:---------|:---------|:-----|
+| User MCP | DIDComm Router | 8080 | WS |
+| Merchant MCP | DIDComm Router (商户侧实例) | 4000 | WS |
 | DID Registry | Solana RPC（+ Photon，仅 ZK 模式） | 443 | HTTPS |
 
 ---
@@ -205,11 +198,15 @@ sudo apt install postgresql postgresql-contrib
 # 创建数据库和用户
 sudo -u postgres psql <<EOF
 CREATE USER ignite WITH PASSWORD 'ignite';
+<!-- State Channel: 探索阶段，暂不启用
 CREATE DATABASE hub_registry OWNER ignite;
+-->
 EOF
 
 # 验证
+<!-- State Channel: 探索阶段，暂不启用
 psql -U ignite -d hub_registry -h localhost -c "SELECT 1;"
+-->
 ```
 
 **验证**: 连接成功即可。
@@ -218,6 +215,7 @@ psql -U ignite -d hub_registry -h localhost -c "SELECT 1;"
 
 ### 步骤 2：部署链上 Solana 程序
 
+<!-- State Channel: 探索阶段，暂不启用
 #### 2a. 部署状态通道程序 (ignite-pay-program)
 
 ```bash
@@ -232,6 +230,7 @@ anchor deploy --provider.cluster devnet
 # 记录 Program ID
 # 当前: DJBHr35jL3JAGoU7bKMsEFmpeNMrCSK7oYQE4HJ3GBUe
 ```
+-->
 
 #### 2b. 部署 DID 程序 (ignite-pay-did-program)
 
@@ -340,6 +339,7 @@ RUST_LOG=info ./target/release/did-registry ./config.toml
 
 ---
 
+<!-- State Channel: 探索阶段，暂不启用
 ### 步骤 5：部署 Channel User 服务
 
 ```bash
@@ -357,9 +357,11 @@ RUST_LOG=info ./target/release/channel-user ./config.toml
 ```
 
 **验证**: `curl http://localhost:3001/health`
+-->
 
 ---
 
+<!-- State Channel: 探索阶段，暂不启用
 ### 步骤 6：部署 Channel Provider 服务
 
 ```bash
@@ -377,9 +379,11 @@ RUST_LOG=info ./target/release/channel-provider ./config-provider.toml
 ```
 
 **验证**: `curl http://localhost:3002/health`
+-->
 
 ---
 
+<!-- State Channel: 探索阶段，暂不启用
 ### 步骤 7：部署 Channel Hub 服务
 
 ```bash
@@ -397,9 +401,11 @@ RUST_LOG=info ./target/release/channel-hub ./config-hub.toml
 ```
 
 **验证**: `curl http://localhost:3003/health`
+-->
 
 ---
 
+<!-- State Channel: 探索阶段，暂不启用
 ### 步骤 8：部署 Hub Registry
 
 ```bash
@@ -413,6 +419,7 @@ RUST_LOG=info ./target/release/ignite-pay-hub-registry ./hub-registry.toml
 ```
 
 **验证**: `curl http://localhost:3004/health`
+-->
 
 ---
 
@@ -440,7 +447,8 @@ cd ignite-pay-merchant-mcp
 cargo build --release --bin ignite-pay-merchant-mcp
 
 # 编辑 config.toml
-# 设置 merchant.hub_endpoint, mediator.ws_url 等
+# 设置 mediator.ws_url 等
+# State Channel: 探索阶段，暂不启用（原需设置 merchant.hub_endpoint）
 
 echo '{"jsonrpc":"2.0","method":"tools/list","id":1}' | ./target/release/ignite-pay-merchant-mcp ./config.toml
 ```
@@ -535,6 +543,7 @@ rotate_key_fee_lamports = 2000                     # Sponsored 密钥轮换费
 | `light.photon_url` | 仅 ZK 模式 | Helius Photon RPC URL（默认 PDA 模式不需要） |
 | `auth.platform_signing_key_path` | 生产必填 | 32 字节 Ed25519 私钥 |
 
+<!-- State Channel: 探索阶段，暂不启用
 ### 5.3 Channel Hub (`ignite-pay-channel-service/config-hub.toml`)
 
 ```toml
@@ -611,6 +620,7 @@ per_channel_limit = 100000000
 window_slots = 100000
 travel_rule_threshold = 500000000
 ```
+-->
 
 ### 5.6 User MCP (`ignite-pay-mcp/config.toml`)
 
@@ -659,8 +669,9 @@ default_owner = ""                      # 默认 owner 公钥
 ```toml
 [merchant]
 did = ""                                    # 商户 DID（首次运行自动生成）
-hub_endpoint = "http://localhost:3003"       # Hub HTTP 端点
-hub_ws_url = "ws://localhost:3003/ws"        # Hub WebSocket 端点
+# State Channel: 探索阶段，暂不启用
+# hub_endpoint = "http://localhost:3003"       # Hub HTTP 端点
+# hub_ws_url = "ws://localhost:3003/ws"        # Hub WebSocket 端点
 
 [mediator]
 ws_url = "ws://localhost:4000/ws"            # DIDComm Router WebSocket（商户侧）
@@ -670,13 +681,15 @@ path = "./data/merchant-mcp"                 # sled 数据库路径
 
 [solana]
 rpc_url = "https://api.devnet.solana.com"
-program_id = ""                              # 状态通道程序 ID
+program_id = ""                              # <!-- State Channel: 状态通道程序 ID -->
 
-[hub]
-token_mint = ""                              # 默认 Token Mint
-provider_pubkey = ""                         # Provider (Hub) 公钥
+# State Channel: 探索阶段，暂不启用
+# [hub]
+# token_mint = ""                              # 默认 Token Mint
+# provider_pubkey = ""                         # Provider (Hub) 公钥
 ```
 
+<!-- State Channel: 探索阶段，暂不启用
 ### 5.8 Hub Registry (`hub-registry.toml`)
 
 ```toml
@@ -689,6 +702,7 @@ url = "postgres://ignite:ignite@localhost:5432/hub_registry"
 ```
 
 数据库 schema 在服务启动时自动初始化。
+-->
 
 ### 5.9 DIDComm Router — 商户侧 (`deploy/config/didcomm-router-merchant.toml`)
 
@@ -722,7 +736,7 @@ path = "./data/merchant-router"   # 独立的 sled 数据目录
 
 | 密钥 | 格式 | 用途 | 生成方式 |
 |:-----|:-----|:-----|:---------|
-| Solana Keypair | JSON 数组 (64 字节) | 通道服务签名、交易付费 | `solana-keygen new` |
+| Solana Keypair | JSON 数组 (64 字节) | <!-- State Channel: 通道服务签名、-->交易付费 | `solana-keygen new` |
 | Platform Signing Key | 32 字节原始二进制 | DID Registry 平台签名、VC 签发 | `openssl rand -out file 32` |
 | DID Identity | Ed25519 | `did:ignite` 去中心化身份 | `ignite-pay-core::identity` |
 | FCM Service Account | JSON | Firebase 推送通知 | Firebase Console |
@@ -733,22 +747,22 @@ path = "./data/merchant-router"   # 独立的 sled 数据目录
 # 创建密钥目录
 mkdir -p ./keys
 
-# 用户端密钥
-solana-keygen new --outfile ./keys/user.key
-
-# 商户端密钥
-solana-keygen new --outfile ./keys/provider.key
-
-# Hub 密钥
-solana-keygen new --outfile ./keys/hub.key
+# State Channel: 探索阶段，暂不启用
+# # 用户端密钥
+# solana-keygen new --outfile ./keys/user.key
+# # 商户端密钥
+# solana-keygen new --outfile ./keys/provider.key
+# # Hub 密钥
+# solana-keygen new --outfile ./keys/hub.key
 
 # DID Registry 付费密钥
 solana-keygen new --outfile ./keys/payer.json
 
 # Devnet 空投
-solana airdrop 2 $(solana-keygen pubkey ./keys/user.key) --url devnet
-solana airdrop 2 $(solana-keygen pubkey ./keys/provider.key) --url devnet
-solana airdrop 2 $(solana-keygen pubkey ./keys/hub.key) --url devnet
+# State Channel: 探索阶段，暂不启用
+# solana airdrop 2 $(solana-keygen pubkey ./keys/user.key) --url devnet
+# solana airdrop 2 $(solana-keygen pubkey ./keys/provider.key) --url devnet
+# solana airdrop 2 $(solana-keygen pubkey ./keys/hub.key) --url devnet
 solana airdrop 2 $(solana-keygen pubkey ./keys/payer.json) --url devnet
 ```
 
@@ -815,6 +829,7 @@ chmod 400 /path/to/platform_signing.key
 - 挂载密钥文件（payer keypair、platform signing key）
 - 挂载 sled 数据目录
 
+<!-- State Channel: 探索阶段，暂不启用
 **Channel Services (User/Provider/Hub)**
 
 - 分别暴露端口 `3001` / `3002` / `3003`
@@ -826,6 +841,7 @@ chmod 400 /path/to/platform_signing.key
 - 暴露端口 `3004`
 - 依赖 PostgreSQL 容器
 - 挂载配置文件
+-->
 
 **MCP Services**
 
@@ -923,71 +939,71 @@ services:
       - backend
 
   # ─── 通道层 ───
-  channel-user:
-    build:
-      context: .
-      dockerfile: ignite-pay-channel-service/Dockerfile
-    restart: unless-stopped
-    environment:
-      - RUST_LOG=info
-    volumes:
-      - channel_user_data:/app/data
-      - ./ignite-pay-channel-service/config.toml:/app/config.toml:ro
-      - ./keys:/app/keys:ro
-    expose:
-      - "3001"
-    networks:
-      - backend
-
-  channel-provider:
-    build:
-      context: .
-      dockerfile: ignite-pay-channel-service/Dockerfile
-    restart: unless-stopped
-    environment:
-      - RUST_LOG=info
-    volumes:
-      - channel_provider_data:/app/data
-      - ./ignite-pay-channel-service/config-provider.toml:/app/config.toml:ro
-      - ./keys:/app/keys:ro
-    expose:
-      - "3002"
-    networks:
-      - backend
-
-  channel-hub:
-    build:
-      context: .
-      dockerfile: ignite-pay-channel-service/Dockerfile
-    restart: unless-stopped
-    environment:
-      - RUST_LOG=info
-    volumes:
-      - channel_hub_data:/app/data
-      - ./ignite-pay-channel-service/config-hub.toml:/app/config.toml:ro
-      - ./keys:/app/keys:ro
-    expose:
-      - "3003"
-    networks:
-      - backend
-
-  # ─── 注册层 ───
-  hub-registry:
-    build:
-      context: .
-      dockerfile: ignite-pay-hub-registry/Dockerfile
-    restart: unless-stopped
-    environment:
-      - RUST_LOG=info
-    volumes:
-      - ./ignite-pay-hub-registry/hub-registry.toml:/app/hub-registry.toml:ro
-    expose:
-      - "3004"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - backend
+  # channel-user:
+  #   build:
+  #     context: .
+  #     dockerfile: ignite-pay-channel-service/Dockerfile
+  #   restart: unless-stopped
+  #   environment:
+  #     - RUST_LOG=info
+  #   volumes:
+  #     - channel_user_data:/app/data
+  #     - ./ignite-pay-channel-service/config.toml:/app/config.toml:ro
+  #     - ./keys:/app/keys:ro
+  #   expose:
+  #     - "3001"
+  #   networks:
+  #     - backend
+  #
+  # channel-provider:
+  #   build:
+  #     context: .
+  #     dockerfile: ignite-pay-channel-service/Dockerfile
+  #   restart: unless-stopped
+  #   environment:
+  #     - RUST_LOG=info
+  #   volumes:
+  #     - channel_provider_data:/app/data
+  #     - ./ignite-pay-channel-service/config-provider.toml:/app/config.toml:ro
+  #     - ./keys:/app/keys:ro
+  #   expose:
+  #     - "3002"
+  #   networks:
+  #     - backend
+  #
+  # channel-hub:
+  #   build:
+  #     context: .
+  #     dockerfile: ignite-pay-channel-service/Dockerfile
+  #   restart: unless-stopped
+  #   environment:
+  #     - RUST_LOG=info
+  #   volumes:
+  #     - channel_hub_data:/app/data
+  #     - ./ignite-pay-channel-service/config-hub.toml:/app/config.toml:ro
+  #     - ./keys:/app/keys:ro
+  #   expose:
+  #     - "3003"
+  #   networks:
+  #     - backend
+  #
+  # # ─── 注册层 ───
+  # hub-registry:
+  #   build:
+  #     context: .
+  #     dockerfile: ignite-pay-hub-registry/Dockerfile
+  #   restart: unless-stopped
+  #   environment:
+  #     - RUST_LOG=info
+  #   volumes:
+  #     - ./ignite-pay-hub-registry/hub-registry.toml:/app/hub-registry.toml:ro
+  #   expose:
+  #     - "3004"
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   networks:
+  #     - backend
 
   # ─── 代理层（stdio 模式，由宿主进程管理）───
   # User MCP 和 Merchant MCP 通过 stdio 通信，不适合直接放入 docker-compose。
@@ -1006,10 +1022,10 @@ services:
     depends_on:
       - didcomm-router
       - did-registry
-      - channel-user
-      - channel-provider
-      - channel-hub
-      - hub-registry
+      # - channel-user
+      # - channel-provider
+      # - channel-hub
+      # - hub-registry
     networks:
       - backend
 
@@ -1018,9 +1034,10 @@ volumes:
   router_data:
   router_merchant_data:
   did_registry_data:
-  channel_user_data:
-  channel_provider_data:
-  channel_hub_data:
+  # State Channel: 探索阶段，暂不启用
+  # channel_user_data:
+  # channel_provider_data:
+  # channel_hub_data:
 
 networks:
   backend:
@@ -1054,6 +1071,7 @@ ssl_prefer_server_ciphers on;
 # 用于所有需要 WS 的服务
 ```
 
+<!-- State Channel: 探索阶段，暂不启用
 #### Channel User 反向代理
 
 ```nginx
@@ -1131,6 +1149,7 @@ server {
     }
 }
 ```
+-->
 
 #### DIDComm Router 反向代理
 
@@ -1179,6 +1198,7 @@ server {
 }
 ```
 
+<!-- State Channel: 探索阶段，暂不启用
 #### Hub Registry 反向代理
 
 ```nginx
@@ -1196,12 +1216,14 @@ server {
     }
 }
 ```
+-->
 
-> **说明**：DID Registry 和 Hub Registry 无 WebSocket 端点，仅配置 HTTP 反向代理即可。如果这两个服务仅在内网使用（不对外暴露），可以省略 Nginx 配置，直接通过内网地址访问。
+> **说明**：DID Registry 无 WebSocket 端点，仅配置 HTTP 反向代理即可。如果该服务仅在内网使用（不对外暴露），可以省略 Nginx 配置，直接通过内网地址访问。
 ```
 
 ### 8.2 systemd 服务配置
 
+<!-- State Channel: 探索阶段，暂不启用
 #### Channel User
 
 ```ini
@@ -1261,6 +1283,7 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 ```
+-->
 
 #### DIDComm Router
 
@@ -1302,6 +1325,7 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
+<!-- State Channel: 探索阶段，暂不启用
 #### Hub Registry
 
 ```ini
@@ -1322,6 +1346,7 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 ```
+-->
 
 #### DIDComm Router — 商户侧
 
@@ -1347,22 +1372,28 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable ignite-channel-user ignite-channel-provider ignite-channel-hub \
-                     ignite-didcomm-router ignite-didcomm-router-merchant \
-                     ignite-did-registry ignite-hub-registry
+# State Channel: 探索阶段，暂不启用
+# sudo systemctl enable ignite-channel-user ignite-channel-provider ignite-channel-hub \
+#                      ignite-hub-registry
+sudo systemctl enable ignite-didcomm-router ignite-didcomm-router-merchant \
+                     ignite-did-registry
+# sudo systemctl start ignite-channel-user ignite-channel-provider \
+#                      ignite-channel-hub ignite-hub-registry
 sudo systemctl start ignite-didcomm-router ignite-didcomm-router-merchant \
-                      ignite-did-registry ignite-channel-user \
-                      ignite-channel-provider ignite-channel-hub ignite-hub-registry
+                     ignite-did-registry
 ```
 
 ### 8.3 日志管理
 
 ```bash
 # 查看 systemd 服务日志
-sudo journalctl -u ignite-channel-hub -f
+# State Channel: 探索阶段，暂不启用
+# sudo journalctl -u ignite-channel-hub -f
+sudo journalctl -u ignite-didcomm-router -f
 
 # 按时间范围查看
-sudo journalctl -u ignite-channel-hub --since "2025-01-01 00:00:00" --until "2025-01-02 00:00:00"
+# sudo journalctl -u ignite-channel-hub --since "2025-01-01 00:00:00" --until "2025-01-02 00:00:00"
+sudo journalctl -u ignite-didcomm-router --since "2025-01-01 00:00:00" --until "2025-01-02 00:00:00"
 
 # 按日志级别
 RUST_LOG=debug  # trace / debug / info / warn / error
@@ -1374,6 +1405,7 @@ RUST_LOG=debug  # trace / debug / info / warn / error
 
 | 指标 | 监控对象 | 告警阈值 | 处理措施 |
 |:-----|:---------|:---------|:---------|
+<!-- State Channel: 探索阶段，暂不启用
 | 可用流动性 | Channel Hub | < 2x 平均路由量 | 补充流动性 |
 | 通道成功率 | Channel Hub | < 95% | 检查通道状态 |
 | 平均延迟 | 所有通道服务 | > 200ms | 优化网络/节点 |
@@ -1383,6 +1415,7 @@ RUST_LOG=debug  # trace / debug / info / warn / error
 | 过期多跳支付 | Hub | > 5% | 调整 timelock |
 | PostgreSQL 连接数 | Hub Registry | > 80% max | 扩容 |
 | 活跃通道数趋势 | Hub/Provider | 持续下降 | 检查服务质量 |
+-->
 
 ### 8.5 Solana RPC 端点
 
@@ -1410,14 +1443,13 @@ RUST_LOG=debug  # trace / debug / info / warn / error
                             │
 ┌───────────────────────────▼─────────────────────────────────┐
 │                   后端服务网络                               │
-│  Channel User :3001    Channel Provider :3002               │
-│  Channel Hub :3003     DIDComm Router :8080 / :4000         │
-│  DID Registry :8081    Hub Registry :3004                   │
+│  DIDComm Router :8080 / :4000                               │
+│  DID Registry :8081                                          │
 └───────────────────────────┬─────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────┐
 │                   数据层网络                                 │
-│  PostgreSQL :5432 (仅 Hub Registry 可访问)                   │
+│  PostgreSQL :5432 (内部服务可访问)                   │
 │  sled 数据目录 (各服务本地)                                  │
 │  Solana RPC :443 (出站 HTTPS)                               │
 └─────────────────────────────────────────────────────────────┘
@@ -1453,12 +1485,13 @@ iptables -A INPUT -p tcp --dport 8080 -s 127.0.0.1 -j ACCEPT
 iptables -A INPUT -p tcp --dport 4000 -s 127.0.0.1 -j ACCEPT
 # DID Registry
 iptables -A INPUT -p tcp --dport 8081 -s 127.0.0.1 -j ACCEPT
-# Channel Services
-iptables -A INPUT -p tcp --dport 3001 -s 127.0.0.1 -j ACCEPT
-iptables -A INPUT -p tcp --dport 3002 -s 127.0.0.1 -j ACCEPT
-iptables -A INPUT -p tcp --dport 3003 -s 127.0.0.1 -j ACCEPT
-# Hub Registry
-iptables -A INPUT -p tcp --dport 3004 -s 127.0.0.1 -j ACCEPT
+# State Channel: 探索阶段，暂不启用
+# # Channel Services
+# iptables -A INPUT -p tcp --dport 3001 -s 127.0.0.1 -j ACCEPT
+# iptables -A INPUT -p tcp --dport 3002 -s 127.0.0.1 -j ACCEPT
+# iptables -A INPUT -p tcp --dport 3003 -s 127.0.0.1 -j ACCEPT
+# # Hub Registry
+# iptables -A INPUT -p tcp --dport 3004 -s 127.0.0.1 -j ACCEPT
 # PostgreSQL
 iptables -A INPUT -p tcp --dport 5432 -s 127.0.0.1 -j ACCEPT
 
@@ -1476,10 +1509,12 @@ iptables -A INPUT -j LOG --log-prefix "DROPPED: " --log-level 4
 | 8080 | DIDComm Router | 否 | localhost / 内网 |
 | 4000 | DIDComm Router (商户侧) | 否 | localhost / 内网 |
 | 8081 | DID Registry | 否 | localhost / 内网 |
+<!-- State Channel: 探索阶段，暂不启用
 | 3001 | Channel User | 否 | localhost / 内网 |
 | 3002 | Channel Provider | 否 | localhost / 内网 |
 | 3003 | Channel Hub | 否 | localhost / 内网 |
 | 3004 | Hub Registry | 否 | localhost / 内网 |
+-->
 | 5432 | PostgreSQL | 否 | localhost only |
 
 ---
@@ -1493,10 +1528,12 @@ iptables -A INPUT -j LOG --log-prefix "DROPPED: " --log-level 4
 | DIDComm Router | `GET http://localhost:8080/health` | HTTP 200 |
 | DIDComm Router (商户侧) | `GET http://localhost:4000/health` | HTTP 200 |
 | DID Registry | `GET http://localhost:8081/health` | `ok` |
+<!-- State Channel: 探索阶段，暂不启用
 | Channel User | `GET http://localhost:3001/health` | HTTP 200 |
 | Channel Provider | `GET http://localhost:3002/health` | HTTP 200 |
 | Channel Hub | `GET http://localhost:3003/health` | HTTP 200 |
 | Hub Registry | `GET http://localhost:3004/health` | HTTP 200 |
+-->
 
 ### 9.2 验证脚本
 
@@ -1520,10 +1557,11 @@ check() {
 check "DIDComm Router"           "http://localhost:8080/health"
 check "DIDComm Router (Merchant)" "http://localhost:4000/health"
 check "DID Registry"             "http://localhost:8081/health"
-check "Channel User"     "http://localhost:3001/health"
-check "Channel Provider" "http://localhost:3002/health"
-check "Channel Hub"      "http://localhost:3003/health"
-check "Hub Registry"     "http://localhost:3004/health"
+# State Channel: 探索阶段，暂不启用
+# check "Channel User"     "http://localhost:3001/health"
+# check "Channel Provider" "http://localhost:3002/health"
+# check "Channel Hub"      "http://localhost:3003/health"
+# check "Hub Registry"     "http://localhost:3004/health"
 
 # PostgreSQL 使用 pg_isready 检查（curl 无法检测原始 TCP 端口）
 if pg_isready -h localhost -p 5432 -U ignite > /dev/null 2>&1; then
@@ -1542,12 +1580,13 @@ fi
 # ... 其他配置 ...
 
 ExecStartPost=/bin/sleep 2
-ExecStartPost=/usr/bin/curl -sf http://localhost:3003/health
+ExecStartPost=/usr/bin/curl -sf http://localhost:8080/health
 
 # 健康检查失败时自动重启
 WatchdogSec=30
 ```
 
+<!-- State Channel: 探索阶段，暂不启用
 ### 9.4 验证通道服务 API 功能
 
 ```bash
@@ -1568,11 +1607,16 @@ curl -X POST http://localhost:3003/v1/routes/find \
     "max_hops": 3
   }'
 
-# DID 解析
-curl http://localhost:8081/v1/did/resolve/did:ignite:z6Mk...
-
 # Hub 列表
 curl http://localhost:3004/v1/hubs?status=active
+```
+-->
+
+### 9.4 验证 DID 服务 API 功能
+
+```bash
+# DID 解析
+curl http://localhost:8081/v1/did/resolve/did:ignite:z6Mk...
 ```
 
 ---
@@ -1590,9 +1634,9 @@ Error: Address already in use (os error 98)
 **排查**：
 ```bash
 # 查找占用端口的进程
-sudo lsof -i :3003
+sudo lsof -i :<PORT>
 # 或
-sudo ss -tlnp | grep 3003
+sudo ss -tlnp | grep <PORT>
 
 # 终止进程
 kill <PID>
@@ -1609,7 +1653,7 @@ Error: database is already open in another process
 - 确保没有残留进程
 - 异常退出后删除 `*.lock` 文件：
 ```bash
-rm ./data/channel_hub/*.lock
+rm ./data/<service_data_dir>/*.lock
 ```
 
 #### 错误：Solana RPC 连接失败
@@ -1629,6 +1673,7 @@ curl -s -X POST https://api.devnet.solana.com \
 # 正常: {"jsonrpc":"2.0","result":"ok","id":1}
 ```
 
+<!-- State Channel: 探索阶段，暂不启用
 #### 错误：PostgreSQL 连接失败 (Hub Registry)
 
 ```
@@ -1646,6 +1691,7 @@ psql -U ignite -d hub_registry -h localhost -c "SELECT 1;"
 # 检查 pg_hba.conf 是否允许密码认证
 sudo cat /etc/postgresql/14/main/pg_hba.conf | grep ignite
 ```
+-->
 
 #### 错误：密钥文件不存在
 
@@ -1658,6 +1704,7 @@ Error: No such file or directory (keypair_path)
 - 使用绝对路径而非相对路径
 - 确认文件权限：`ls -la ./keys/`
 
+<!-- State Channel: 探索阶段，暂不启用
 ### 10.2 签名验证失败
 
 **现象**：`verify_leaf_update_signature` 或链上 `InvalidSignature`
@@ -1696,6 +1743,7 @@ Error: No such file or directory (keypair_path)
 2. 检查 `timelock_slot` 满足约束：`> current_slot + challenge_duration + HTLC_SAFETY_MARGIN`
 3. 多跳时检查 timelock 递减是否正确
 4. `HTLC_SAFETY_MARGIN` = 1000 slots（约 6.7 分钟）
+-->
 
 ### 10.6 DIDComm Router WebSocket 断连
 
@@ -1707,6 +1755,7 @@ Error: No such file or directory (keypair_path)
 3. 查看 Router 日志中是否有 `max_queued_messages` 触发
 4. 确认 `max_message_age_seconds` 配置合理
 
+<!-- State Channel: 探索阶段，暂不启用
 ### 10.7 Hub 路由发现无结果
 
 **现象**：`POST /v1/routes/find` 返回空路由
@@ -1716,22 +1765,23 @@ Error: No such file or directory (keypair_path)
 2. 确认路由图有边：`POST /v1/routes/refresh`
 3. 确认 Hub 有足够流动性
 4. 检查 `from_did_hash` 和 `to_did_hash` 是否正确
+-->
 
 ### 10.8 日志级别调整
 
 ```bash
 # 临时调整（重启失效）
-RUST_LOG=debug ./channel-hub ./config-hub.toml
+RUST_LOG=debug ./didcomm-router ./config.toml
 
 # 按模块过滤
-RUST_LOG=ignite_pay_channel_service=debug,info ./channel-hub ./config-hub.toml
+RUST_LOG=didcomm_router=debug,info ./didcomm-router ./config.toml
 
 # systemd 服务调整
-sudo systemctl edit ignite-channel-hub
+sudo systemctl edit ignite-didcomm-router
 # 添加:
 # [Service]
 # Environment=RUST_LOG=debug
-sudo systemctl restart ignite-channel-hub
+sudo systemctl restart ignite-didcomm-router
 ```
 
 ---
@@ -1742,11 +1792,15 @@ sudo systemctl restart ignite-channel-hub
 
 | 数据类型 | 存储位置 | 备份方式 | 频率建议 |
 |:---------|:---------|:---------|:---------|
+<!-- State Channel: 探索阶段，暂不启用
 | 通道 sled 数据 | `./data/channel_user/`, `./data/channel_provider/`, `./data/channel_hub/` | 文件系统快照 | 每日 |
+-->
 | DID Registry sled | `./did_registry_data/`（硬编码路径） | 文件系统快照 | 每日 |
 | DIDComm Router sled | `./data/` | 文件系统快照 | 每日 |
 | MCP sled 数据 | `./data/`, `./data/merchant-mcp/` | 文件系统快照 | 每日 |
+<!-- State Channel: 探索阶段，暂不启用
 | PostgreSQL (Hub Registry) | PostgreSQL 数据目录 | `pg_dump` | 每日 |
+-->
 | 密钥文件 | `./keys/` | 离线备份 | 变更时 |
 | 配置文件 | 各服务 `config.toml` | 版本控制 | 变更时 |
 
@@ -1763,18 +1817,13 @@ BACKUP_DIR="/opt/ignite-pay/backups/$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$BACKUP_DIR"
 
 # 停止所有服务
-sudo systemctl stop ignite-channel-hub ignite-channel-provider ignite-channel-user \
-                     ignite-didcomm-router ignite-did-registry
+sudo systemctl stop ignite-didcomm-router ignite-did-registry
 
 # 复制 sled 数据目录
-cp -r /opt/ignite-pay/data/channel_hub   "$BACKUP_DIR/channel_hub"
-cp -r /opt/ignite-pay/data/channel_provider "$BACKUP_DIR/channel_provider"
-cp -r /opt/ignite-pay/data/channel_user  "$BACKUP_DIR/channel_user"
 cp -r /opt/ignite-pay/did_registry_data  "$BACKUP_DIR/did_registry_data"
 
 # 重启服务
-sudo systemctl start ignite-didcomm-router ignite-did-registry ignite-channel-user \
-                      ignite-channel-provider ignite-channel-hub
+sudo systemctl start ignite-didcomm-router ignite-did-registry
 
 echo "Backup completed: $BACKUP_DIR"
 ```
@@ -1797,6 +1846,7 @@ zfs send pool0/ignite-data@backup-... | gzip > /opt/ignite-pay/backups/snap-$(da
 
 > **注意**：sled 在写入时可能存在内存中未刷盘的数据。33 个 `.flush()` 调用确保关键写入后立即持久化，但快照仍可能丢失最后一次未 flush 的写入。生产环境建议在低峰期执行备份。
 
+<!-- State Channel: 探索阶段，暂不启用
 ### 11.3 PostgreSQL 备份
 
 ```bash
@@ -1820,6 +1870,7 @@ find "$BACKUP_DIR" -name "*.dump" -mtime +7 -delete
 pg_restore -U ignite -d hub_registry_restored \
   "$BACKUP_DIR/hub_registry_20250101_120000.dump"
 ```
+-->
 
 ### 11.4 密钥备份
 
@@ -1838,9 +1889,14 @@ tar czf - /opt/ignite-pay/keys/ | \
 | 场景 | 恢复步骤 |
 |:-----|:---------|
 | **sled 数据损坏** | 1. 停止对应服务 → 2. 删除损坏目录 → 3. 从备份恢复 → 4. 重启服务 |
+<!-- State Channel: 探索阶段，暂不启用
 | **PostgreSQL 数据丢失** | 1. 确认 PostgreSQL 运行 → 2. `pg_restore` 恢复 → 3. 重启 Hub Registry |
-| **整台服务器故障** | 1. 新服务器安装环境 → 2. 恢复配置文件和密钥 → 3. 启动 PostgreSQL 并恢复 → 4. 恢复 sled 数据 → 5. 按依赖顺序启动所有服务 |
+-->
+| **整台服务器故障** | 1. 新服务器安装环境 → 2. 恢复配置文件和密钥 → 3. 恢复 sled 数据 → 4. 按依赖顺序启动所有服务 |
+<!-- State Channel: 探索阶段，暂不启用
 | **密钥泄露** | 1. 生成新密钥 → 2. 更新配置文件 → 3. 通道服务需重新开通道（旧通道无法恢复） → 4. DID Registry 需执行密钥轮换 |
+-->
+| **密钥泄露** | 1. 生成新密钥 → 2. 更新配置文件 → 3. DID Registry 需执行密钥轮换 |
 
 ### 11.6 已知限制
 
@@ -1849,7 +1905,9 @@ tar czf - /opt/ignite-pay/keys/ | \
 | sled 无热备份 API | 无法在不停止写入的情况下获得一致性快照 |
 | 无自动化备份机制 | 项目中无备份脚本，需运维手动配置（见上方脚本模板） |
 | 审计日志恢复 | 支持 `restore_from_ipfs()` 从 IPFS 恢复审计日志，但依赖 IPFS 数据可用性 |
+<!-- State Channel: 探索阶段，暂不启用
 | 通道状态不可重建 | sled 数据丢失意味着通道状态丢失，只能等待链上争议期过期后结算 |
+-->
 
 ---
 
@@ -1861,6 +1919,7 @@ tar czf - /opt/ignite-pay/keys/ | \
 - **向后兼容**：sled 数据格式变更需支持自动迁移或提供迁移工具
 - **链上程序不可变**：Solana 程序部署后不可修改，只能部署新版本（新 Program ID）
 
+<!-- State Channel: 探索阶段，暂不启用
 ### 12.2 链下服务升级流程
 
 ```bash
@@ -1887,10 +1946,15 @@ curl -sf http://localhost:3003/health || {
   echo "Rollback executed!"
 }
 ```
+-->
 
 ### 12.3 PostgreSQL Schema 迁移
 
+<!-- State Channel: 探索阶段，暂不启用
 当前 Hub Registry 使用 `include_str!()` 在启动时执行 `migrations/001_init.sql`，**无版本追踪**。`CREATE TABLE` 语句在表已存在时会失败。
+-->
+
+当前数据库 schema 使用 `include_str!()` 在启动时执行，**无版本追踪**。
 
 升级策略：
 
@@ -1909,6 +1973,7 @@ for sql in &migrations {
 }
 ```
 
+<!-- State Channel: 探索阶段，暂不启用
 ### 12.4 链上程序升级
 
 Solana 链上程序升级流程：
@@ -1928,14 +1993,17 @@ solana program show <PROGRAM_ID> --url devnet
 ```
 
 > **注意**：链上程序升级需要拥有升级权限的密钥。生产环境建议使用多签治理（如 Squads Protocol）管理升级权限。
+-->
 
 ### 12.5 回滚策略
 
 | 组件 | 回滚方式 | 注意事项 |
 |:-----|:---------|:---------|
 | 链下服务 | 替换二进制 + 重启 | sled 数据格式需向后兼容 |
+<!-- State Channel: 探索阶段，暂不启用
 | PostgreSQL | `pg_restore` 恢复备份 | 会丢失上次备份后的数据 |
 | 链上程序 | 部署旧版本 `.so` | 需要升级权限密钥 |
+-->
 | 配置文件 | 替换配置 + 重启 | 密钥变更需同步更新相关服务 |
 
 ---
@@ -1958,10 +2026,12 @@ solana program show <PROGRAM_ID> --url devnet
 |:-----|:-------|:---------|
 | DIDComm Router | `didcomm_router=info` | `didcomm_router=debug` |
 | DID Registry | `did_registry=info` | `did_registry=debug,sqlx=warn` |
+<!-- State Channel: 探索阶段，暂不启用
 | Channel User | `info` | `ignite_pay_channel_service=debug` |
 | Channel Provider | `info` | `ignite_pay_channel_service=debug` |
 | Channel Hub | `info` | `ignite_pay_channel_service=debug` |
 | Hub Registry | `info` | `ignite_pay_hub_registry=debug,sqlx=debug` |
+-->
 | User MCP | `ignite_pay_mcp=info` | `ignite_pay_mcp=debug` |
 | Merchant MCP | `info` | `info,ignite_pay_core=debug` |
 
@@ -1972,13 +2042,13 @@ solana program show <PROGRAM_ID> --url devnet
 RUST_LOG=debug
 
 # 按 crate 过滤
-RUST_LOG=ignite_pay_channel_service=debug,sqlx=warn
+RUST_LOG=didcomm_router=debug,sqlx=warn
 
 # 按模块路径过滤
-RUST_LOG=ignite_pay_channel_service::handlers::payment=trace
+RUST_LOG=didcomm_router::handler=trace
 
 # 混合
-RUST_LOG=info,ignite_pay_channel_service=debug,sqlx=warn
+RUST_LOG=info,didcomm_router=debug,sqlx=warn
 ```
 
 ### 13.4 systemd 环境变量配置

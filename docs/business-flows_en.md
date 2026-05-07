@@ -847,10 +847,12 @@ Buyer MCP                  Merchant Mediator         Merchant MCP         Mercha
 | `ignite-pay/1.0/connection-confirm-response` | MCP → Phone | Final pairing confirmation |
 | `ignite-pay/1.0/payment-auth-request` | MCP → Phone | Payment authorization request (includes `available_payment_methods`) |
 | `ignite-pay/1.0/payment-auth-response` | Phone → MCP | Payment authorization response (includes session key + `payment_method`) |
+<!-- State Channel: Exploration phase, not enabled
 | `ignite-pay/1.0/channel-payment-request` | MCP → Phone | State channel payment request |
 | `ignite-pay/1.0/channel-payment-confirm` | MCP → Phone | State channel payment confirmation |
 | `ignite-pay/1.0/create-channel-request` | Phone → MCP | Request to create state channel |
 | `ignite-pay/1.0/create-channel-response` | MCP → Phone | State channel creation response |
+-->
 | `ignite-pay/1.0/list-sync-notification` | MCP → Phone | Whitelist/blacklist change notification |
 | `ignite-pay/1.0/mb-voucher` | Phone → Merchant | MagicBlock voucher sent to merchant |
 | `ignite-pay/1.0/qr-payment-request` | Phone → MCP | Payment request initiated after user scans QR (includes payment_method + merchant_mediator_url) |

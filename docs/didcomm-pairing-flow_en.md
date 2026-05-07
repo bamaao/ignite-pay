@@ -234,7 +234,9 @@ After receiving the connection-confirm, MCP:
 |---------|-------------|-------------|
 | didcomm-router (user) | 8080 | User-side Mediator |
 | didcomm-router (merchant) | 4000 | Merchant-side Mediator |
+<!-- State Channel: Exploration phase, not enabled
 | ignite-pay-hub-registry | 3004 | Hub registration service |
+-->
 
 ### 2.2 Server-side (MCP) Implementation Status
 
@@ -304,8 +306,10 @@ After receiving the connection-confirm, MCP:
 |-------------|-----------|-------------|
 | `ignite-pay/1.0/payment-auth-request` | MCP → App | Payment authorization request |
 | `ignite-pay/1.0/payment-auth-response` | App → MCP | Payment authorization response (contains session key) |
+<!-- State Channel: Exploration phase, not enabled
 | `ignite-pay/1.0/create-channel-request` | Merchant App → MCP | State channel creation request |
 | `ignite-pay/1.0/channel-payment-confirm` | MCP → Merchant App | Channel payment confirmation |
+-->
 | `ignite-pay/1.0/session-fund-request` | MCP → Phone | F3/F7: Request funding when session balance insufficient |
 | `ignite-pay/1.0/session-fund-response` | Phone → MCP | F3/F7: Funding completed response |
 | `ignite-pay/1.0/balance-notification` | MCP → Phone | F13: Balance below threshold notification |

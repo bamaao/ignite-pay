@@ -60,17 +60,21 @@ AI Agent ──X402──> MCP Server ──DIDComm JWE──> Mediator ──pu
 │                  QR Scanner (全屏模态)                    │
 │              ·扫码配对 ·手动输入邀请URL                     │
 ├─────────────────────────────────────────────────────────┤
+<!-- State Channel: 探索阶段，暂不启用
 │              Channel Topology (通道拓扑)                  │
 │       ·余额总览 ·节点信息 ·通道列表 ·关闭/结算              │
 ├─────────────────────────────────────────────────────────┤
+-->
 │              Transaction History (交易历史)               │
 │          ·筛选(All/Payment/ListSync) ·交易详情            │
 ├─────────────────────────────────────────────────────────┤
 │              Profile (个人资料)                           │
 │     ·DID展示 ·显示名 ·网络信息 ·设备状态 ·统计数据          │
 ├─────────────────────────────────────────────────────────┤
+<!-- State Channel: 探索阶段，暂不启用
 │              Hub List (Hub 列表)                          │
 │        ·Hub 发现 ·Hub 选择 ·通道创建参数配置                │
+-->
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -89,9 +93,11 @@ AI Agent ──X402──> MCP Server ──DIDComm JWE──> Mediator ──pu
 |:-----|:-----|:-------|:-----|
 | 顶部栏 | Sentinel Logo + 网络状态 + 通知铃铛(未读数) | `DidcommService.isConnected` | 已实现 |
 | DID 身份卡片 | DID 文本 + 复制 + 连接状态动画点 + 待处理消息数 | `DidcommService.did`, `_isConnected` | 已实现 |
-| 快捷导航 | Vault / Policy / Channels / Settings | 静态 | 已实现（Channels → ChannelTopologyScreen） |
+| 快捷导航 | Vault / Policy / <!-- State Channel: 探索阶段，暂不启用 - 原含 Channels -->Settings | 静态 | 已实现<!-- State Channel: 探索阶段，暂不启用 - 原含（Channels → ChannelTopologyScreen） --> |
 | 扫码配对按钮 | "Scan MCP QR Code" 大按钮 | 触发 QR Scanner | 已实现（支持 PaymentQrData 和 didcomm://） |
+<!-- State Channel: 探索阶段，暂不启用
 | 创建通道按钮 | "Create Channel" 按钮 | SharedPreferences hub_registry_url + mcp_did | 已实现 |
+-->
 | 消费仪表盘 | 径向进度条（已消费/限额 SOL） | `LocalLogStore` 聚合 | UI 存在，数据需对接 |
 | 最近活动 | 交易列表（商户、金额、时间、状态） | `DidcommService.messages` (实时) | 已实现，使用实时数据 |
 | 授权入口 | 待处理授权通知横幅 + "Authorize Payment" 按钮 | `DidcommService._pendingAuth` stream | 已实现 |
@@ -105,7 +111,9 @@ AI Agent ──X402──> MCP Server ──DIDComm JWE──> Mediator ──pu
 [点击授权] → X402 Challenge 模态 → 滑块确认 → 创建 Session Key → 加密响应 → 关闭
 [点击通知铃铛] → NotificationCenterScreen
 [点击 Channels] → ChannelTopologyScreen
+<!-- State Channel: 探索阶段，暂不启用
 [点击 Create Channel] → HubListScreen → 选择 Hub → 创建通道
+-->
 ```
 
 #### 3.1.3 需修复/对接
@@ -273,7 +281,9 @@ AI Agent ──X402──> MCP Server ──DIDComm JWE──> Mediator ──pu
 |:-----|:-----|:-------|
 | Solana 网络 | RPC URL 输入 + 网络（Mainnet/Devnet）切换 | 配置文件 |
 | SPL 压缩配置 | Tree Address + Tree Authority + DAS Endpoint | 配置文件 |
+<!-- State Channel: 探索阶段，暂不启用
 | 程序 ID | 状态通道程序 / DID 程序 / 会话密钥程序 显示 | 硬编码常量 |
+-->
 | 支付模式 | Self-Funded / Sponsored 切换 | 配置文件 |
 | Mediator 配置 | WS URL + HTTP URL + 当前状态 | `DidcommService` |
 | 推送通道 | FCM / WebSocket 选择 + 检测结果 | `DidcommService` |
@@ -424,6 +434,7 @@ AI Agent ──X402──> MCP Server ──DIDComm JWE──> Mediator ──pu
 
 ---
 
+<!-- State Channel: 探索阶段，暂不启用
 ### 3.12 通道拓扑 (ChannelTopologyScreen)
 
 **路由**：push slide-right（从 Dashboard 快捷导航 Channels 进入）
@@ -450,6 +461,7 @@ AI Agent ──X402──> MCP Server ──DIDComm JWE──> Mediator ──pu
 ```
 
 ---
+-->
 
 ### 3.13 交易历史 (TransactionHistoryScreen)
 
@@ -489,11 +501,14 @@ AI Agent ──X402──> MCP Server ──DIDComm JWE──> Mediator ──pu
 | 显示名称 | 可编辑输入框 + 保存 | SharedPreferences `display_name` | 已实现 |
 | 网络信息 | Devnet/Mainnet 标签 | SharedPreferences `network` | 已实现 |
 | 设备状态 | 连接状态点 + Session Key 激活徽章 | `DidcommService.isConnected`, `SessionKeyService` | 已实现 |
+<!-- State Channel: 探索阶段，暂不启用
 | 统计卡片 | 通道数 / 余额 / 商户数 | `ChannelService`, `SharedPreferences` | 已实现 |
+-->
 | 导出 DID | OutlinedButton "Export DID Document" | `DidcommService.didDocJson` | 已实现 |
 
 ---
 
+<!-- State Channel: 探索阶段，暂不启用
 ### 3.15 Hub 列表 (HubListScreen)
 
 **路由**：push slide-right（从 Dashboard "Create Channel" 按钮进入）
@@ -508,6 +523,7 @@ AI Agent ──X402──> MCP Server ──DIDComm JWE──> Mediator ──pu
 | 通道创建 | 选择 Hub → 输入参数 → 创建通道 | `sendCreateChannelRequest` | 已实现 |
 
 ---
+-->
 
 ## 4. 数据模型
 
@@ -600,12 +616,14 @@ class TransactionLog {
 | `registerDeviceToken` | `DidcommService.connectToMediator()` | 注册 FCM |
 | `parseOobInvitation` | `DidcommService.parseInvitationAndConnect()` | 解析邀请 |
 | `sendConnectionRequest` | `DidcommService.parseInvitationAndConnect()` | P2P 连接 |
+<!-- State Channel: 探索阶段，暂不启用
 | `parsePaymentQr` | `ChannelService.parsePaymentQr()` | 解析收款二维码 |
 | `listChannels` | `ChannelService.refreshChannels()` | 列出用户通道 |
 | `channelPay` | `ChannelService.channelPay()` | 状态通道支付 |
 | `openChannel` | `ChannelService.openChannel()` | 开通状态通道 |
 | `closeChannel` | `ChannelTopologyScreen._closeChannel()` | 关闭通道 |
 | `settleChannel` | `ChannelTopologyScreen._settleChannel()` | 结算通道 |
+-->
 
 ### 5.2 未对接（需新增）
 
@@ -741,12 +759,16 @@ MaterialApp
 │   │   │   └── → AuditLogsPage (push)
 │   │   ├── → PolicyArchitectScreen (push)
 │   │   ├── → ConnectionManagementScreen (push)
+<!-- State Channel: 探索阶段，暂不启用
 │   │   ├── → ChannelTopologyScreen (push) — 通道拓扑
+-->
 │   │   ├── → NotificationCenterScreen (push) — 通知中心
 │   │   ├── → ProfileScreen (push) — 个人资料
 │   │   ├── → TransactionHistoryScreen (push) — 交易历史
+<!-- State Channel: 探索阶段，暂不启用
 │   │   ├── → HubListScreen (push) — Hub 列表 / 创建通道
 │   │   ├── → QrPaymentScreen (push) — 通道支付确认
+-->
 │   │   ├── → showQrScanner (modal)
 │   │   └── → showX402Challenge (modal)
 │   ├── Tab 1: MessagesScreen (消息)

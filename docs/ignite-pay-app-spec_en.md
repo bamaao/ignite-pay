@@ -61,10 +61,12 @@ AI Agent --X402--> MCP Server --DIDComm JWE--> Mediator --push--> Phone App
 │                  QR Scanner (full-screen modal)          │
 │         ·Scan & pair ·Manual invite URL input            │
 ├─────────────────────────────────────────────────────────┤
+<!-- State Channel: Exploration phase, not enabled
 │              Channel Topology                            │
 │    ·Balance overview ·Node info ·Channel list ·Close/    │
 │                                                 settle  │
 ├─────────────────────────────────────────────────────────┤
+-->
 │              Transaction History                         │
 │        ·Filter (All/Payment/ListSync) ·Tx details       │
 ├─────────────────────────────────────────────────────────┤
@@ -72,9 +74,11 @@ AI Agent --X402--> MCP Server --DIDComm JWE--> Mediator --push--> Phone App
 │     ·DID display ·Display name ·Network info ·Device    │
 │      status ·Statistics                                  │
 ├─────────────────────────────────────────────────────────┤
+<!-- State Channel: Exploration phase, not enabled
 │              Hub List                                    │
 │    ·Hub discovery ·Hub selection ·Channel creation       │
 │     parameter configuration                              │
+-->
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -93,9 +97,11 @@ AI Agent --X402--> MCP Server --DIDComm JWE--> Mediator --push--> Phone App
 |:-----|:----------|:-----------|:-------|
 | Top bar | Sentinel Logo + network status + notification bell (unread count) | `DidcommService.isConnected` | Implemented |
 | DID identity card | DID text + copy + connection status animated dot + pending message count | `DidcommService.did`, `_isConnected` | Implemented |
-| Quick navigation | Vault / Policy / Channels / Settings | Static | Implemented (Channels -> ChannelTopologyScreen) |
+| Quick navigation | Vault / Policy / <!-- State Channel: Exploration phase, not enabled - originally included Channels -->Settings | Static | Implemented<!-- State Channel: Exploration phase, not enabled - originally (Channels -> ChannelTopologyScreen) --> |
 | Scan & pair button | "Scan MCP QR Code" large button | Triggers QR Scanner | Implemented (supports PaymentQrData and didcomm://) |
+<!-- State Channel: Exploration phase, not enabled
 | Create channel button | "Create Channel" button | SharedPreferences hub_registry_url + mcp_did | Implemented |
+-->
 | Spending gauge | Radial progress bar (spent/limit SOL) | `LocalLogStore` aggregation | UI exists, data needs wiring |
 | Recent activity | Transaction list (merchant, amount, time, status) | `DidcommService.messages` (real-time) | Implemented, using real-time data |
 | Authorization entry | Pending authorization notification banner + "Authorize Payment" button | `DidcommService._pendingAuth` stream | Implemented |
@@ -109,7 +115,9 @@ AI Agent --X402--> MCP Server --DIDComm JWE--> Mediator --push--> Phone App
 [Click authorize] -> X402 Challenge modal -> Slider confirm -> Create Session Key -> Encrypt response -> Close
 [Click notification bell] -> NotificationCenterScreen
 [Click Channels] -> ChannelTopologyScreen
+<!-- State Channel: Exploration phase, not enabled
 [Click Create Channel] -> HubListScreen -> Select Hub -> Create channel
+-->
 ```
 
 #### 3.1.3 Needs Fixing / Wiring
@@ -277,7 +285,9 @@ Display all decrypted DIDComm messages, including payment requests, list sync no
 |:-----|:----------|:-----------|
 | Solana network | RPC URL input + network (Mainnet/Devnet) toggle | Config file |
 | SPL compression config | Tree Address + Tree Authority + DAS Endpoint | Config file |
+<!-- State Channel: Exploration phase, not enabled
 | Program IDs | State channel program / DID program / session key program display | Hardcoded constants |
+-->
 | Payment mode | Self-Funded / Sponsored toggle | Config file |
 | Mediator config | WS URL + HTTP URL + current status | `DidcommService` |
 | Push channel | FCM / WebSocket selection + detection result | `DidcommService` |
@@ -428,6 +438,7 @@ Display all decrypted DIDComm messages, including payment requests, list sync no
 
 ---
 
+<!-- State Channel: Exploration phase, not enabled
 ### 3.12 Channel Topology (ChannelTopologyScreen)
 
 **Route**: push slide-right (entered from Dashboard quick navigation Channels)
@@ -454,6 +465,7 @@ Display all decrypted DIDComm messages, including payment requests, list sync no
 ```
 
 ---
+-->
 
 ### 3.13 Transaction History (TransactionHistoryScreen)
 
@@ -493,11 +505,14 @@ Display all decrypted DIDComm messages, including payment requests, list sync no
 | Display name | Editable input field + save | SharedPreferences `display_name` | Implemented |
 | Network info | Devnet/Mainnet label | SharedPreferences `network` | Implemented |
 | Device status | Connection status dot + Session Key active badge | `DidcommService.isConnected`, `SessionKeyService` | Implemented |
+<!-- State Channel: Exploration phase, not enabled
 | Statistics card | Channel count / balance / merchant count | `ChannelService`, `SharedPreferences` | Implemented |
+-->
 | Export DID | OutlinedButton "Export DID Document" | `DidcommService.didDocJson` | Implemented |
 
 ---
 
+<!-- State Channel: Exploration phase, not enabled
 ### 3.15 Hub List (HubListScreen)
 
 **Route**: push slide-right (entered from Dashboard "Create Channel" button)
@@ -512,6 +527,7 @@ Display all decrypted DIDComm messages, including payment requests, list sync no
 | Channel creation | Select Hub -> Enter parameters -> Create channel | `sendCreateChannelRequest` | Implemented |
 
 ---
+-->
 
 ## 4. Data Models
 
@@ -604,12 +620,14 @@ class TransactionLog {
 | `registerDeviceToken` | `DidcommService.connectToMediator()` | Register FCM |
 | `parseOobInvitation` | `DidcommService.parseInvitationAndConnect()` | Parse invitation |
 | `sendConnectionRequest` | `DidcommService.parseInvitationAndConnect()` | P2P connection |
+<!-- State Channel: Exploration phase, not enabled
 | `parsePaymentQr` | `ChannelService.parsePaymentQr()` | Parse payment QR code |
 | `listChannels` | `ChannelService.refreshChannels()` | List user channels |
 | `channelPay` | `ChannelService.channelPay()` | State channel payment |
 | `openChannel` | `ChannelService.openChannel()` | Open state channel |
 | `closeChannel` | `ChannelTopologyScreen._closeChannel()` | Close channel |
 | `settleChannel` | `ChannelTopologyScreen._settleChannel()` | Settle channel |
+-->
 
 ### 5.2 Not Yet Integrated (Needs Addition)
 
@@ -745,12 +763,16 @@ MaterialApp
 │   │   │   └── -> AuditLogsPage (push)
 │   │   ├── -> PolicyArchitectScreen (push)
 │   │   ├── -> ConnectionManagementScreen (push)
+<!-- State Channel: Exploration phase, not enabled
 │   │   ├── -> ChannelTopologyScreen (push) — Channel topology
+-->
 │   │   ├── -> NotificationCenterScreen (push) — Notification center
 │   │   ├── -> ProfileScreen (push) — Profile
 │   │   ├── -> TransactionHistoryScreen (push) — Transaction history
+<!-- State Channel: Exploration phase, not enabled
 │   │   ├── -> HubListScreen (push) — Hub list / Create channel
 │   │   ├── -> QrPaymentScreen (push) — Channel payment confirmation
+-->
 │   │   ├── -> showQrScanner (modal)
 │   │   └── -> showX402Challenge (modal)
 │   ├── Tab 1: MessagesScreen (Messages)

@@ -234,7 +234,9 @@ MCP 收到 connection-confirm 后：
 |------|---------|------|
 | didcomm-router (user) | 8080 | 用户端 Mediator |
 | didcomm-router (merchant) | 4000 | 商户端 Mediator |
+<!-- State Channel: 探索阶段，暂不启用
 | ignite-pay-hub-registry | 3004 | Hub 注册服务 |
+-->
 
 ### 2.2 服务端 (MCP) 实现状态
 
@@ -304,8 +306,10 @@ MCP 收到 connection-confirm 后：
 |---------|------|------|
 | `ignite-pay/1.0/payment-auth-request` | MCP → App | 支付授权请求 |
 | `ignite-pay/1.0/payment-auth-response` | App → MCP | 支付授权响应（含 session key） |
+<!-- State Channel: 探索阶段，暂不启用
 | `ignite-pay/1.0/create-channel-request` | Merchant App → MCP | 建立状态通道请求 |
 | `ignite-pay/1.0/channel-payment-confirm` | MCP → Merchant App | 通道支付确认 |
+-->
 | `ignite-pay/1.0/session-fund-request` | MCP → Phone | F3/F7: 会话余额不足时请求充值 |
 | `ignite-pay/1.0/session-fund-response` | Phone → MCP | F3/F7: 充值完成回复 |
 | `ignite-pay/1.0/balance-notification` | MCP → Phone | F13: 余额低于阈值通知 |

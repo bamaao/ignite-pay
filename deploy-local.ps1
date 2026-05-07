@@ -132,7 +132,6 @@ host = "0.0.0.0"
 port = $ROUTER_USER_PORT
 
 [router]
-did = "$ROUTER_USER_DID"
 max_queued_messages = 1000
 max_message_age_seconds = 86400
 
@@ -147,7 +146,6 @@ host = "0.0.0.0"
 port = $ROUTER_MERCHANT_PORT
 
 [router]
-did = "$ROUTER_MERCHANT_DID"
 max_queued_messages = 1000
 max_message_age_seconds = 86400
 
@@ -166,11 +164,9 @@ rpc_url = "$SOLANA_RPC_URL"
 did_program_id = "$DID_PROGRAM_ID"
 payer_keypair_path = "$($DID_REGISTRY_PAYER_KEYPAIR -replace '\\','/')"
 
-[light]
-photon_url = "$PHOTON_RPC_URL"
-
 [auth]
 jwt_secret = "$DID_REGISTRY_JWT_SECRET"
+platform_public_key = "$PLATFORM_PUBLIC_KEY"
 platform_signing_key_path = "$($PLATFORM_SIGNING_KEY_PATH -replace '\\','/')"
 
 [fees]

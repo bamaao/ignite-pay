@@ -26,22 +26,28 @@ This document covers the complete deployment process for all Ignite Pay services
 
 ## 1. System Overview
 
-Ignite Pay is an off-chain payment system built on the Solana blockchain, using a UTXO + Merkle Tree state channel architecture. It supports single-hop and multi-hop payments, HTLC conditional payments, compliance auditing, and DID decentralized identity.
+Ignite Pay is an off-chain payment system built on the Solana blockchain, <!-- State Channel: Exploration phase, not enabled
+using a UTXO + Merkle Tree state channel architecture. It supports single-hop and multi-hop payments, HTLC conditional payments, compliance auditing, and
+-->DID decentralized identity.
 
 ### 1.1 Core Components
 
 | Component | Description |
 |:----------|:------------|
+<!-- State Channel: Exploration phase, not enabled
 | **ignite-pay-program** | On-chain state channel program (Anchor 1.0.0), Program ID: `DJBHr35jL3JAGoU7bKMsEFmpeNMrCSK7oYQE4HJ3GBUe` |
+-->
 | **ignite-pay-did-program** | On-chain DID program (Anchor), PDA-based merchant DID storage (optional ZK Compression with `--features zk-compression`) |
 | **didcomm-router** | DIDComm message router, providing message relay and FCM push for mobile clients |
 | **did-registry** | DID registration service, managing merchant on-chain identity, VC issuance/revocation |
+<!-- State Channel: Exploration phase, not enabled
 | **channel-user** | User-side state channel service (Party A, payer) |
 | **channel-provider** | Merchant-side state channel service (Party B, payee) |
 | **channel-hub** | Hub routing node, inheriting Provider functionality and supporting multi-hop routing |
 | **ignite-pay-hub-registry** | Hub registry and discovery service, PostgreSQL backend |
-| **ignite-pay-mcp** | User-side MCP agent service, bridging mobile clients and state channels |
-| **ignite-pay-merchant-mcp** | Merchant-side MCP agent service, bridging merchant systems and state channels |
+-->
+| **ignite-pay-mcp** | User-side MCP agent service, bridging mobile clients <!-- State Channel: Exploration phase, not enabled and state channels --> |
+| **ignite-pay-merchant-mcp** | Merchant-side MCP agent service, bridging merchant systems <!-- State Channel: Exploration phase, not enabled and state channels --> |
 | **Sentinel (Flutter)** | User mobile App |
 | **Ignite Merchant (Flutter)** | Merchant App |
 
@@ -50,18 +56,23 @@ Ignite Pay is an off-chain payment system built on the Solana blockchain, using 
 | Service | Binary/Directory | Port | Transport Protocol | Storage |
 |:--------|:-----------------|:-----|:-------------------|:--------|
 | PostgreSQL | External dependency | 5432 | TCP | PostgreSQL |
+<!-- State Channel: Exploration phase, not enabled
 | Hub Registry | `ignite-pay-hub-registry` | 3004 | HTTP | PostgreSQL |
+-->
 | DIDComm Router | `didcomm-router` | 8080 | HTTP + WS | sled |
 | DIDComm Router (Merchant-side) | `didcomm-router` (same binary, different config) | 4000 | HTTP + WS | sled |
 | DID Registry | `did-registry` | 8081 | HTTP | sled |
+<!-- State Channel: Exploration phase, not enabled
 | Channel Hub | `channel-hub` | 3003 | HTTP + WS | sled |
 | Channel Provider | `channel-provider` | 3002 | HTTP + WS | sled |
 | Channel User | `channel-user` | 3001 | HTTP + WS | sled |
+-->
 | User MCP | `ignite-pay-mcp` | stdio | JSON-RPC + WS -> :8080 | sled |
 | Merchant MCP | `ignite-pay-merchant-mcp` | stdio | JSON-RPC + WS -> :4000 (Merchant Router) | sled |
 
 ### 1.3 Dependency Graph
 
+<!-- State Channel: Exploration phase, not enabled
 ```mermaid
 graph TD
     PG[PostgreSQL :5432] --> HR[Hub Registry :3004]
@@ -86,6 +97,7 @@ graph TD
     MAPP[Merchant App] --> MMCP
     MAPP --> DCR2
 ```
+-->
 
 ---
 
@@ -98,7 +110,9 @@ graph TD
 | Rust | 1.75+ | Compile all Rust crates |
 | Solana CLI | 1.18+ | Deploy on-chain programs, generate keys |
 | Anchor CLI | 0.31.1+ | Build on-chain programs |
+<!-- State Channel: Exploration phase, not enabled
 | PostgreSQL | 14+ | Hub Registry database |
+-->
 | Flutter | 3.x | Compile mobile Apps (optional) |
 
 ### 2.2 Runtime Dependencies
@@ -127,6 +141,7 @@ graph TD
 
 ## 3. Network Topology
 
+<!-- State Channel: Exploration phase, not enabled
 ```
                               ┌─────────────────────┐
                               │   Solana Blockchain  │
@@ -175,9 +190,11 @@ graph TD
 │ User App  │  │ (Flutter)    │
 └───────────┘  └──────────────┘
 ```
+-->
 
 ### Port Connection Matrix
 
+<!-- State Channel: Exploration phase, not enabled
 | Source Service | Target Service | Target Port | Protocol |
 |:---------------|:--------------|:------------|:---------|
 | All channel services | Solana RPC | 443 | HTTPS |
@@ -188,6 +205,7 @@ graph TD
 | User MCP | Channel User | 3001 | HTTP |
 | Merchant MCP | Channel Hub | 3003 | HTTP+WS |
 | DID Registry | Solana RPC (+ Photon, ZK mode only) | 443 | HTTPS |
+-->
 
 ---
 
@@ -205,11 +223,15 @@ sudo apt install postgresql postgresql-contrib
 # Create database and user
 sudo -u postgres psql <<EOF
 CREATE USER ignite WITH PASSWORD 'ignite';
+<!-- State Channel: Exploration phase, not enabled
 CREATE DATABASE hub_registry OWNER ignite;
+-->
 EOF
 
 # Verify
+<!-- State Channel: Exploration phase, not enabled
 psql -U ignite -d hub_registry -h localhost -c "SELECT 1;"
+-->
 ```
 
 **Verification**: Connection succeeds.
@@ -218,6 +240,7 @@ psql -U ignite -d hub_registry -h localhost -c "SELECT 1;"
 
 ### Step 2: Deploy On-Chain Solana Programs
 
+<!-- State Channel: Exploration phase, not enabled
 #### 2a. Deploy State Channel Program (ignite-pay-program)
 
 ```bash
@@ -232,6 +255,7 @@ anchor deploy --provider.cluster devnet
 # Record Program ID
 # Current: DJBHr35jL3JAGoU7bKMsEFmpeNMrCSK7oYQE4HJ3GBUe
 ```
+-->
 
 #### 2b. Deploy DID Program (ignite-pay-did-program)
 
@@ -340,6 +364,7 @@ RUST_LOG=info ./target/release/did-registry ./config.toml
 
 ---
 
+<!-- State Channel: Exploration phase, not enabled
 ### Step 5: Deploy Channel User Service
 
 ```bash
@@ -413,6 +438,7 @@ RUST_LOG=info ./target/release/ignite-pay-hub-registry ./hub-registry.toml
 ```
 
 **Verification**: `curl http://localhost:3004/health`
+-->
 
 ---
 
@@ -535,6 +561,7 @@ rotate_key_fee_lamports = 2000                     # Sponsored key rotation fee
 | `light.photon_url` | ZK mode only | Helius Photon RPC URL (not needed in default PDA mode) |
 | `auth.platform_signing_key_path` | Required in production | 32-byte Ed25519 private key |
 
+<!-- State Channel: Exploration phase, not enabled
 ### 5.3 Channel Hub (`ignite-pay-channel-service/config-hub.toml`)
 
 ```toml
@@ -611,6 +638,7 @@ per_channel_limit = 100000000
 window_slots = 100000
 travel_rule_threshold = 500000000
 ```
+-->
 
 ### 5.6 User MCP (`ignite-pay-mcp/config.toml`)
 
@@ -656,6 +684,7 @@ The following mechanisms are built-in behaviors requiring no additional configur
 
 ### 5.7 Merchant MCP (`ignite-pay-merchant-mcp/config.toml`)
 
+<!-- State Channel: Exploration phase, not enabled
 ```toml
 [merchant]
 did = ""                                    # Merchant DID (auto-generated on first run)
@@ -676,9 +705,11 @@ program_id = ""                              # State channel program ID
 token_mint = ""                              # Default Token Mint
 provider_pubkey = ""                         # Provider (Hub) public key
 ```
+-->
 
 ### 5.8 Hub Registry (`hub-registry.toml`)
 
+<!-- State Channel: Exploration phase, not enabled
 ```toml
 [server]
 host = "0.0.0.0"
@@ -689,6 +720,7 @@ url = "postgres://ignite:ignite@localhost:5432/hub_registry"
 ```
 
 The database schema is auto-initialized when the service starts.
+-->
 
 ### 5.9 DIDComm Router — Merchant Side (`deploy/config/didcomm-router-merchant.toml`)
 
@@ -722,13 +754,16 @@ path = "./data/merchant-router"   # Independent sled data directory
 
 | Key | Format | Purpose | Generation Method |
 |:----|:-------|:--------|:------------------|
+<!-- State Channel: Exploration phase, not enabled
 | Solana Keypair | JSON array (64 bytes) | Channel service signing, transaction payer | `solana-keygen new` |
+-->
 | Platform Signing Key | 32-byte raw binary | DID Registry platform signing, VC issuance | `openssl rand -out file 32` |
 | DID Identity | Ed25519 | `did:ignite` decentralized identity | `ignite-pay-core::identity` |
 | FCM Service Account | JSON | Firebase push notifications | Firebase Console |
 
 ### 6.2 Solana Keypair Generation
 
+<!-- State Channel: Exploration phase, not enabled
 ```bash
 # Create key directory
 mkdir -p ./keys
@@ -751,6 +786,7 @@ solana airdrop 2 $(solana-keygen pubkey ./keys/provider.key) --url devnet
 solana airdrop 2 $(solana-keygen pubkey ./keys/hub.key) --url devnet
 solana airdrop 2 $(solana-keygen pubkey ./keys/payer.json) --url devnet
 ```
+-->
 
 > If `keypair_path` is left empty (`""`), the service auto-generates an ephemeral key on startup (changes on each restart, test use only).
 
@@ -815,6 +851,7 @@ All services can be containerized. Docker Compose is recommended for orchestrati
 - Mount key files (payer keypair, platform signing key)
 - Mount sled data directory
 
+<!-- State Channel: Exploration phase, not enabled
 **Channel Services (User/Provider/Hub)**
 
 - Expose ports `3001` / `3002` / `3003` respectively
@@ -826,6 +863,7 @@ All services can be containerized. Docker Compose is recommended for orchestrati
 - Expose port `3004`
 - Depends on PostgreSQL container
 - Mount configuration file
+-->
 
 **MCP Services**
 
@@ -922,6 +960,7 @@ services:
     networks:
       - backend
 
+<!-- State Channel: Exploration phase, not enabled
   # ─── Channel Layer ───
   channel-user:
     build:
@@ -988,6 +1027,7 @@ services:
         condition: service_healthy
     networks:
       - backend
+-->
 
   # ─── Agent Layer (stdio mode, managed by host process) ───
   # User MCP and Merchant MCP communicate via stdio and are not suitable for direct inclusion in docker-compose.
@@ -1006,10 +1046,12 @@ services:
     depends_on:
       - didcomm-router
       - did-registry
+<!-- State Channel: Exploration phase, not enabled
       - channel-user
       - channel-provider
       - channel-hub
       - hub-registry
+-->
     networks:
       - backend
 
@@ -1018,9 +1060,11 @@ volumes:
   router_data:
   router_merchant_data:
   did_registry_data:
+<!-- State Channel: Exploration phase, not enabled
   channel_user_data:
   channel_provider_data:
   channel_hub_data:
+-->
 
 networks:
   backend:
@@ -1054,6 +1098,7 @@ ssl_prefer_server_ciphers on;
 # For all services requiring WS
 ```
 
+<!-- State Channel: Exploration phase, not enabled
 #### Channel User Reverse Proxy
 
 ```nginx
@@ -1131,6 +1176,7 @@ server {
     }
 }
 ```
+-->
 
 #### DIDComm Router Reverse Proxy
 
@@ -1179,6 +1225,7 @@ server {
 }
 ```
 
+<!-- State Channel: Exploration phase, not enabled
 #### Hub Registry Reverse Proxy
 
 ```nginx
@@ -1196,12 +1243,12 @@ server {
     }
 }
 ```
+-->
 
 > **Note**: DID Registry and Hub Registry have no WebSocket endpoints, so HTTP reverse proxy configuration is sufficient. If these services are only used internally (not externally exposed), Nginx configuration can be omitted and internal network addresses used directly.
 ```
 
-### 8.2 systemd Service Configuration
-
+<!-- State Channel: Exploration phase, not enabled
 #### Channel User
 
 ```ini
@@ -1261,6 +1308,7 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 ```
+-->
 
 #### DIDComm Router
 
@@ -1302,6 +1350,7 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
+<!-- State Channel: Exploration phase, not enabled
 #### Hub Registry
 
 ```ini
@@ -1322,6 +1371,7 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 ```
+-->
 
 #### DIDComm Router — Merchant Side
 
@@ -1345,6 +1395,7 @@ WantedBy=multi-user.target
 
 #### Enable and Start Services
 
+<!-- State Channel: Exploration phase, not enabled
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable ignite-channel-user ignite-channel-provider ignite-channel-hub \
@@ -1354,6 +1405,7 @@ sudo systemctl start ignite-didcomm-router ignite-didcomm-router-merchant \
                       ignite-did-registry ignite-channel-user \
                       ignite-channel-provider ignite-channel-hub ignite-hub-registry
 ```
+-->
 
 ### 8.3 Log Management
 
@@ -1370,6 +1422,7 @@ RUST_LOG=debug  # trace / debug / info / warn / error
 
 It is recommended to configure journald or logrotate for log rotation.
 
+<!-- State Channel: Exploration phase, not enabled
 ### 8.4 Monitoring Recommendations
 
 | Metric | Monitoring Target | Alert Threshold | Action |
@@ -1383,6 +1436,7 @@ It is recommended to configure journald or logrotate for log rotation.
 | Expired multi-hop payments | Hub | > 5% | Adjust timelock |
 | PostgreSQL connection count | Hub Registry | > 80% max | Scale up |
 | Active channel trend | Hub/Provider | Persistent decline | Check service quality |
+-->
 
 ### 8.5 Solana RPC Endpoints
 
@@ -1397,6 +1451,7 @@ Production environments must use private RPC endpoints to avoid rate limiting on
 
 #### Network Segmentation Design
 
+<!-- State Channel: Exploration phase, not enabled
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     Public Network (Internet)                │
@@ -1422,6 +1477,7 @@ Production environments must use private RPC endpoints to avoid rate limiting on
 │  Solana RPC :443 (outbound HTTPS)                           │
 └─────────────────────────────────────────────────────────────┘
 ```
+-->
 
 #### iptables Rules Example
 
@@ -1453,12 +1509,14 @@ iptables -A INPUT -p tcp --dport 8080 -s 127.0.0.1 -j ACCEPT
 iptables -A INPUT -p tcp --dport 4000 -s 127.0.0.1 -j ACCEPT
 # DID Registry
 iptables -A INPUT -p tcp --dport 8081 -s 127.0.0.1 -j ACCEPT
+<!-- State Channel: Exploration phase, not enabled
 # Channel Services
 iptables -A INPUT -p tcp --dport 3001 -s 127.0.0.1 -j ACCEPT
 iptables -A INPUT -p tcp --dport 3002 -s 127.0.0.1 -j ACCEPT
 iptables -A INPUT -p tcp --dport 3003 -s 127.0.0.1 -j ACCEPT
 # Hub Registry
 iptables -A INPUT -p tcp --dport 3004 -s 127.0.0.1 -j ACCEPT
+-->
 # PostgreSQL
 iptables -A INPUT -p tcp --dport 5432 -s 127.0.0.1 -j ACCEPT
 
@@ -1476,10 +1534,12 @@ iptables -A INPUT -j LOG --log-prefix "DROPPED: " --log-level 4
 | 8080 | DIDComm Router | No | localhost / internal network |
 | 4000 | DIDComm Router (merchant-side) | No | localhost / internal network |
 | 8081 | DID Registry | No | localhost / internal network |
+<!-- State Channel: Exploration phase, not enabled
 | 3001 | Channel User | No | localhost / internal network |
 | 3002 | Channel Provider | No | localhost / internal network |
 | 3003 | Channel Hub | No | localhost / internal network |
 | 3004 | Hub Registry | No | localhost / internal network |
+-->
 | 5432 | PostgreSQL | No | localhost only |
 
 ---
@@ -1493,10 +1553,12 @@ iptables -A INPUT -j LOG --log-prefix "DROPPED: " --log-level 4
 | DIDComm Router | `GET http://localhost:8080/health` | HTTP 200 |
 | DIDComm Router (merchant-side) | `GET http://localhost:4000/health` | HTTP 200 |
 | DID Registry | `GET http://localhost:8081/health` | `ok` |
+<!-- State Channel: Exploration phase, not enabled
 | Channel User | `GET http://localhost:3001/health` | HTTP 200 |
 | Channel Provider | `GET http://localhost:3002/health` | HTTP 200 |
 | Channel Hub | `GET http://localhost:3003/health` | HTTP 200 |
 | Hub Registry | `GET http://localhost:3004/health` | HTTP 200 |
+-->
 
 ### 9.2 Verification Script
 
@@ -1520,10 +1582,12 @@ check() {
 check "DIDComm Router"           "http://localhost:8080/health"
 check "DIDComm Router (Merchant)" "http://localhost:4000/health"
 check "DID Registry"             "http://localhost:8081/health"
+<!-- State Channel: Exploration phase, not enabled
 check "Channel User"     "http://localhost:3001/health"
 check "Channel Provider" "http://localhost:3002/health"
 check "Channel Hub"      "http://localhost:3003/health"
 check "Hub Registry"     "http://localhost:3004/health"
+-->
 
 # PostgreSQL is checked using pg_isready (curl cannot detect raw TCP ports)
 if pg_isready -h localhost -p 5432 -U ignite > /dev/null 2>&1; then
@@ -1548,6 +1612,7 @@ ExecStartPost=/usr/bin/curl -sf http://localhost:3003/health
 WatchdogSec=30
 ```
 
+<!-- State Channel: Exploration phase, not enabled
 ### 9.4 Verify Channel Service API Functionality
 
 ```bash
@@ -1574,6 +1639,7 @@ curl http://localhost:8081/v1/did/resolve/did:ignite:z6Mk...
 # Hub list
 curl http://localhost:3004/v1/hubs?status=active
 ```
+-->
 
 ---
 
@@ -1658,6 +1724,7 @@ Error: No such file or directory (keypair_path)
 - Use absolute paths rather than relative paths
 - Confirm file permissions: `ls -la ./keys/`
 
+<!-- State Channel: Exploration phase, not enabled
 ### 10.2 Signature Verification Failure
 
 **Symptom**: `verify_leaf_update_signature` or on-chain `InvalidSignature`
@@ -1677,7 +1744,8 @@ Error: No such file or directory (keypair_path)
 1. When splitting the tree, ensure the sum of all leaf amounts equals `total_deposited`
 2. In Pipeline operations, the amount of partial_transfer must not exceed the source leaf
 3. Check for concurrent modifications
-
+-->
+<!-- State Channel: Exploration phase, not enabled
 ### 10.4 Merkle Proof Verification Failure
 
 **Symptom**: On-chain `ProofVerificationFailed`
@@ -1696,6 +1764,7 @@ Error: No such file or directory (keypair_path)
 2. Check that `timelock_slot` satisfies the constraint: `> current_slot + challenge_duration + HTLC_SAFETY_MARGIN`
 3. For multi-hop, check that timelock decrement is correct
 4. `HTLC_SAFETY_MARGIN` = 1000 slots (~6.7 minutes)
+-->
 
 ### 10.6 DIDComm Router WebSocket Disconnections
 
@@ -1707,6 +1776,7 @@ Error: No such file or directory (keypair_path)
 3. Check Router logs for `max_queued_messages` triggers
 4. Confirm `max_message_age_seconds` is configured reasonably
 
+<!-- State Channel: Exploration phase, not enabled
 ### 10.7 Hub Route Discovery Returns No Results
 
 **Symptom**: `POST /v1/routes/find` returns empty routes
@@ -1716,9 +1786,11 @@ Error: No such file or directory (keypair_path)
 2. Confirm the route graph has edges: `POST /v1/routes/refresh`
 3. Confirm Hub has sufficient liquidity
 4. Check that `from_did_hash` and `to_did_hash` are correct
+-->
 
 ### 10.8 Log Level Adjustment
 
+<!-- State Channel: Exploration phase, not enabled
 ```bash
 # Temporary adjustment (lost on restart)
 RUST_LOG=debug ./channel-hub ./config-hub.toml
@@ -1733,6 +1805,7 @@ sudo systemctl edit ignite-channel-hub
 # Environment=RUST_LOG=debug
 sudo systemctl restart ignite-channel-hub
 ```
+-->
 
 ---
 
@@ -1742,11 +1815,15 @@ sudo systemctl restart ignite-channel-hub
 
 | Data Type | Storage Location | Backup Method | Frequency Recommendation |
 |:----------|:----------------|:--------------|:-------------------------|
+<!-- State Channel: Exploration phase, not enabled
 | Channel sled data | `./data/channel_user/`, `./data/channel_provider/`, `./data/channel_hub/` | Filesystem snapshot | Daily |
+-->
 | DID Registry sled | `./did_registry_data/` (hardcoded path) | Filesystem snapshot | Daily |
 | DIDComm Router sled | `./data/` | Filesystem snapshot | Daily |
 | MCP sled data | `./data/`, `./data/merchant-mcp/` | Filesystem snapshot | Daily |
+<!-- State Channel: Exploration phase, not enabled
 | PostgreSQL (Hub Registry) | PostgreSQL data directory | `pg_dump` | Daily |
+-->
 | Key files | `./keys/` | Offline backup | On change |
 | Configuration files | Each service's `config.toml` | Version control | On change |
 
@@ -1754,6 +1831,7 @@ sudo systemctl restart ignite-channel-hub
 
 sled does not support a hot backup API (no `sled::export`). Backups must be performed by stopping writes or using filesystem snapshots.
 
+<!-- State Channel: Exploration phase, not enabled
 **Method 1: Stop Service Backup (recommended for small-scale deployments)**
 
 ```bash
@@ -1778,6 +1856,7 @@ sudo systemctl start ignite-didcomm-router ignite-did-registry ignite-channel-us
 
 echo "Backup completed: $BACKUP_DIR"
 ```
+-->
 
 **Method 2: Filesystem Snapshot (recommended for production)**
 
@@ -1797,6 +1876,7 @@ zfs send pool0/ignite-data@backup-... | gzip > /opt/ignite-pay/backups/snap-$(da
 
 > **Note**: sled may have data in memory that has not been flushed to disk during writes. The 33 `.flush()` calls ensure critical writes are immediately persisted, but snapshots may still lose the last unwritten flush. Production environments should perform backups during off-peak hours.
 
+<!-- State Channel: Exploration phase, not enabled
 ### 11.3 PostgreSQL Backup
 
 ```bash
@@ -1820,6 +1900,7 @@ Restore:
 pg_restore -U ignite -d hub_registry_restored \
   "$BACKUP_DIR/hub_registry_20250101_120000.dump"
 ```
+-->
 
 ### 11.4 Key Backup
 
@@ -1838,9 +1919,13 @@ tar czf - /opt/ignite-pay/keys/ | \
 | Scenario | Recovery Steps |
 |:---------|:--------------|
 | **sled data corruption** | 1. Stop the affected service → 2. Delete the corrupted directory → 3. Restore from backup → 4. Restart the service |
+<!-- State Channel: Exploration phase, not enabled
 | **PostgreSQL data loss** | 1. Confirm PostgreSQL is running → 2. `pg_restore` to recover → 3. Restart Hub Registry |
+-->
 | **Full server failure** | 1. Install environment on new server → 2. Restore configuration files and keys → 3. Start PostgreSQL and restore → 4. Restore sled data → 5. Start all services in dependency order |
+<!-- State Channel: Exploration phase, not enabled
 | **Key compromise** | 1. Generate new keys → 2. Update configuration files → 3. Channel services must reopen channels (old channels cannot be recovered) → 4. DID Registry must perform key rotation |
+-->
 
 ### 11.6 Known Limitations
 
@@ -1849,7 +1934,9 @@ tar czf - /opt/ignite-pay/keys/ | \
 | sled has no hot backup API | Cannot obtain a consistent snapshot without stopping writes |
 | No automated backup mechanism | The project has no backup scripts; operations must manually configure them (see script templates above) |
 | Audit log recovery | Supports `restore_from_ipfs()` to restore audit logs from IPFS, but depends on IPFS data availability |
+<!-- State Channel: Exploration phase, not enabled
 | Channel state cannot be rebuilt | sled data loss means channel state is lost; can only wait for the on-chain dispute period to expire for settlement |
+-->
 
 ---
 
@@ -1861,6 +1948,7 @@ tar czf - /opt/ignite-pay/keys/ | \
 - **Backward compatibility**: sled data format changes must support auto-migration or provide migration tools
 - **On-chain programs are immutable**: Solana programs cannot be modified after deployment; only new versions can be deployed (new Program ID)
 
+<!-- State Channel: Exploration phase, not enabled
 ### 12.2 Off-Chain Service Upgrade Process
 
 ```bash
@@ -1887,7 +1975,9 @@ curl -sf http://localhost:3003/health || {
   echo "Rollback executed!"
 }
 ```
+-->
 
+<!-- State Channel: Exploration phase, not enabled
 ### 12.3 PostgreSQL Schema Migration
 
 The current Hub Registry uses `include_str!()` to execute `migrations/001_init.sql` at startup, with **no version tracking**. `CREATE TABLE` statements will fail when the table already exists.
@@ -1908,7 +1998,9 @@ for sql in &migrations {
     sqlx::query(sql).execute(&pool).await?;
 }
 ```
+-->
 
+<!-- State Channel: Exploration phase, not enabled
 ### 12.4 On-Chain Program Upgrade
 
 Solana on-chain program upgrade process:
@@ -1928,14 +2020,17 @@ solana program show <PROGRAM_ID> --url devnet
 ```
 
 > **Note**: On-chain program upgrades require the key with upgrade authority. Production environments should use multi-sig governance (e.g., Squads Protocol) to manage upgrade authority.
+-->
 
 ### 12.5 Rollback Strategy
 
 | Component | Rollback Method | Notes |
 |:----------|:---------------|:------|
+<!-- State Channel: Exploration phase, not enabled
 | Off-chain services | Replace binary + restart | sled data format must be backward compatible |
 | PostgreSQL | `pg_restore` from backup | Will lose data since last backup |
 | On-chain programs | Deploy old `.so` version | Requires upgrade authority key |
+-->
 | Configuration files | Replace config + restart | Key changes must be synchronized across related services |
 
 ---
@@ -1958,15 +2053,18 @@ solana program show <PROGRAM_ID> --url devnet
 |:--------|:--------|:-----------------|
 | DIDComm Router | `didcomm_router=info` | `didcomm_router=debug` |
 | DID Registry | `did_registry=info` | `did_registry=debug,sqlx=warn` |
+<!-- State Channel: Exploration phase, not enabled
 | Channel User | `info` | `ignite_pay_channel_service=debug` |
 | Channel Provider | `info` | `ignite_pay_channel_service=debug` |
 | Channel Hub | `info` | `ignite_pay_channel_service=debug` |
 | Hub Registry | `info` | `ignite_pay_hub_registry=debug,sqlx=debug` |
+-->
 | User MCP | `ignite_pay_mcp=info` | `ignite_pay_mcp=debug` |
 | Merchant MCP | `info` | `info,ignite_pay_core=debug` |
 
 ### 13.3 Log Level Syntax
 
+<!-- State Channel: Exploration phase, not enabled
 ```
 # Global level
 RUST_LOG=debug
@@ -1980,6 +2078,7 @@ RUST_LOG=ignite_pay_channel_service::handlers::payment=trace
 # Mixed
 RUST_LOG=info,ignite_pay_channel_service=debug,sqlx=warn
 ```
+-->
 
 ### 13.4 systemd Environment Variable Configuration
 

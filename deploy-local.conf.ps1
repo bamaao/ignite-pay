@@ -16,7 +16,6 @@ $Script:KEYS_DIR = ".\deploy\keys"
 # --------------- Solana RPC ---------------
 $Script:SOLANA_RPC_URL = "https://api.devnet.solana.com"
 $Script:SOLANA_NETWORK = "devnet"
-$Script:PHOTON_RPC_URL = ""
 
 # --------------- On-chain Program IDs ---------------
 $Script:CHANNEL_PROGRAM_ID = "DJBHr35jL3JAGoU7bKMsEFmpeNMrCSK7oYQE4HJ3GBUe"
@@ -25,16 +24,15 @@ $Script:SESSION_PROGRAM_ID = "6EFvVTh7rEBpHH2JGryjKQmBLRtbYtSEerGNfkHqKiei"
 
 # --------------- DIDComm Router (user-side) ---------------
 $Script:ROUTER_USER_PORT = 8080
-$Script:ROUTER_USER_DID = "did:ignite:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
 
 # --------------- DIDComm Router (merchant-side) ---------------
 $Script:ROUTER_MERCHANT_PORT = 4000
-$Script:ROUTER_MERCHANT_DID = "did:ignite:z6MkMerchantRouterDIDPlaceholder"
 
 # --------------- DID Registry ---------------
 $Script:DID_REGISTRY_PORT = 8081
 $Script:DID_REGISTRY_JWT_SECRET = "did-registry-secret"
 $Script:DID_REGISTRY_PAYER_KEYPAIR = ""
+$Script:PLATFORM_PUBLIC_KEY = ""
 $Script:PLATFORM_SIGNING_KEY_PATH = ""
 
 # --------------- Channel Services ---------------
