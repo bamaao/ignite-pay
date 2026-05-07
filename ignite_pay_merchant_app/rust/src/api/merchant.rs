@@ -32,6 +32,7 @@ pub struct PaymentOrderBridge {
     pub sequence: Option<u64>,
 }
 
+#[cfg(feature = "state-channel")]
 pub struct ChannelStatusBridge {
     pub channel_id: String,
     pub status: String,
@@ -163,7 +164,7 @@ pub fn initialize_merchant(storage_path: String) -> Result<DidInfo> {
     let keypair_bytes: [u8; 64] = if let Some(bytes) = kp_tree.get("merchant_keypair")? {
         bytes.as_ref().try_into().map_err(|_| anyhow::anyhow!("Invalid keypair bytes"))?
     } else {
-        let kp = ignite_pay_state_channel::signing::generate_keypair();
+        let kp = V1Keypair::generate(&mut rand_core::OsRng);
         let bytes = kp.to_bytes();
         kp_tree.insert("merchant_keypair", &bytes[..])?;
         kp_tree.flush()?;
@@ -229,7 +230,7 @@ pub fn generate_merchant_keypair(storage_path: String) -> Result<String> {
     let db = open_db(&storage_path)?;
     let kp_tree = keypair_tree(&db)?;
 
-    let kp = ignite_pay_state_channel::signing::generate_keypair();
+    let kp = V1Keypair::generate(&mut rand_core::OsRng);
     let bytes = kp.to_bytes();
     kp_tree.insert("merchant_keypair", &bytes[..])?;
     kp_tree.flush()?;
@@ -420,6 +421,7 @@ pub fn get_pending_orders(storage_path: String) -> Result<Vec<PaymentOrderBridge
 
 // ── Channel operations (Provider role) ──────────────────────────────────
 
+#[cfg(feature = "state-channel")]
 /// List all state channel IDs.
 pub fn merchant_list_channels(storage_path: String) -> Result<Vec<String>> {
     let db = open_db(&storage_path)?;
@@ -436,6 +438,7 @@ pub fn merchant_list_channels(storage_path: String) -> Result<Vec<String>> {
     Ok(channels)
 }
 
+#[cfg(feature = "state-channel")]
 /// Get channel status.
 pub fn merchant_get_channel_status(
     storage_path: String,
@@ -471,6 +474,7 @@ pub fn merchant_get_channel_status(
     })
 }
 
+#[cfg(feature = "state-channel")]
 /// Cooperative close a channel.
 pub async fn merchant_close_channel(
     storage_path: String,
@@ -505,6 +509,7 @@ pub async fn merchant_close_channel(
     Ok(format!("Channel {} closed.", channel_id))
 }
 
+#[cfg(feature = "state-channel")]
 /// Claim a leaf during settlement.
 pub async fn merchant_claim_leaf(
     _storage_path: String,
@@ -537,6 +542,7 @@ pub async fn merchant_claim_leaf(
     ))
 }
 
+#[cfg(feature = "state-channel")]
 /// Finalize settlement.
 pub async fn merchant_finalize(
     _storage_path: String,
@@ -624,6 +630,7 @@ pub fn get_mb_merchant_pubkey(storage_path: String) -> Result<String> {
 
 // ── Internal helpers ────────────────────────────────────────────────────
 
+#[cfg(feature = "state-channel")]
 fn parse_channel_id(hex_str: &str) -> Result<[u8; 32]> {
     let bytes = hex::decode(hex_str)
         .map_err(|e| anyhow::anyhow!("Invalid channel ID hex: {}", e))?;
@@ -632,6 +639,7 @@ fn parse_channel_id(hex_str: &str) -> Result<[u8; 32]> {
         .map_err(|_: Vec<u8>| anyhow::anyhow!("Channel ID must be 32 bytes"))
 }
 
+#[cfg(feature = "state-channel")]
 fn get_keypair_from_storage(storage_path: &str) -> Result<[u8; 64]> {
     let db = sled::open(storage_path)?;
     let kp_tree = keypair_tree(&db)?;

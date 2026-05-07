@@ -6,8 +6,7 @@ use tracing::info;
 use crate::did::resolver::compute_did_hash;
 use crate::state::RegistryState;
 
-/// `GET /v1/merchants/status/{did}` — Check a merchant's on-chain status.
-/// With ZK Compression, the status is derived from the cached DID account data.
+/// `GET /v1/merchants/status/{did}` — Check a merchant's on-chain DID status via PDA account.
 pub async fn merchant_status(
     State(state): State<RegistryState>,
     Path(did): Path<String>,

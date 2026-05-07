@@ -3,7 +3,10 @@
 # ============================================================
 
 .PHONY: help build up down logs ps health init keys \
-        build-app build-merchant clean
+        build-app build-merchant clean \
+        test test-unit test-integration build-sbf test-svm test-svm-all \
+        test-unit-state-channel test-integration-state-channel \
+        build-sbf-state-channel test-svm-state-channel
 
 # --------------- Configuration ---------------
 DOCKER_COMPOSE = docker compose
@@ -95,3 +98,66 @@ clean: ## Remove all containers, volumes, and built images
 
 clean-data: ## Remove data volumes only (keeps images)
 	$(DOCKER_COMPOSE) down -v
+
+# --------------- Testing ---------------
+
+test: test-unit test-integration test-svm   ## Run all tests (unit + integration + SVM)
+
+test-unit:   ## Run unit tests for all crates (no .so needed)
+	@echo "=== Running unit tests ==="
+	cargo test --manifest-path ignite-pay-core/Cargo.toml
+	cargo test --manifest-path ignite-pay-solana/Cargo.toml
+	cargo test --manifest-path ignite-pay-mcp/Cargo.toml
+	cargo test --manifest-path ignite-pay-merchant-mcp/Cargo.toml
+	cargo test --manifest-path didcomm-router/Cargo.toml
+	cargo test --manifest-path did-registry/Cargo.toml
+	cargo test --manifest-path ignite-pay-did-program/Cargo.toml
+	cargo test --manifest-path ignite-pay-mb/sdk/Cargo.toml
+	cargo test --manifest-path ignite-pay-mb/programs/ignite-pay-mb/Cargo.toml
+	@echo "=== Unit tests passed ==="
+
+test-unit-state-channel:   ## Run unit tests for state-channel crates
+	@echo "=== Running state-channel unit tests ==="
+	cargo test --manifest-path ignite-pay-state-channel/Cargo.toml
+	cargo test --manifest-path ignite-pay-channel-service/Cargo.toml
+	cargo test --manifest-path ignite-pay-program/Cargo.toml
+	@echo "=== State-channel unit tests passed ==="
+
+test-integration:   ## Run integration tests
+	@echo "=== Running integration tests ==="
+	cargo test --manifest-path ignite-pay-solana/Cargo.toml --test session_integration
+	cargo test --manifest-path ignite-pay-mcp/Cargo.toml --test flow_tests
+	cargo test --manifest-path didcomm-router/Cargo.toml --test integration_test
+	@echo "=== Integration tests passed ==="
+
+test-integration-state-channel:   ## Run integration tests for state-channel crates
+	@echo "=== Running state-channel integration tests ==="
+	cargo test --manifest-path ignite-pay-state-channel/Cargo.toml --test channel_tests --test signing_tests --test merkle_tests
+	cargo test --manifest-path ignite-pay-channel-service/Cargo.toml --test service_tests
+	@echo "=== State-channel integration tests passed ==="
+
+build-sbf:   ## Build on-chain programs (.so) — run in WSL
+	@echo "=== Building on-chain programs ==="
+	cd ignite-pay-did-program && cargo build-sbf
+	cd ignite-pay-session-program && cargo build-sbf
+	cd ignite-pay-mb/programs/ignite-pay-mb && cargo build-sbf
+	@echo "=== Build complete ==="
+
+build-sbf-state-channel:   ## Build state-channel on-chain program (.so) — run in WSL
+	@echo "=== Building state-channel program ==="
+	cd ignite-pay-program && cargo build-sbf
+	@echo "=== Build complete ==="
+
+test-svm: build-sbf test-svm-all   ## Build .so then run SVM tests
+
+test-svm-all:   ## Run SVM tests (requires pre-built .so files)
+	@echo "=== Running SVM tests ==="
+	SBF_OUT_DIR=ignite-pay-did-program/target/deploy cargo test --manifest-path tests/svm-mollusk-did/Cargo.toml
+	SBF_OUT_DIR=ignite-pay-did-program/target/deploy cargo test --manifest-path tests/svm-litesvm-did/Cargo.toml
+	@echo "=== SVM tests passed ==="
+
+test-svm-state-channel: build-sbf-state-channel   ## Build and run state-channel SVM tests
+	@echo "=== Running state-channel SVM tests ==="
+	SBF_OUT_DIR=ignite-pay-program/target/deploy cargo test --manifest-path tests/svm-mollusk/Cargo.toml
+	SBF_OUT_DIR=ignite-pay-program/target/deploy cargo test --manifest-path tests/svm-litesvm/Cargo.toml
+	@echo "=== State-channel SVM tests passed ==="

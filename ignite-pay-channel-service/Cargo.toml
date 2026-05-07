@@ -17,7 +17,7 @@ path = "src/bin/channel-hub.rs"
 
 [dependencies]
 ignite-pay-state-channel = { path = "../ignite-pay-state-channel" }
-ignite-pay-solana = { path = "../ignite-pay-solana" }
+ignite-pay-solana = { path = "../ignite-pay-solana", features = ["state-channel"] }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"

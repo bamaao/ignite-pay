@@ -1,8 +1,7 @@
 use sha2::{Digest, Sha256};
 
 /// Standalone SHA-256 Merkle tree for audit logs.
-/// Uses sorted-pair hashing: `sha256(min || max)` consistent with the
-/// state-channel Merkle implementation.
+/// Uses sorted-pair hashing: `sha256(min || max)`.
 pub struct AuditMerkleTree {
     root_hash: [u8; 32],
 }

@@ -6,9 +6,7 @@ use tracing::info;
 use crate::did::resolver::compute_did_hash;
 use crate::state::RegistryState;
 
-/// `GET /v1/merchants/verify/{did}` — Verify a merchant's compressed DID exists.
-/// With ZK Compression, verification is implicit: if the compressed account
-/// exists in the state tree, it was verified on-chain by the Light System Program.
+/// `GET /v1/merchants/verify/{did}` — Verify a merchant's DID exists on-chain via PDA account.
 pub async fn verify_merchant(
     State(state): State<RegistryState>,
     Path(did): Path<String>,

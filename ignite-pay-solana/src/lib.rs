@@ -1,3 +1,4 @@
+#[cfg(feature = "state-channel")]
 pub mod channel;
 #[cfg(feature = "zk-compression")]
 pub mod compression;

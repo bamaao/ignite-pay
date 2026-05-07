@@ -6,6 +6,7 @@ description = "Solana integration for Ignite Pay: DID-based merchant identity, S
 
 [features]
 default = []
+state-channel = []
 zk-compression = ["light-sdk", "light-client"]
 
 [dependencies]

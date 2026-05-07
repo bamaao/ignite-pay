@@ -700,6 +700,7 @@ fn wire__crate__api__merchant__list_orders_impl(
         },
     )
 }
+#[cfg(feature = "state-channel")]
 fn wire__crate__api__merchant__merchant_claim_leaf_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -747,6 +748,7 @@ fn wire__crate__api__merchant__merchant_claim_leaf_impl(
         },
     )
 }
+#[cfg(feature = "state-channel")]
 fn wire__crate__api__merchant__merchant_close_channel_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -790,6 +792,7 @@ fn wire__crate__api__merchant__merchant_close_channel_impl(
         },
     )
 }
+#[cfg(feature = "state-channel")]
 fn wire__crate__api__merchant__merchant_finalize_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -833,6 +836,7 @@ fn wire__crate__api__merchant__merchant_finalize_impl(
         },
     )
 }
+#[cfg(feature = "state-channel")]
 fn wire__crate__api__merchant__merchant_get_channel_status_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -872,6 +876,7 @@ fn wire__crate__api__merchant__merchant_get_channel_status_impl(
         },
     )
 }
+#[cfg(feature = "state-channel")]
 fn wire__crate__api__merchant__merchant_list_channels_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1368,6 +1373,7 @@ impl SseDecode for bool {
     }
 }
 
+#[cfg(feature = "state-channel")]
 impl SseDecode for crate::api::merchant::ChannelStatusBridge {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1788,22 +1794,27 @@ fn pde_ffi_dispatcher_primary_impl(
             data_len,
         ),
         17 => wire__crate__api__merchant__list_orders_impl(port, ptr, rust_vec_len, data_len),
+        #[cfg(feature = "state-channel")]
         18 => {
             wire__crate__api__merchant__merchant_claim_leaf_impl(port, ptr, rust_vec_len, data_len)
         }
+        #[cfg(feature = "state-channel")]
         19 => wire__crate__api__merchant__merchant_close_channel_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
+        #[cfg(feature = "state-channel")]
         20 => wire__crate__api__merchant__merchant_finalize_impl(port, ptr, rust_vec_len, data_len),
+        #[cfg(feature = "state-channel")]
         21 => wire__crate__api__merchant__merchant_get_channel_status_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
+        #[cfg(feature = "state-channel")]
         22 => wire__crate__api__merchant__merchant_list_channels_impl(
             port,
             ptr,
@@ -1895,6 +1906,7 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::merchant::AuditEntryBridge>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+#[cfg(feature = "state-channel")]
 impl flutter_rust_bridge::IntoDart for crate::api::merchant::ChannelStatusBridge {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -1908,10 +1920,12 @@ impl flutter_rust_bridge::IntoDart for crate::api::merchant::ChannelStatusBridge
         .into_dart()
     }
 }
+#[cfg(feature = "state-channel")]
 impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
     for crate::api::merchant::ChannelStatusBridge
 {
 }
+#[cfg(feature = "state-channel")]
 impl flutter_rust_bridge::IntoIntoDart<crate::api::merchant::ChannelStatusBridge>
     for crate::api::merchant::ChannelStatusBridge
 {
@@ -2107,6 +2121,7 @@ impl SseEncode for bool {
     }
 }
 
+#[cfg(feature = "state-channel")]
 impl SseEncode for crate::api::merchant::ChannelStatusBridge {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {

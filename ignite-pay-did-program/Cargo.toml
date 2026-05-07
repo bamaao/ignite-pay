@@ -2,7 +2,7 @@
 name = "ignite-pay-did-program"
 version = "0.1.0"
 edition = "2021"
-description = "On-chain Solana program for DID merchant identity management via MerchantCompressedDid using ZK Compression"
+description = "On-chain Solana program for DID merchant identity management via PDA-based MerchantDid accounts"
 
 [lib]
 crate-type = ["cdylib", "lib"]

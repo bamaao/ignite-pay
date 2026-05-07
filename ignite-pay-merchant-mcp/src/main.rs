@@ -682,7 +682,7 @@ impl MerchantMcpServer {
 
     // ── DID Registry Tools ──────────────────────────────────────────────
 
-    #[tool(description = "Register merchant identity: obtain platform VC and register on-chain via ZK Compression")]
+    #[tool(description = "Register merchant identity: obtain platform VC and register on-chain (PDA by default)")]
     async fn register_merchant(&self, Parameters(input): Parameters<RegisterMerchantInput>) -> String {
         let registry_url = &self.did_registry_url;
         if registry_url.is_empty() {

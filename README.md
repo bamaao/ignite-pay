@@ -65,9 +65,9 @@ MagicBlock ER 即时记录 (<50ms)   双签提交链上结算
 
 Agent 与手机之间的所有通信通过 DIDComm v2 协议加密（JWE authcrypt），中继服务器无法读取明文。基于 Ed25519 签名 + X25519 密钥协商，DID 标识符格式 `did:ignite:z<multicodec>`。
 
-### 7. ZK Compression 链上身份
+### 7. PDA 链上身份
 
-商户 DID 通过 Light Protocol ZK Compression 注册到 Solana 链上，以压缩账户哈希存储，无需 rent exemption。支持平台 VC（Verifiable Credential）签发 + 链上注册 + 双层验证（Photon RPC + 链上签名）。
+商户 DID 通过 PDA 账户注册到 Solana 链上，标准 Solana RPC 即可读写，无需额外基础设施。支持平台 VC（Verifiable Credential）签发 + 链上注册 + 链上签名验证。
 
 ### 8. 六级风控
 
@@ -92,7 +92,7 @@ Agent 与手机之间的所有通信通过 DIDComm v2 协议加密（JWE authcry
                            │ MCP (JSON-RPC 2.0)
 ┌──────────────────────────▼──────────────────────────────┐
 │                    Service Layer                          │
-│  Buyer MCP  │  Merchant MCP  │ Channel Svc (探索中) │ Hub │
+│  Buyer MCP  │  Merchant MCP  │ Hub                    │
 └──────────────────────────┬──────────────────────────────┘
                            │ DIDComm v2 (JWE authcrypt)
 ┌──────────────────────────▼──────────────────────────────┐
@@ -102,9 +102,8 @@ Agent 与手机之间的所有通信通过 DIDComm v2 协议加密（JWE authcry
                            │
 ┌──────────────────────────▼──────────────────────────────┐
 │                   On-chain Layer                          │
-│  DID (ZK) │ Session Key │ MB Channel                     │
-│  State Channel (探索中)                                   │
-│  Solana + Light Protocol + MagicBlock                    │
+│  DID (PDA) │ Session Key │ MB Channel                    │
+│  Solana + MagicBlock                                     │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -156,11 +155,10 @@ Merchant App       Merchant MCP         Buyer MCP          Buyer App
 ```
 ignite-pay/
 ├── ignite-pay-core/              # 共享基础库 (DID, DIDComm, VC, 审计)
-├── ignite-pay-state-channel/     # ⚠️ 探索中 — 链下 UTXO Merkle Tree 状态通道引擎
-├── ignite-pay-solana/            # Solana RPC 集成 (支付, ZK DID, Session Key)
+├── ignite-pay-solana/            # Solana RPC 集成 (支付, PDA DID, Session Key)
+├── ignite-pay-state-channel/     # 链下 UTXO Merkle Tree 状态通道引擎（暂未启用）
 │
-├── ignite-pay-program/           # ⚠️ 探索中 — 状态通道链上程序 (Anchor, 10 instructions)
-├── ignite-pay-did-program/       # 商户 DID 链上程序 (ZK Compression, 6 instructions)
+├── ignite-pay-did-program/       # 商户 DID 链上程序 (PDA, 6 instructions)
 ├── ignite-pay-session-program/   # Session Key 链上程序 (Anchor, 4 instructions)
 ├── ignite-pay-mb/                # MagicBlock 支付通道
 │   ├── programs/                 #   链上程序 (Anchor, 10 instructions)
@@ -168,7 +166,8 @@ ignite-pay/
 │
 ├── didcomm-router/               # DIDComm 消息中继服务
 ├── did-registry/                 # DID 链上注册 REST 服务
-├── ignite-pay-channel-service/   # ⚠️ 探索中 — 状态通道 HTTP+WS 服务 (3 角色)
+├── ignite-pay-channel-service/   # 状态通道 HTTP+WS 服务（暂未启用）
+├── ignite-pay-program/           # 状态通道链上程序（暂未启用）
 ├── ignite-pay-hub-registry/      # Hub 注册发现服务 (PostgreSQL)
 ├── ignite-pay-relayer/           # 赞助支付 Gas 代付服务
 │
@@ -202,7 +201,7 @@ ignite-pay/
 | `get_session_status` | 查询 Session Key 状态 |
 | `close_session` | 关闭 Session Key |
 | `execute_spl_payment` | SPL Token 链上支付 |
-| `add_merchant` | 添加商户 ZK 压缩 DID |
+| `add_merchant` | 添加商户 DID |
 | `update_merchant` | 更新商户 DID 数据 |
 | `verify_merchant` | 验证商户链上身份 |
 | `mb_init_global` ~ `mb_withdraw` | MagicBlock 支付通道全套操作 (11 tools) |
@@ -218,7 +217,7 @@ ignite-pay/
 | `check_payment` | 查询订单状态 |
 | `get_payment_history` | 订单历史 |
 | `get_identity` | 商户 DID、MB Pubkey |
-| `register_merchant` | 注册链上身份 (VC + ZK DID) |
+| `register_merchant` | 注册链上身份 (VC + PDA DID) |
 | `verify_merchant_did` | 验证链上 DID |
 | `mb_get_channel` ~ `mb_force_release` | MagicBlock 支付通道商户端操作 (7 tools) |
 
@@ -226,7 +225,7 @@ ignite-pay/
 
 ## MagicBlock 支付通道
 
-> 与 `ignite-pay-state-channel` / `ignite-pay-program` / `ignite-pay-channel-service`（UTXO Merkle Tree 状态通道方案，目前处于探索阶段）不同，MagicBlock 支付通道已进入可用阶段，是当前微支付的主推方案。未来计划同时支持基于状态通道的支付通道，提供纯链上验证的去信任化替代方案。
+> MagicBlock 支付通道已进入可用阶段，是当前微支付的主推方案。
 
 三层架构实现高频微支付：
 
@@ -255,7 +254,7 @@ ignite-pay/
 
 | 层 | 技术 |
 |----|------|
-| 链上 | Solana (Anchor), Light Protocol (ZK Compression), MagicBlock |
+| 链上 | Solana (Anchor), MagicBlock |
 | 身份 | `did:ignite` 方法, Ed25519/X25519, JWE authcrypt |
 | 通信 | DIDComm v2, MCP (JSON-RPC 2.0), x402 HTTP 402 |
 | 后端 | Rust, Axum 0.8, tokio, sled, reqwest |
@@ -291,8 +290,6 @@ cargo build -p ignite-pay-mb-sdk
 
 # 编译链上程序 (需要 Solana toolchain)
 cd ignite-pay-mb && anchor build
-# 状态通道程序 (探索中)
-cd ignite-pay-program && anchor build
 ```
 
 ### 运行测试
@@ -312,7 +309,7 @@ cd tests/svm-litesvm && cargo test
 ### Docker 部署
 
 ```bash
-# 启动全部服务 (PostgreSQL + DIDComm Router + DID Registry + Channel Service ⚠️探索中 + Hub)
+# 启动全部服务 (PostgreSQL + DIDComm Router + DID Registry + Hub)
 docker-compose up -d
 ```
 
