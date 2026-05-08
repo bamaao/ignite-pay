@@ -24,6 +24,7 @@ __pycache__/
 .venv/
 
 # Flutter / Dart
+ignite_pay_app/android-openssl/
 ignite_pay_app/.dart_tool/
 ignite_pay_app/.packages
 ignite_pay_app/.pub-cache/

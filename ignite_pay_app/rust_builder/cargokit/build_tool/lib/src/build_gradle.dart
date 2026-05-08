@@ -35,7 +35,11 @@ class BuildGradle {
     final artifacts = await provider.getArtifacts(targets);
 
     for (final target in targets) {
-      final libs = artifacts[target]!;
+      final libs = artifacts[target];
+      if (libs == null) {
+        log.warning('No artifacts for $target, skipping');
+        continue;
+      }
       final outputDir = path.join(Environment.outputDir, target.android!);
       Directory(outputDir).createSync(recursive: true);
 

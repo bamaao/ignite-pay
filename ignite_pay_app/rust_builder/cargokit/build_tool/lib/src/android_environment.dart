@@ -150,6 +150,28 @@ class AndroidEnvironment {
     final toolTempDir =
         Platform.environment['CARGOKIT_TOOL_TEMP_DIR'] ?? targetTempDir;
 
+    // Prebuilt OpenSSL for Android cross-compilation on Windows
+    String? opensslDir;
+    if (Platform.isWindows) {
+      final manifestDir = Platform.environment['CARGOKIT_MANIFEST_DIR'];
+      if (manifestDir != null) {
+        // CARGOKIT_MANIFEST_DIR points to rust/ dir. android-openssl/ is a sibling.
+        final opensslBase = path.join(
+          path.dirname(manifestDir),
+          'android-openssl',
+        );
+        final archDir = target.android == 'arm64-v8a'
+            ? 'arm64'
+            : (target.android == 'armeabi-v7a' ? 'arm' : null);
+        if (archDir != null) {
+          final candidate = path.join(opensslBase, archDir);
+          if (Directory(candidate).existsSync()) {
+            opensslDir = candidate;
+          }
+        }
+      }
+    }
+
     return {
       arKey: arValue,
       ccKey: ccValue,
@@ -163,6 +185,17 @@ class AndroidEnvironment {
       '_CARGOKIT_NDK_LINK_TARGET': targetArg,
       '_CARGOKIT_NDK_LINK_CLANG': ccValue,
       'CARGOKIT_TOOL_TEMP_DIR': toolTempDir,
+      // Point to prebuilt Android OpenSSL libraries instead of host OpenSSL
+      if (opensslDir != null) ...{
+        'OPENSSL_DIR': opensslDir,
+        'OPENSSL_LIB_DIR': path.join(opensslDir, 'lib'),
+        'OPENSSL_INCLUDE_DIR': path.join(opensslDir, 'include'),
+      } else ...{
+        // Fallback: clear host OpenSSL vars to avoid using Windows libs
+        'OPENSSL_LIB_DIR': '',
+        'OPENSSL_INCLUDE_DIR': '',
+        'OPENSSL_DIR': '',
+      },
     };
   }
 

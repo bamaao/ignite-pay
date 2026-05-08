@@ -68,7 +68,13 @@ class ArtifactProvider {
       final builder = RustBuilder(target: target, environment: environment);
       builder.prepare(rustup);
       _log.info('Building ${environment.crateInfo.packageName} for $target');
-      final targetDir = await builder.build();
+      String targetDir;
+      try {
+        targetDir = await builder.build();
+      } catch (e) {
+        _log.warning('Build failed for $target, skipping: $e');
+        continue;
+      }
       // For local build accept both static and dynamic libraries.
       final artifactNames = <String>{
         ...getArtifactNames(

@@ -45,7 +45,12 @@ const _kGlassBorder = Color(0x1AFFFFFF);
 // ---------------------------------------------------------------------------
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await RustLib.init();
+  try {
+    await RustLib.init().timeout(const Duration(seconds: 10));
+  } catch (e) {
+    debugPrint('RustLib.init() failed: $e');
+    // Still run the app so the user sees an error screen instead of a blank splash
+  }
 
   runApp(const IgnitePayApp());
 }
@@ -93,6 +98,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   bool _showOnboarding = false;
   bool _isLocked = false;
   bool _authenticating = false;
+  String? _initError;
   final _localAuth = LocalAuthentication();
 
   @override
@@ -120,31 +126,41 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   String? _autoConnectError;
 
   Future<void> _checkOnboarding() async {
-    final prefs = await SharedPreferences.getInstance();
-    final hasDid = prefs.getBool('onboarding_complete') ?? false;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final hasDid = prefs.getBool('onboarding_complete') ?? false;
 
-    if (hasDid) {
-      // Load existing identity
-      final svc = context.read<DidcommService>();
-      await svc.initialize();
-      // Auto-reconnect mediator if URL was previously saved
-      final wsUrl = svc.mediatorWsUrl;
-      if (wsUrl.isNotEmpty) {
-        try {
-          await svc.connectToMediator(wsUrl);
-        } catch (e) {
-          _autoConnectError = e.toString();
+      if (hasDid) {
+        // Load existing identity
+        final svc = context.read<DidcommService>();
+        await svc.initialize().timeout(const Duration(seconds: 15));
+        // Auto-reconnect mediator if URL was previously saved
+        final wsUrl = svc.mediatorWsUrl;
+        if (wsUrl.isNotEmpty) {
+          try {
+            await svc.connectToMediator(wsUrl).timeout(const Duration(seconds: 10));
+          } catch (e) {
+            _autoConnectError = e.toString();
+          }
         }
+        if (mounted) {
+          setState(() {
+            _loading = false;
+            _isLocked = true;
+          });
+          _authenticate();
+        }
+      } else {
+        if (mounted) setState(() { _loading = false; _showOnboarding = true; });
       }
+    } catch (e) {
+      debugPrint('_checkOnboarding error: $e');
       if (mounted) {
         setState(() {
           _loading = false;
-          _isLocked = true;
+          _initError = e.toString();
         });
-        _authenticate();
       }
-    } else {
-      if (mounted) setState(() { _loading = false; _showOnboarding = true; });
     }
   }
 
@@ -220,6 +236,62 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    if (_initError != null) {
+      return Scaffold(
+        backgroundColor: _kBackground,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(LucideIcons.alertTriangle, size: 48, color: _kIntercepted),
+                const SizedBox(height: 20),
+                Text(
+                  'Initialization Failed',
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                    color: _kTextPrimary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _initError!,
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    color: _kTextSecondary,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                GestureDetector(
+                  onTap: () {
+                    setState(() { _initError = null; _loading = true; });
+                    _checkOnboarding();
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(colors: [_kNeonCyan, _kNeonCyanDim]),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      'Retry',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: _kBackground,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     if (_loading) {
       return Scaffold(
         backgroundColor: _kBackground,
