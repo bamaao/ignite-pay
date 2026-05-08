@@ -61,6 +61,7 @@ use rmcp::{
 use std::sync::Arc;
 use std::time::Duration;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
+use axum::response::IntoResponse;
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
@@ -305,6 +306,86 @@ impl std::fmt::Display for PaymentProof {
             }
         }
     }
+}
+
+// ── REST API Types ─────────────────────────────────────────────────────────
+
+/// Structured payment proof for REST API responses.
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[allow(non_camel_case_types)]
+enum X402Proof {
+    tx_signature { signature: String },
+    voucher { channel: String, seq: u64, amount: u64, msg_hash: String, signature: String },
+}
+
+impl From<&PaymentProof> for X402Proof {
+    fn from(proof: &PaymentProof) -> Self {
+        match proof {
+            PaymentProof::TxSignature(sig) => X402Proof::tx_signature { signature: sig.clone() },
+            PaymentProof::Voucher { channel, seq, amount, msg_hash, signature } => {
+                X402Proof::voucher {
+                    channel: channel.clone(),
+                    seq: *seq,
+                    amount: *amount,
+                    msg_hash: msg_hash.clone(),
+                    signature: signature.clone(),
+                }
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for X402Proof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            X402Proof::tx_signature { signature } => write!(f, "tx_signature:{}", signature),
+            X402Proof::voucher { channel, seq, amount, msg_hash, signature } => {
+                write!(f, "voucher: channel={}, seq={}, amount={}, hash={}, sig={}", channel, seq, amount, msg_hash, signature)
+            }
+        }
+    }
+}
+
+/// Structured result for the x402 REST API.
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum X402Result {
+    Success {
+        payment_id: String,
+        proof: X402Proof,
+        amount: u64,
+        token: String,
+        recipient: String,
+        merchant_did: String,
+        method: Option<String>,
+    },
+    Rejected {
+        payment_id: String,
+        reason: String,
+    },
+    Error {
+        payment_id: Option<String>,
+        message: String,
+    },
+}
+
+/// REST API request body for `POST /api/x402`.
+#[derive(Debug, serde::Deserialize)]
+struct X402ApiRequest {
+    /// The HTTP 402 response body (JSON string).
+    pub challenge_body: String,
+    /// Recipient phone DID for authorization.
+    #[serde(default)]
+    pub phone_did: String,
+    /// Merchant DID from x402-merchant-did header.
+    pub x402_merchant_did: Option<String>,
+    /// Payment address from x402-payment-address header.
+    pub x402_payment_address: Option<String>,
+    /// Merkle context from x402-merkle-context header.
+    pub x402_merkle_context: Option<String>,
+    /// IPFS CID for a Verifiable Credential.
+    pub vc_ipfs_cid: Option<String>,
 }
 
 impl IgnitePayMcpServer {
@@ -602,459 +683,23 @@ impl IgnitePayMcpServer {
         &self,
         Parameters(input): Parameters<X402ChallengeInput>,
     ) -> String {
-        // 1. Parse the 402 response JSON
-        let challenge: serde_json::Value = match serde_json::from_str(&input.challenge_body) {
-            Ok(v) => v,
-            Err(e) => return format!("Error: Invalid JSON in challenge body: {}", e),
-        };
-
-        // Try Coinbase x402 standard PaymentRequirements format first (flat: scheme, network, amount, asset, payTo),
-        // then fall back to legacy "accepts" array format.
-        let (network, amount, token, recipient, merchant_did) = if let Some(scheme) = challenge.get("scheme").and_then(|v| v.as_str()) {
-            // Coinbase x402 standard format
-            let network = challenge.get("network").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-            let amount = challenge.get("amount").and_then(|v| v.as_str()).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-            let asset = challenge.get("asset").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-            let pay_to = challenge.get("payTo").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-
-            // Merchant DID: header > extra.memo > unknown
-            let merchant_did = input
-                .x402_merchant_did
-                .as_deref()
-                .or_else(|| challenge.get("extra").and_then(|e| e.get("memo")).and_then(|v| v.as_str()))
-                .unwrap_or("unknown")
-                .to_string();
-
-            tracing::info!("Parsed Coinbase x402 standard format: scheme={}, network={}, amount={}, asset={}", scheme, network, amount, asset);
-            (network, amount, asset, pay_to, merchant_did)
-        } else {
-            // Legacy "accepts" array format
-            let accepts = match challenge.get("accepts").and_then(|v| v.as_array()) {
-                Some(arr) if !arr.is_empty() => &arr[0],
-                _ => return "Error: No payment schemes found in 402 response (expected Coinbase x402 PaymentRequirements or legacy accepts array)".to_string(),
-            };
-
-            let network = accepts.get("network").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-            let amount = accepts.get("amount").and_then(|v| v.as_str()).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-            let token = accepts.get("token").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-
-            let merchant_did = input
-                .x402_merchant_did
-                .as_deref()
-                .or_else(|| challenge.get("provider_did").and_then(|v| v.as_str()))
-                .unwrap_or("unknown")
-                .to_string();
-
-            let recipient = input
-                .x402_payment_address
-                .as_deref()
-                .or_else(|| accepts.get("recipient").and_then(|v| v.as_str()))
-                .unwrap_or("unknown")
-                .to_string();
-
-            tracing::info!("Parsed legacy accepts array format: network={}, amount={}, token={}", network, amount, token);
-            (network, amount, token, recipient, merchant_did)
-        };
-
-        // Use x402_payment_address header as recipient override if present
-        let recipient = input
-            .x402_payment_address
-            .as_deref()
-            .map(|s| s.to_string())
-            .unwrap_or(recipient);
-
-        // Resolve SPL params if this is not a SOL payment
-        let spl_params = if token != "SOL" && token != "sol" && token != "unknown" {
-            match resolve_mint(&token, &network) {
-                Some(mint) => {
-                    tracing::info!("Resolved {} on {} to mint {}", token, network, mint);
-                    Some(SplPaymentParams {
-                        mint,
-                        source_ata_override: None,
-                        dest_ata_override: None,
-                    })
-                }
-                None => {
-                    tracing::warn!("Could not resolve mint for {} on {}", token, network);
-                    None
-                }
+        // Delegate to structured method and convert to string for MCP tool compatibility
+        match self.process_x402_challenge_structured(&input).await {
+            X402Result::Success { payment_id, proof, amount, token, recipient, merchant_did, method } => {
+                let method_info = method
+                    .map(|m| format!(" ({})", m))
+                    .unwrap_or_default();
+                format!(
+                    "Payment succeeded{}. proof={}\nPayment-ID: {}\nAmount: {} {}\nTo: {}\nMerchant: {}",
+                    method_info, proof, payment_id, amount, token, recipient, merchant_did
+                )
             }
-        } else {
-            None
-        };
-
-        let payment_id = uuid::Uuid::new_v4().to_string();
-        let description = format!(
-            "{} SOL transfer on {} to {}",
-            amount, network, recipient
-        );
-
-        // 2. Create payment record
-        let payment = PaymentRequest {
-            id: payment_id.clone(),
-            recipient: recipient.clone(),
-            merchant_did: merchant_did.clone(),
-            amount,
-            token: token.clone(),
-            network: network.clone(),
-            description: description.clone(),
-            status: PaymentStatus::PendingAuth,
-            created_at: chrono::Utc::now(),
-            tx_signature: None,
-        };
-
-        // 3. Save to store
-        if let Err(e) = self.payments.save_payment(&payment) {
-            return format!("Error: Failed to save payment: {}", e);
-        }
-
-        // Audit: challenge received
-        let _ = self.audit.record_payment_event(
-            &payment_id,
-            "challenge_received",
-            amount,
-            &merchant_did,
-        );
-
-        // 3.5 Verify VC — inline or IPFS CID (V1.1)
-        let vc_verified = if let Some(vc_value) = challenge.get("verifiable_credential") {
-            // Inline VC path
-            if let (Some(vk_bytes), Ok(vc)) = (
-                &self.platform_verifying_key,
-                serde_json::from_value::<VerifiableCredential>(vc_value.clone()),
-            ) {
-                match vc.verify(vk_bytes, &self.platform_did) {
-                    Ok(()) => {
-                        tracing::info!("VC verified for merchant: {}", vc.credential_subject.id);
-                        true
-                    }
-                    Err(e) => {
-                        let _ = self
-                            .payments
-                            .update_status(&payment_id, &PaymentStatus::Rejected);
-                        return format!("Payment rejected: VC verification failed: {}", e);
-                    }
-                }
-            } else {
-                false
+            X402Result::Rejected { payment_id, reason } => {
+                format!("Payment rejected [{}]: {}", payment_id, reason)
             }
-        } else if let Some(cid) = &input.vc_ipfs_cid {
-            // V1.1: IPFS CID resolution path
-            match resolve_vc_from_ipfs(self.ipfs_client.as_ref(), cid).await {
-                Ok(vc) => {
-                    if let Some(vk_bytes) = &self.platform_verifying_key {
-                        match vc.verify(vk_bytes, &self.platform_did) {
-                            Ok(()) => {
-                                tracing::info!(
-                                    "VC (from IPFS) verified for merchant: {}",
-                                    vc.credential_subject.id
-                                );
-                                true
-                            }
-                            Err(e) => {
-                                let _ = self
-                                    .payments
-                                    .update_status(&payment_id, &PaymentStatus::Rejected);
-                                return format!(
-                                    "Payment rejected: VC verification failed (IPFS): {}",
-                                    e
-                                );
-                            }
-                        }
-                    } else {
-                        tracing::warn!(
-                            "VC from IPFS skipped: no platform verifying key configured"
-                        );
-                        false
-                    }
-                }
-                Err(e) => {
-                    let _ = self
-                        .payments
-                        .update_status(&payment_id, &PaymentStatus::Rejected);
-                    return format!("Payment rejected: failed to resolve VC from IPFS: {}", e);
-                }
-            }
-        } else {
-            false
-        };
-        let _ = vc_verified; // VC verified flag available for future use
-
-        // 3.6 On-chain DID verification (V2.0 — if Solana configured)
-        if let Some(bridge) = &self.solana_bridge {
-            match bridge.quick_verify(&merchant_did).await {
-                Ok(true) => {
-                    tracing::info!("Merchant {} verified on-chain", merchant_did);
-                }
-                Ok(false) => {
-                    let _ = self
-                        .payments
-                        .update_status(&payment_id, &PaymentStatus::Rejected);
-                    return format!(
-                        "Payment rejected: merchant {} not found on-chain",
-                        merchant_did
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!("On-chain verification error (continuing): {}", e);
-                }
-            }
-        }
-
-        // 3.7 V1.1: Merkle proof verification removed — ZK Compression
-        // verifies proofs on-chain via the Light System Program.
-        // The x402-merkle-context is no longer applicable.
-
-        // Step C: V1.1 Risk control check (blacklist-first)
-        match self.list_store.risk_check(&merchant_did, amount) {
-            Ok(RiskControlDecision::Blocked) => {
-                let _ = self
-                    .payments
-                    .update_status(&payment_id, &PaymentStatus::Rejected);
-                return format!("Payment blocked: merchant {} is on blacklist", merchant_did);
-            }
-            Ok(RiskControlDecision::AutoApproved { max_amount: _, label }) => {
-                let session = self.get_active_session();
-                return match self.execute_payment_atomic(&payment, &session, spl_params.as_ref(), None).await {
-                    Ok(proof) => {
-                        let _ = self
-                            .payments
-                            .update_status(&payment_id, &PaymentStatus::Executed);
-                        if let PaymentProof::TxSignature(tx_sig) = &proof {
-                            let _ = self.payments.set_tx_signature(&payment_id, tx_sig);
-                        }
-                        let _ = self.audit.record_payment_event(
-                            &payment_id,
-                            "payment_executed",
-                            amount,
-                            &merchant_did,
-                        );
-                        let label_info = label.map(|l| format!(" ({})", l)).unwrap_or_default();
-                        format!(
-                            "Auto-approved payment (whitelisted{}). {}\nAmount: {} {}\nTo: {}",
-                            label_info, proof, amount, token, recipient
-                        )
-                    }
-                    Err(e) => {
-                        let _ = self
-                            .payments
-                            .update_status(&payment_id, &PaymentStatus::Rejected);
-                        format!("Payment failed: {}", e)
-                    }
-                };
-            }
-            Ok(RiskControlDecision::NeedsAuth) => {
-                // Continue to existing flow below
-            }
-            Err(e) => {
-                tracing::warn!("Risk check error (continuing to auth): {}", e);
-            }
-        }
-
-        // 4. Check auto-approve (global threshold)
-        if self.auto_approve_max > 0 && amount <= self.auto_approve_max {
-            let session = self.get_active_session();
-            match self.execute_payment_atomic(&payment, &session, spl_params.as_ref(), None).await {
-                Ok(proof) => {
-                    if let Err(e) = self
-                        .payments
-                        .update_status(&payment_id, &PaymentStatus::Executed)
-                    {
-                        return format!("Error: Failed to update status: {}", e);
-                    }
-                    if let PaymentProof::TxSignature(tx_sig) = &proof {
-                        if let Err(e) = self.payments.set_tx_signature(&payment_id, tx_sig) {
-                            return format!("Error: Failed to set tx signature: {}", e);
-                        }
-                    }
-                    let _ = self.audit.record_payment_event(
-                        &payment_id,
-                        "payment_executed",
-                        amount,
-                        &merchant_did,
-                    );
-                    return format!("Auto-approved payment (under threshold). {}", proof);
-                }
-                Err(e) => {
-                    let _ = self
-                        .payments
-                        .update_status(&payment_id, &PaymentStatus::Rejected);
-                    return format!("Payment failed: {}", e);
-                }
-            }
-        }
-
-        // 5. Register pending auth and send request
-        let rx = self.pending.register(&payment_id);
-
-        // Resolve phone DID: input override > paired phone > config
-        let phone_did = if !input.phone_did.is_empty() {
-            input.phone_did.clone()
-        } else {
-            match self.resolve_phone_did().await {
-                Some(did) => did,
-                None => return "Error: No phone DID available. Either provide phone_did in the request or pair a phone using generate_pairing_invitation.".to_string(),
-            }
-        };
-
-        // If no active session key exists, create one locally and include it
-        // in the auth request so the phone registers + funds + authorizes in one step.
-        let new_session_key = if self.get_active_session().is_none() {
-            match self.create_session_key_for_request(&payment, &spl_params) {
-                Some(sk) => {
-                    tracing::info!(
-                        "No active session key — created new ephemeral key {} for payment {}",
-                        sk.session_key_pubkey, payment_id
-                    );
-                    Some(sk)
-                }
-                None => None,
-            }
-        } else {
-            None
-        };
-
-        // Determine available payment methods for phone to display
-        let available_methods = self.get_available_payment_methods(&merchant_did);
-        tracing::info!(
-            "Available payment methods for {}: {:?}",
-            merchant_did,
-            available_methods.iter().map(|m| m.as_str()).collect::<Vec<_>>()
-        );
-
-        // Fetch relayer info if relayer is available as a payment method
-        let relayer_info: Option<(String, String)> = if available_methods.iter().any(|m| matches!(m, ignite_pay_core::didcomm::PaymentMethod::Relayer)) {
-            self.solana_client.as_ref().and_then(|c| {
-                c.relayer_url.as_ref().map(|url| {
-                    // We'll use a placeholder pubkey — the actual fetch happens during payment execution
-                    ("relayer_available".to_string(), url.clone())
-                })
-            })
-        } else {
-            None
-        };
-        let relayer_info_ref = relayer_info.as_ref().map(|(pk, url)| (pk.as_str(), url.as_str()));
-
-        match self
-            .mediator
-            .send_auth_request(&phone_did, &payment, new_session_key.as_ref(), Some(&available_methods), relayer_info_ref)
-            .await
-        {
-            Ok(_) => {}
-            Err(e) => {
-                self.pending.resolve(
-                    &payment_id,
-                    AuthResponse {
-                        authorized: false,
-                        list_action: "none".to_string(),
-                        merchant_did: String::new(),
-                        session_key_pubkey: None,
-                        session_key_secret_key: None,
-                        session_key_tx_signature: None,
-                        session_expires_at: None,
-                        spending_limit: None,
-                        scopes: None,
-                        list_label: None,
-                        list_max_amount: None,
-                        token_mint: None,
-                        payment_method: None,
-                    },
-                );
-                return format!("Error: Failed to send auth request: {}", e);
-            }
-        }
-
-        // 6. Wait for response with timeout
-        let timeout = Duration::from_secs(self.auth_timeout);
-        match tokio::time::timeout(timeout, rx).await {
-            Ok(Ok(resp)) if resp.authorized => {
-                // Use session key from phone auth response if available, otherwise fall back to local session
-                let session = self
-                    .get_session_from_auth_response(&resp)
-                    .or_else(|| self.get_active_session());
-                let chosen_method = resp.payment_method.as_deref();
-                if let Some(method) = chosen_method {
-                    tracing::info!("User chose payment method: {}", method);
-                }
-                match self.execute_payment_atomic(&payment, &session, spl_params.as_ref(), chosen_method).await {
-                    Ok(proof) => {
-                        let _ = self
-                            .payments
-                            .update_status(&payment_id, &PaymentStatus::Executed);
-                        if let PaymentProof::TxSignature(tx_sig) = &proof {
-                            let _ = self.payments.set_tx_signature(&payment_id, tx_sig);
-                        }
-
-                        let _ = self.audit.record_payment_event(
-                            &payment_id,
-                            "payment_executed",
-                            amount,
-                            &merchant_did,
-                        );
-
-                        // Step D: V1.1 Extended list_action handling
-                        if resp.list_action != "none" && !payment.merchant_did.is_empty() {
-                            self.handle_list_action(
-                                &resp.list_action,
-                                &payment.merchant_did,
-                                amount,
-                                resp.list_label.as_deref(),
-                                resp.list_max_amount,
-                            )
-                            .await;
-                        }
-
-                        let method_info = chosen_method
-                            .map(|m| format!(" via {}", m))
-                            .unwrap_or_default();
-                        format!(
-                            "Payment authorized and executed{}. {}\nAmount: {} {}\nTo: {}",
-                            method_info, proof, amount, token, recipient
-                        )
-                    }
-                    Err(e) => {
-                        let _ = self
-                            .payments
-                            .update_status(&payment_id, &PaymentStatus::Rejected);
-                        format!("Payment authorized but execution failed: {}", e)
-                    }
-                }
-            }
-            Ok(Ok(_)) => {
-                let _ = self
-                    .payments
-                    .update_status(&payment_id, &PaymentStatus::Rejected);
-                "Payment rejected by user.".to_string()
-            }
-            Ok(Err(_)) => {
-                let _ = self
-                    .payments
-                    .update_status(&payment_id, &PaymentStatus::Expired);
-                "Payment authorization failed (internal error).".to_string()
-            }
-            Err(_) => {
-                self.pending.resolve(
-                    &payment_id,
-                    AuthResponse {
-                        authorized: false,
-                        list_action: "none".to_string(),
-                        merchant_did: String::new(),
-                        session_key_pubkey: None,
-                        session_key_secret_key: None,
-                        session_key_tx_signature: None,
-                        session_expires_at: None,
-                        spending_limit: None,
-                        scopes: None,
-                        list_label: None,
-                        list_max_amount: None,
-                        token_mint: None,
-                        payment_method: None,
-                    },
-                );
-                let _ = self
-                    .payments
-                    .update_status(&payment_id, &PaymentStatus::Expired);
-                "Payment authorization timed out.".to_string()
+            X402Result::Error { payment_id, message } => {
+                let pid = payment_id.unwrap_or_default();
+                format!("Error [{}]: {}", pid, message)
             }
         }
     }
@@ -2003,7 +1648,434 @@ impl IgnitePayMcpServer {
     }
 }
 
+/// Derive the actual payment method string from a PaymentProof.
+fn proof_method(proof: &PaymentProof) -> String {
+    match proof {
+        PaymentProof::TxSignature(_) => "session_key".to_string(),
+        PaymentProof::Voucher { .. } => "magicblock".to_string(),
+    }
+}
+
 impl IgnitePayMcpServer {
+    /// Core structured processing of an x402 challenge.
+    ///
+    /// This is the structured variant that returns `X402Result` instead of
+    /// a formatted string, suitable for REST API consumption.
+    async fn process_x402_challenge_structured(
+        &self,
+        input: &X402ChallengeInput,
+    ) -> X402Result {
+        // 1. Parse the 402 response JSON
+        let challenge: serde_json::Value = match serde_json::from_str(&input.challenge_body) {
+            Ok(v) => v,
+            Err(e) => return X402Result::Error {
+                payment_id: None,
+                message: format!("Invalid JSON in challenge body: {}", e),
+            },
+        };
+
+        // Parse payment details (Coinbase x402 standard or legacy format)
+        let (network, amount, token, recipient, merchant_did) = if let Some(_scheme) = challenge.get("scheme").and_then(|v| v.as_str()) {
+            let network = challenge.get("network").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+            let amount = challenge.get("amount").and_then(|v| v.as_str()).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            let asset = challenge.get("asset").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+            let pay_to = challenge.get("payTo").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+            let merchant_did = input
+                .x402_merchant_did
+                .as_deref()
+                .or_else(|| challenge.get("extra").and_then(|e| e.get("memo")).and_then(|v| v.as_str()))
+                .unwrap_or("unknown")
+                .to_string();
+            (network, amount, asset, pay_to, merchant_did)
+        } else {
+            let accepts = match challenge.get("accepts").and_then(|v| v.as_array()) {
+                Some(arr) if !arr.is_empty() => &arr[0],
+                _ => return X402Result::Error {
+                    payment_id: None,
+                    message: "No payment schemes found in 402 response (expected Coinbase x402 PaymentRequirements or legacy accepts array)".to_string(),
+                },
+            };
+            let network = accepts.get("network").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+            let amount = accepts.get("amount").and_then(|v| v.as_str()).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            let token = accepts.get("token").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+            let merchant_did = input
+                .x402_merchant_did
+                .as_deref()
+                .or_else(|| challenge.get("provider_did").and_then(|v| v.as_str()))
+                .unwrap_or("unknown")
+                .to_string();
+            let recipient = input
+                .x402_payment_address
+                .as_deref()
+                .or_else(|| accepts.get("recipient").and_then(|v| v.as_str()))
+                .unwrap_or("unknown")
+                .to_string();
+            (network, amount, token, recipient, merchant_did)
+        };
+
+        let recipient = input
+            .x402_payment_address
+            .as_deref()
+            .map(|s| s.to_string())
+            .unwrap_or(recipient);
+
+        let spl_params = if token != "SOL" && token != "sol" && token != "unknown" {
+            match resolve_mint(&token, &network) {
+                Some(mint) => Some(SplPaymentParams {
+                    mint,
+                    source_ata_override: None,
+                    dest_ata_override: None,
+                }),
+                None => None,
+            }
+        } else {
+            None
+        };
+
+        let payment_id = uuid::Uuid::new_v4().to_string();
+        let description = format!("{} SOL transfer on {} to {}", amount, network, recipient);
+
+        // 2. Create payment record
+        let payment = PaymentRequest {
+            id: payment_id.clone(),
+            recipient: recipient.clone(),
+            merchant_did: merchant_did.clone(),
+            amount,
+            token: token.clone(),
+            network: network.clone(),
+            description,
+            status: PaymentStatus::PendingAuth,
+            created_at: chrono::Utc::now(),
+            tx_signature: None,
+        };
+
+        if let Err(e) = self.payments.save_payment(&payment) {
+            return X402Result::Error {
+                payment_id: None,
+                message: format!("Failed to save payment: {}", e),
+            };
+        }
+
+        let _ = self.audit.record_payment_event(&payment_id, "challenge_received", amount, &merchant_did);
+
+        // 3. Verify VC
+        let vc_verified = if let Some(vc_value) = challenge.get("verifiable_credential") {
+            if let (Some(vk_bytes), Ok(vc)) = (
+                &self.platform_verifying_key,
+                serde_json::from_value::<VerifiableCredential>(vc_value.clone()),
+            ) {
+                match vc.verify(vk_bytes, &self.platform_did) {
+                    Ok(()) => true,
+                    Err(e) => {
+                        let _ = self.payments.update_status(&payment_id, &PaymentStatus::Rejected);
+                        return X402Result::Rejected {
+                            payment_id: payment_id.clone(),
+                            reason: format!("VC verification failed: {}", e),
+                        };
+                    }
+                }
+            } else {
+                false
+            }
+        } else if let Some(cid) = &input.vc_ipfs_cid {
+            match resolve_vc_from_ipfs(self.ipfs_client.as_ref(), cid).await {
+                Ok(vc) => {
+                    if let Some(vk_bytes) = &self.platform_verifying_key {
+                        match vc.verify(vk_bytes, &self.platform_did) {
+                            Ok(()) => true,
+                            Err(e) => {
+                                let _ = self.payments.update_status(&payment_id, &PaymentStatus::Rejected);
+                                return X402Result::Rejected {
+                                    payment_id: payment_id.clone(),
+                                    reason: format!("VC verification failed (IPFS): {}", e),
+                                };
+                            }
+                        }
+                    } else {
+                        false
+                    }
+                }
+                Err(e) => {
+                    let _ = self.payments.update_status(&payment_id, &PaymentStatus::Rejected);
+                    return X402Result::Rejected {
+                        payment_id: payment_id.clone(),
+                        reason: format!("Failed to resolve VC from IPFS: {}", e),
+                    };
+                }
+            }
+        } else {
+            false
+        };
+        let _ = vc_verified;
+
+        // 3.6 On-chain DID verification
+        if let Some(bridge) = &self.solana_bridge {
+            match bridge.quick_verify(&merchant_did).await {
+                Ok(true) => {
+                    tracing::info!("Merchant {} verified on-chain", merchant_did);
+                }
+                Ok(false) => {
+                    let _ = self.payments.update_status(&payment_id, &PaymentStatus::Rejected);
+                    return X402Result::Rejected {
+                        payment_id: payment_id.clone(),
+                        reason: format!("Merchant {} not found on-chain", merchant_did),
+                    };
+                }
+                Err(e) => {
+                    tracing::warn!("On-chain verification error (continuing): {}", e);
+                }
+            }
+        }
+
+        // Step C: Risk control check (blacklist-first)
+        match self.list_store.risk_check(&merchant_did, amount) {
+            Ok(RiskControlDecision::Blocked) => {
+                let _ = self.payments.update_status(&payment_id, &PaymentStatus::Rejected);
+                return X402Result::Rejected {
+                    payment_id: payment_id.clone(),
+                    reason: format!("Merchant {} is on blacklist", merchant_did),
+                };
+            }
+            Ok(RiskControlDecision::AutoApproved { max_amount: _, label: _ }) => {
+                let session = self.get_active_session();
+                return match self.execute_payment_atomic(&payment, &session, spl_params.as_ref(), None).await {
+                    Ok(proof) => {
+                        let _ = self.payments.update_status(&payment_id, &PaymentStatus::Executed);
+                        if let PaymentProof::TxSignature(tx_sig) = &proof {
+                            let _ = self.payments.set_tx_signature(&payment_id, tx_sig);
+                        }
+                        let _ = self.audit.record_payment_event(&payment_id, "payment_executed", amount, &merchant_did);
+                        X402Result::Success {
+                            payment_id: payment_id.clone(),
+                            proof: X402Proof::from(&proof),
+                            amount,
+                            token: token.clone(),
+                            recipient: recipient.clone(),
+                            merchant_did: merchant_did.clone(),
+                            method: Some(proof_method(&proof)),
+                        }
+                    }
+                    Err(e) => {
+                        let _ = self.payments.update_status(&payment_id, &PaymentStatus::Rejected);
+                        X402Result::Error {
+                            payment_id: Some(payment_id.clone()),
+                            message: format!("Payment execution failed: {}", e),
+                        }
+                    }
+                };
+            }
+            Ok(RiskControlDecision::NeedsAuth) => {}
+            Err(e) => {
+                tracing::warn!("Risk check error (continuing to auth): {}", e);
+            }
+        }
+
+        // 4. Check auto-approve (global threshold)
+        if self.auto_approve_max > 0 && amount <= self.auto_approve_max {
+            let session = self.get_active_session();
+            match self.execute_payment_atomic(&payment, &session, spl_params.as_ref(), None).await {
+                Ok(proof) => {
+                    if let Err(e) = self.payments.update_status(&payment_id, &PaymentStatus::Executed) {
+                        return X402Result::Error {
+                            payment_id: Some(payment_id.clone()),
+                            message: format!("Failed to update status: {}", e),
+                        };
+                    }
+                    if let PaymentProof::TxSignature(tx_sig) = &proof {
+                        if let Err(e) = self.payments.set_tx_signature(&payment_id, tx_sig) {
+                            return X402Result::Error {
+                                payment_id: Some(payment_id.clone()),
+                                message: format!("Failed to set tx signature: {}", e),
+                            };
+                        }
+                    }
+                    let _ = self.audit.record_payment_event(&payment_id, "payment_executed", amount, &merchant_did);
+                    return X402Result::Success {
+                        payment_id: payment_id.clone(),
+                        proof: X402Proof::from(&proof),
+                        amount,
+                        token: token.clone(),
+                        recipient: recipient.clone(),
+                        merchant_did: merchant_did.clone(),
+                        method: Some(proof_method(&proof)),
+                    };
+                }
+                Err(e) => {
+                    let _ = self.payments.update_status(&payment_id, &PaymentStatus::Rejected);
+                    return X402Result::Error {
+                        payment_id: Some(payment_id.clone()),
+                        message: format!("Payment execution failed: {}", e),
+                    };
+                }
+            }
+        }
+
+        // 5. Register pending auth and send request
+        let rx = self.pending.register(&payment_id);
+
+        let phone_did = if !input.phone_did.is_empty() {
+            input.phone_did.clone()
+        } else {
+            match self.resolve_phone_did().await {
+                Some(did) => did,
+                None => return X402Result::Error {
+                    payment_id: Some(payment_id.clone()),
+                    message: "No phone DID available. Either provide phone_did in the request or pair a phone using generate_pairing_invitation.".to_string(),
+                },
+            }
+        };
+
+        let new_session_key = if self.get_active_session().is_none() {
+            match self.create_session_key_for_request(&payment, &spl_params) {
+                Some(sk) => {
+                    tracing::info!("No active session key — created new ephemeral key {} for payment {}", sk.session_key_pubkey, payment_id);
+                    Some(sk)
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+
+        let available_methods = self.get_available_payment_methods(&merchant_did);
+        tracing::info!(
+            "Available payment methods for {}: {:?}",
+            merchant_did,
+            available_methods.iter().map(|m| m.as_str()).collect::<Vec<_>>()
+        );
+
+        let relayer_info: Option<(String, String)> = if available_methods.iter().any(|m| matches!(m, ignite_pay_core::didcomm::PaymentMethod::Relayer)) {
+            self.solana_client.as_ref().and_then(|c| {
+                c.relayer_url.as_ref().map(|url| ("relayer_available".to_string(), url.clone()))
+            })
+        } else {
+            None
+        };
+        let relayer_info_ref = relayer_info.as_ref().map(|(pk, url)| (pk.as_str(), url.as_str()));
+
+        match self
+            .mediator
+            .send_auth_request(&phone_did, &payment, new_session_key.as_ref(), Some(&available_methods), relayer_info_ref)
+            .await
+        {
+            Ok(_) => {}
+            Err(e) => {
+                self.pending.resolve(
+                    &payment_id,
+                    AuthResponse {
+                        authorized: false,
+                        list_action: "none".to_string(),
+                        merchant_did: String::new(),
+                        session_key_pubkey: None,
+                        session_key_secret_key: None,
+                        session_key_tx_signature: None,
+                        session_expires_at: None,
+                        spending_limit: None,
+                        scopes: None,
+                        list_label: None,
+                        list_max_amount: None,
+                        token_mint: None,
+                        payment_method: None,
+                    },
+                );
+                return X402Result::Error {
+                    payment_id: Some(payment_id.clone()),
+                    message: format!("Failed to send auth request: {}", e),
+                };
+            }
+        }
+
+        // 6. Wait for response with timeout
+        let timeout = Duration::from_secs(self.auth_timeout);
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(resp)) if resp.authorized => {
+                let session = self
+                    .get_session_from_auth_response(&resp)
+                    .or_else(|| self.get_active_session());
+                let chosen_method = resp.payment_method.as_deref();
+                if let Some(method) = chosen_method {
+                    tracing::info!("User chose payment method: {}", method);
+                }
+                match self.execute_payment_atomic(&payment, &session, spl_params.as_ref(), chosen_method).await {
+                    Ok(proof) => {
+                        let _ = self.payments.update_status(&payment_id, &PaymentStatus::Executed);
+                        if let PaymentProof::TxSignature(tx_sig) = &proof {
+                            let _ = self.payments.set_tx_signature(&payment_id, tx_sig);
+                        }
+                        let _ = self.audit.record_payment_event(&payment_id, "payment_executed", amount, &merchant_did);
+
+                        if resp.list_action != "none" && !payment.merchant_did.is_empty() {
+                            self.handle_list_action(
+                                &resp.list_action,
+                                &payment.merchant_did,
+                                amount,
+                                resp.list_label.as_deref(),
+                                resp.list_max_amount,
+                            )
+                            .await;
+                        }
+
+                        X402Result::Success {
+                            payment_id: payment_id.clone(),
+                            proof: X402Proof::from(&proof),
+                            amount,
+                            token: token.clone(),
+                            recipient: recipient.clone(),
+                            merchant_did: merchant_did.clone(),
+                            method: chosen_method.map(|s| s.to_string()),
+                        }
+                    }
+                    Err(e) => {
+                        let _ = self.payments.update_status(&payment_id, &PaymentStatus::Rejected);
+                        X402Result::Error {
+                            payment_id: Some(payment_id.clone()),
+                            message: format!("Payment authorized but execution failed: {}", e),
+                        }
+                    }
+                }
+            }
+            Ok(Ok(_)) => {
+                let _ = self.payments.update_status(&payment_id, &PaymentStatus::Rejected);
+                X402Result::Rejected {
+                    payment_id: payment_id.clone(),
+                    reason: "Rejected by user".to_string(),
+                }
+            }
+            Ok(Err(_)) => {
+                let _ = self.payments.update_status(&payment_id, &PaymentStatus::Expired);
+                X402Result::Error {
+                    payment_id: Some(payment_id.clone()),
+                    message: "Authorization failed (internal error)".to_string(),
+                }
+            }
+            Err(_) => {
+                self.pending.resolve(
+                    &payment_id,
+                    AuthResponse {
+                        authorized: false,
+                        list_action: "none".to_string(),
+                        merchant_did: String::new(),
+                        session_key_pubkey: None,
+                        session_key_secret_key: None,
+                        session_key_tx_signature: None,
+                        session_expires_at: None,
+                        spending_limit: None,
+                        scopes: None,
+                        list_label: None,
+                        list_max_amount: None,
+                        token_mint: None,
+                        payment_method: None,
+                    },
+                );
+                let _ = self.payments.update_status(&payment_id, &PaymentStatus::Expired);
+                X402Result::Error {
+                    payment_id: Some(payment_id.clone()),
+                    message: "Authorization timed out".to_string(),
+                }
+            }
+        }
+    }
+
     /// Check if the session has enough remaining balance for the given amount.
     fn check_session_balance(&self, session: &Option<SessionKeypair>, amount: u64) -> Result<(), String> {
         if let Some(sk) = session {
@@ -2475,6 +2547,37 @@ impl ServerHandler for IgnitePayMcpServer {
              an HTTP 402 response to request payment approval from the user's phone.",
         )
     }
+}
+
+// ── REST API Handler ───────────────────────────────────────────────────────
+
+/// Axum handler for `POST /api/x402`.
+async fn handle_x402_api(
+    axum::extract::State(server): axum::extract::State<Arc<IgnitePayMcpServer>>,
+    axum::Json(req): axum::Json<X402ApiRequest>,
+) -> axum::response::Response {
+    let input = X402ChallengeInput {
+        challenge_body: req.challenge_body,
+        phone_did: req.phone_did,
+        x402_merchant_did: req.x402_merchant_did,
+        x402_payment_address: req.x402_payment_address,
+        x402_merkle_context: req.x402_merkle_context,
+        vc_ipfs_cid: req.vc_ipfs_cid,
+    };
+
+    let result = server.process_x402_challenge_structured(&input).await;
+
+    let (status_code, body) = match &result {
+        X402Result::Success { .. } => (axum::http::StatusCode::OK, serde_json::to_string(&result).unwrap()),
+        X402Result::Rejected { .. } => (axum::http::StatusCode::PAYMENT_REQUIRED, serde_json::to_string(&result).unwrap()),
+        X402Result::Error { .. } => (axum::http::StatusCode::BAD_REQUEST, serde_json::to_string(&result).unwrap()),
+    };
+
+    (
+        status_code,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        body,
+    ).into_response()
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
@@ -3071,7 +3174,10 @@ async fn main() -> anyhow::Result<()> {
                 .with_cancellation_token(ct.child_token()),
         );
 
-        let router = axum::Router::new().nest_service("/mcp", http_service);
+        let router = axum::Router::new()
+            .nest_service("/mcp", http_service)
+            .route("/api/x402", axum::routing::post(handle_x402_api))
+            .with_state(Arc::new(server.clone()));
 
         let listener = match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", sse_port)).await {
             Ok(l) => l,

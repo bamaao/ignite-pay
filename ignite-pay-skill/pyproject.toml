@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Ignite Pay Skill - Rust-powered payment skill with Python bindings"
 requires-python = ">=3.8"
 license = { text = "MIT" }
+dependencies = ["httpx>=0.24"]
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
