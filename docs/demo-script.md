@@ -16,7 +16,8 @@
 >
 > 核心场景很简单：AI Agent 在执行任务时遇到付费墙，自动发起支付请求，用户在手机上滑动确认，支付在 Solana 链上完成。整个过程端到端加密，隐私安全。
 >
-> 接下来我将用 8 分钟展示三个核心流程：Agent 自动支付、手机授权支付、以及 MagicBlock 高频微支付通道。
+> 接下来我将用 8 分钟展示两个核心流程：Agent 自动支付、手机授权支付。
+> 另外还会介绍多路径支付引擎和风控体系的设计。
 
 ---
 
@@ -31,9 +32,9 @@
 > - **应用层**：AI Agent 通过 MCP 协议接入，消费者使用手机 App，商户使用商户 App
 > - **服务层**：买家 MCP 提供 23 个工具，商户 MCP 提供 16 个工具，处理支付编排
 > - **通信层**：DIDComm v2 端到端加密，中继服务器无法读取明文
-> - **链上层**：Solana 结算 + MagicBlock 高频通道
+> - **链上层**：Solana 结算 + DID 链上身份
 >
-> 支持五条支付路径：MagicBlock 通道（50 毫秒免 Gas）、Session Key 链上支付、外部钱包 Deep Link、Relayer 代付、CCTP 跨链 USDC 充值。
+> 支持四条支付路径：Session Key 链上支付、外部钱包 Deep Link、Relayer 代付、CCTP 跨链 USDC 充值。MagicBlock 高频通道和 ZK Compression DID 为未来规划。
 >
 > 好了，我们直接进入实机演示。
 
@@ -52,7 +53,7 @@ make health
 
 **解说词：**
 
-> 所有后端服务已启动。PostgreSQL、两个 DIDComm Router、DID Registry、状态通道服务全部在线。
+> 所有后端服务已启动。PostgreSQL、两个 DIDComm Router、DID Registry 全部在线。
 >
 > 买家 MCP 和电商 Demo 服务器也已就绪。
 
@@ -202,67 +203,7 @@ solana confirm <tx_signature> --url devnet
 
 ---
 
-## 第五部分：演示三 — MagicBlock 高频支付（7:00 - 8:30）
-
-> 场景：建立 MagicBlock 通道后，链下签名 Voucher，亚秒级完成支付
-
-### 画面：MCP 交互界面或终端
-
-**操作：**
-
-```
-# 查看已有的 MagicBlock 通道
-mb_get_channel <merchant_pubkey>
-```
-
-**画面显示：** 通道状态信息
-
-**解说词：**
-
-> 我们已经预先建立了与商户的 MagicBlock 支付通道。这是一种三层架构：
-> - L1 Solana 链上锁定资金
-> - MagicBlock ER 处理高速状态转移
-> - 链下窗口期支持争议仲裁
->
-> 现在用 Voucher 方式发起支付。
-
-**操作：**
-
-```
-# 签名 Voucher
-mb_sign_voucher <merchant_pubkey> <seq> <amount>
-```
-
-**画面显示：** Voucher 凭证
-
-```
-Channel: <channel_pda>
-Seq: 1
-Amount: 100000 lamports
-Signature: <base58 Ed25519 签名>
-Message hash: <base58 SHA256 hash>
-```
-
-**解说词：**
-
-> Voucher 是链下签名的。MCP 用私钥签名 `SHA256(channel_id || seq || amount)`，整个过程不到 50 毫秒，无需 Gas。
->
-> 商户可以累积多个 Voucher，然后用 Sum-Merkle Tree 批量结算，一笔链上交易处理所有微支付。
-
-**操作：**
-
-```
-# 批量结算
-mb_sign_settlement <merchant_pubkey>
-```
-
-**解说词：**
-
-> 批量结算完成。资金从全局 Vault 分配到商户账户。这是高频微支付场景的理想方案——咖啡店、自动售货机、API 调用计费。
-
----
-
-## 第六部分：亮点总结与展望（8:30 - 9:30）
+## 第五部分：亮点总结与展望（7:00 - 8:00）
 
 ### 画面：PPT 总结页
 
@@ -274,7 +215,7 @@ mb_sign_settlement <merchant_pubkey>
 >
 > **第二，端到端加密。** 所有 Agent 到手机的通信走 DIDComm v2 JWE 加密，中继服务器零知识。
 >
-> **第三，多路径支付引擎。** MagicBlock 亚秒级免 Gas、Session Key 链上直接转账、外部钱包 Deep Link、Relayer 代付、CCTP 跨链 USDC——根据场景自动选择最优路径。
+> **第三，多路径支付引擎。** Session Key 链上直接转账、外部钱包 Deep Link、Relayer 代付、CCTP 跨链 USDC——根据场景自动选择最优路径。MagicBlock 高频通道为未来规划。
 >
 > **第四，六层风控体系。** 黑名单 → IPFS CID 黑名单 → 单笔限额 → 白名单自动通过 → IPFS CID 白名单 → 默认推手机授权。
 >
@@ -284,7 +225,7 @@ mb_sign_settlement <merchant_pubkey>
 
 **解说词：**
 
-> Ignite Pay 正在构建 Agent 经济的支付基础设施。如果你们在构建 AI Agent、接入 x402 协议、或者需要高频微支付能力，欢迎交流。
+> Ignite Pay 正在构建 Agent 经济的支付基础设施。如果你们在构建 AI Agent、接入 x402 协议、或者需要去中心化微支付能力，欢迎交流。
 >
 > 谢谢大家。
 

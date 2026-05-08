@@ -29,7 +29,7 @@
 | 条件 | 验证方式 |
 |------|----------|
 | Solana Devnet RPC 可达 | `curl -s https://api.devnet.solana.com -X POST -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' -H "Content-Type: application/json"` |
-| Photon RPC（ZK Compression）可达（可选） | `curl -s "<photon_url>" -X POST -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'` |
+| Photon RPC（ZK Compression）可达（当前未使用，未来考虑） | `curl -s "<photon_url>" -X POST -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'` |
 | FCM 可用（海外推送场景） | Google Play Services 正常 |
 
 ### 1.3 密钥与钱包
@@ -40,7 +40,7 @@
 | 商户 Solana 密钥对 | `test-merchant.json` | 商户收款地址 |
 | DID Registry payer | `deploy/keys/payer.key` | DID 上链交易的付费方 |
 | Platform signing key | `deploy/keys/platform-signing.key` | 签发商户 VC |
-| Channel User/Provider/Hub keys | `deploy/keys/user.key` 等 | 状态通道密钥 |
+| Channel User/Provider/Hub keys | `deploy/keys/user.key` 等 | 状态通道密钥（当前未使用，未来考虑） |
 
 ### 1.4 配置文件检查
 
@@ -152,7 +152,7 @@ curl http://localhost:9090/products
    flutter build apk --split-per-abi
    ```
 
-### 2.7 MagicBlock 初始化（仅 MagicBlock 测试路径需要）
+### 2.7 MagicBlock 初始化（当前未使用，未来考虑）
 
 通过 MCP 工具完成一次性设置：
 
@@ -281,7 +281,7 @@ solana balance <merchant_payment_address> --url devnet
 
 ---
 
-### 测试路径三：手机授权 + MagicBlock Voucher 支付
+### 测试路径三：手机授权 + MagicBlock Voucher 支付（当前未使用，未来考虑）
 
 > 覆盖流程步骤：1 → 2 → 3 → 4 → 5 → 6 → 7（需授权）→ 8 → 9 → 10 → 11（MagicBlock）→ 12
 
@@ -389,7 +389,7 @@ Returning error: payment denied (blacklisted merchant)
 #### 前置条件
 
 - `solana.did_program_id` 已配置（非空）
-- `photon_url` 和 `address_tree` 已配置（ZK Compression 场景）
+- `photon_url` 和 `address_tree` 已配置（ZK Compression 场景，当前未使用，未来考虑）
 - 挑战中的 `merchant_did` 对应的链上账户不存在或已被删除
 
 #### 步骤
