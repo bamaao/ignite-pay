@@ -152,7 +152,7 @@ curl http://localhost:9090/products
    flutter build apk --split-per-abi
    ```
 
-### 2.7 MagicBlock 初始化（当前未使用，未来考虑）
+### 2.7 MagicBlock 初始化
 
 通过 MCP 工具完成一次性设置：
 
@@ -281,7 +281,7 @@ solana balance <merchant_payment_address> --url devnet
 
 ---
 
-### 测试路径三：手机授权 + MagicBlock Voucher 支付（当前未使用，未来考虑）
+### 测试路径三：手机授权 + MagicBlock Voucher 支付
 
 > 覆盖流程步骤：1 → 2 → 3 → 4 → 5 → 6 → 7（需授权）→ 8 → 9 → 10 → 11（MagicBlock）→ 12
 

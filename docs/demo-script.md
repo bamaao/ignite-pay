@@ -34,7 +34,7 @@
 > - **通信层**：DIDComm v2 端到端加密，中继服务器无法读取明文
 > - **链上层**：Solana 结算 + DID 链上身份
 >
-> 支持四条支付路径：Session Key 链上支付、外部钱包 Deep Link、Relayer 代付、CCTP 跨链 USDC 充值。MagicBlock 高频通道和 ZK Compression DID 为未来规划。
+> 支持五条支付路径：Session Key 链上支付、外部钱包 Deep Link、Relayer 代付、MagicBlock 链下 Voucher、CCTP 跨链 USDC 充值。ZK Compression DID 和状态通道（State Channel, UTXO 模式）为未来规划。
 >
 > 好了，我们直接进入实机演示。
 
@@ -215,11 +215,11 @@ solana confirm <tx_signature> --url devnet
 >
 > **第二，端到端加密。** 所有 Agent 到手机的通信走 DIDComm v2 JWE 加密，中继服务器零知识。
 >
-> **第三，多路径支付引擎。** Session Key 链上直接转账、外部钱包 Deep Link、Relayer 代付、CCTP 跨链 USDC——根据场景自动选择最优路径。MagicBlock 高频通道为未来规划。
+> **第三，多路径支付引擎。** Session Key 链上直接转账、外部钱包 Deep Link、Relayer 代付、MagicBlock 链下 Voucher 亚秒级支付、CCTP 跨链 USDC——五条路径根据场景自动选择最优方案。ZK Compression DID 和状态通道（State Channel, UTXO 模式）为未来规划。
 >
 > **第四，六层风控体系。** 黑名单 → IPFS CID 黑名单 → 单笔限额 → 白名单自动通过 → IPFS CID 白名单 → 默认推手机授权。
 >
-> **技术栈：** 全 Rust 后端，17 个 crate，3 个 Solana 链上程序，Flutter + Rust Bridge 移动端，39 个 MCP 工具。
+> **技术栈：** 全 Rust 后端，22 个 crate，3 个 Solana 链上程序，Flutter + Rust Bridge 移动端，39 个 MCP 工具。
 
 ### 画面：PPT 结束页
 
