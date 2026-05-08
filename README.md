@@ -1,5 +1,7 @@
 # Ignite Pay
 
+> **License:** This project is licensed under Business Source License 1.1. The source code is public and free for non-production use. Commercial production use is restricted until January 1, 2031, at which point the license will convert to Apache License 2.0.
+
 **Agent Economy 去中心化支付基础设施** — 让 AI Agent 自主完成支付，人类手机实时授权；让消费者扫码即可完成链上微支付。
 
 ---

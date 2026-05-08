@@ -1,5 +1,7 @@
 # Ignite Pay
 
+> **License:** This project is licensed under Business Source License 1.1. The source code is public and free for non-production use. Commercial production use is restricted until January 1, 2031, at which point the license will convert to Apache License 2.0.
+
 **Decentralized Payment Infrastructure for the Agent Economy** — AI Agents make payments autonomously, humans authorize in real-time on their phones; consumers scan QR codes for instant on-chain micro-payments.
 
 ---
