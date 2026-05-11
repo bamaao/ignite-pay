@@ -4,6 +4,8 @@
 
 **Decentralized Payment Infrastructure for the Agent Economy** — AI Agents make payments autonomously, humans authorize in real-time on their phones; consumers scan QR codes for instant on-chain micro-payments.
 
+> **Note: v0.1.0 Beta** — Currently in v0.1.0 Beta stage. Some high-concurrency edge cases are known to need optimization.
+
 ---
 
 ## Key Features

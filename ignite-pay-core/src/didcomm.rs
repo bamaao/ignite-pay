@@ -1220,6 +1220,7 @@ mod tests {
             "did:ignite:zMerchant",
             500_000_000,
             "Coffee",
+            None,
         );
         assert_eq!(msg.typ, "https://didcomm.org/ignite-pay/1.0/payment-auth-request");
         assert_eq!(msg.from.as_ref().unwrap(), TEST_DID);
@@ -1736,6 +1737,7 @@ mod tests {
             "did:ignite:zMerchant",
             100,
             "test",
+            None,
         );
         let jwe = pack_encrypted(&sender_agent, &msg, &sender_did, &receiver_did).unwrap();
         assert!(is_jwe(&jwe));

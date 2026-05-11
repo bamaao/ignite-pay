@@ -402,6 +402,17 @@ class _MessageTile extends StatelessWidget {
         amount: msg.amount ?? 0,
         tokenMint: msg.tokenMint ?? msg.newSessionKeyTokenMint,
         description: msg.description ?? '',
+        newSessionKeyPubkey: msg.newSessionKeyPubkey,
+        newSessionKeySecretKey: msg.newSessionKeySecretKey,
+        newSessionKeySpendingLimit: msg.newSessionKeySpendingLimit,
+        newSessionKeyDurationSecs: msg.newSessionKeyDurationSecs,
+        newSessionKeyScopes: msg.newSessionKeyScopes,
+        newSessionKeyTokenMint: msg.newSessionKeyTokenMint,
+        newSessionKeySuggestedSolFunding: msg.newSessionKeySuggestedSolFunding,
+        newSessionKeySuggestedTokenFunding: msg.newSessionKeySuggestedTokenFunding,
+        availablePaymentMethods: msg.availablePaymentMethods,
+        suggestedPerTxLimit: msg.suggestedPerTxLimit,
+        suggestedDailyTxCountLimit: msg.suggestedDailyTxCountLimit,
       );
       showX402Challenge(context, request: request);
     } else {
