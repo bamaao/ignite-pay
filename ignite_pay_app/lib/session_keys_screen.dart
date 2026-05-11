@@ -423,6 +423,36 @@ class _SessionKeysScreenState extends State<SessionKeysScreen> {
                     color: kTextPrimary,
                   ),
                 ),
+                if (key.perTxLimit > BigInt.zero) ...[
+                  const SizedBox(width: 12),
+                  Text(
+                    'Per-Tx: ',
+                    style: GoogleFonts.inter(fontSize: 11, color: kTextSecondary),
+                  ),
+                  Text(
+                    _formatLimit(key.perTxLimit),
+                    style: GoogleFonts.jetBrainsMono(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: kTextPrimary,
+                    ),
+                  ),
+                ],
+                if (key.dailyTxCountLimit > 0) ...[
+                  const SizedBox(width: 12),
+                  Text(
+                    'Daily Tx: ',
+                    style: GoogleFonts.inter(fontSize: 11, color: kTextSecondary),
+                  ),
+                  Text(
+                    '${key.dailyTxCountLimit}/day',
+                    style: GoogleFonts.jetBrainsMono(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: kTextPrimary,
+                    ),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 12),

@@ -3,7 +3,7 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-ignite_pay_did_program = "D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D"
+ignite_pay_did_program = "B9dKkAcbrMxNZvBEmBHcaSD9fXsG6skChTxFRGsJpyUa"
 
 [registry]
 url = "https://api.apr.dev"

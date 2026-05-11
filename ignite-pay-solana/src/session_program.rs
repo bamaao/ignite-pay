@@ -17,7 +17,7 @@ use solana_sdk::system_program;
 /// Program ID for the session key program.
 /// Replace with actual deployed program ID.
 pub fn session_program_id() -> Pubkey {
-    Pubkey::try_from("6EFvVTh7rEBpHH2JGryjKQmBLRtbYtSEerGNfkHqKiei").unwrap()
+    Pubkey::try_from("Avu35SYnvcSpWeYQhC7w2XT6DCurhnYB5PdajTqet9o").unwrap()
 }
 
 /// Derive the session PDA from owner + ephemeral signer.
@@ -50,6 +50,8 @@ pub fn build_register_session_ix(
     spending_limit: u64,
     scopes: Vec<String>,
     token_mint: &Pubkey,
+    per_tx_limit: u64,
+    daily_tx_count_limit: u32,
 ) -> Instruction {
     let sighash = anchor_sighash("register_session_key");
 
@@ -70,6 +72,10 @@ pub fn build_register_session_ix(
     }
     // token_mint: 32 bytes (Pubkey)
     data.extend_from_slice(token_mint.as_ref());
+    // per_tx_limit: u64 (8 bytes, little-endian)
+    data.extend_from_slice(&per_tx_limit.to_le_bytes());
+    // daily_tx_count_limit: u32 (4 bytes, little-endian)
+    data.extend_from_slice(&daily_tx_count_limit.to_le_bytes());
 
     Instruction {
         program_id: *program_id,
@@ -230,6 +236,8 @@ mod tests {
             1_000_000,
             vec!["sol:transfer".to_string()],
             &Pubkey::default(), // SOL session
+            0,   // per_tx_limit: no limit
+            0,   // daily_tx_count_limit: no limit
         );
 
         assert_eq!(ix.program_id, program_id);

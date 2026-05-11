@@ -38,6 +38,8 @@ class AuthRequest {
   final int? newSessionKeySuggestedSolFunding;
   final int? newSessionKeySuggestedTokenFunding;
   final List<String>? availablePaymentMethods;
+  final int? suggestedPerTxLimit;
+  final int? suggestedDailyTxCountLimit;
 
   AuthRequest({
     required this.paymentId,
@@ -53,6 +55,8 @@ class AuthRequest {
     this.newSessionKeySuggestedSolFunding,
     this.newSessionKeySuggestedTokenFunding,
     this.availablePaymentMethods,
+    this.suggestedPerTxLimit,
+    this.suggestedDailyTxCountLimit,
   });
 }
 
@@ -220,6 +224,8 @@ class DecryptedMsg {
   final int? newSessionKeySuggestedSolFunding;
   final int? newSessionKeySuggestedTokenFunding;
   final List<String>? availablePaymentMethods;
+  final int? suggestedPerTxLimit;
+  final int? suggestedDailyTxCountLimit;
   // F3/F7: Session fund request fields
   final int? sessionFundRequiredAmount;
   final int? sessionFundCurrentBalance;
@@ -256,6 +262,8 @@ class DecryptedMsg {
     this.newSessionKeySuggestedSolFunding,
     this.newSessionKeySuggestedTokenFunding,
     this.availablePaymentMethods,
+    this.suggestedPerTxLimit,
+    this.suggestedDailyTxCountLimit,
     this.sessionFundRequiredAmount,
     this.sessionFundCurrentBalance,
     this.sessionFundSpendingLimitRemaining,
@@ -634,6 +642,8 @@ class DidcommService extends ChangeNotifier {
         newSessionKeySuggestedSolFunding: decrypted.newSessionKeySuggestedSolFunding?.toInt(),
         newSessionKeySuggestedTokenFunding: decrypted.newSessionKeySuggestedTokenFunding?.toInt(),
         availablePaymentMethods: decrypted.availablePaymentMethods,
+        suggestedPerTxLimit: decrypted.suggestedPerTxLimit?.toInt(),
+        suggestedDailyTxCountLimit: decrypted.suggestedDailyTxCountLimit?.toInt(),
         sessionFundRequiredAmount: decrypted.sessionFundRequiredAmount?.toInt(),
         sessionFundCurrentBalance: decrypted.sessionFundCurrentBalance?.toInt(),
         sessionFundSpendingLimitRemaining: decrypted.sessionFundSpendingLimitRemaining?.toInt(),
@@ -717,6 +727,8 @@ class DidcommService extends ChangeNotifier {
 
       // Check if it's a payment-auth-request
       if (msg.msgType.contains('payment-auth-request')) {
+        final body = jsonDecode(msg.rawBody) as Map<String, dynamic>;
+        final newSk = body['new_session_key'] as Map<String, dynamic>?;
         final authReq = AuthRequest(
           paymentId: msg.paymentId ?? '',
           merchantDid: msg.merchantDid ?? '',
@@ -731,6 +743,8 @@ class DidcommService extends ChangeNotifier {
           newSessionKeySuggestedSolFunding: msg.newSessionKeySuggestedSolFunding,
           newSessionKeySuggestedTokenFunding: msg.newSessionKeySuggestedTokenFunding,
           availablePaymentMethods: msg.availablePaymentMethods,
+          suggestedPerTxLimit: msg.suggestedPerTxLimit ?? newSk?['suggested_per_tx_limit'] as int?,
+          suggestedDailyTxCountLimit: msg.suggestedDailyTxCountLimit ?? newSk?['suggested_daily_tx_count_limit'] as int?,
         );
         _pendingAuth = authReq;
         _authRequestController.add(authReq);

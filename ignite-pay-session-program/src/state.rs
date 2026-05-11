@@ -32,6 +32,14 @@ pub struct SessionKeyAccount {
     pub current_spent: u64,
     /// Permission scopes (e.g., ["sol:transfer", "spl:transfer"]).
     pub scopes: Vec<String>,
+    /// Per-transaction spending limit in lamports. 0 = no limit.
+    pub per_tx_limit: u64,
+    /// Daily transaction count limit. 0 = no limit.
+    pub daily_tx_count_limit: u32,
+    /// Number of transactions executed in the current daily window.
+    pub current_daily_count: u32,
+    /// Unix timestamp when the current daily window started.
+    pub last_daily_reset: i64,
     /// Whether this session has been revoked.
     pub revoked: bool,
     /// PDA bump seed.
@@ -53,6 +61,10 @@ impl SessionKeyAccount {
         8 + // spending_limit
         8 + // current_spent
         4 + (max_scopes * (4 + 32)) + // scopes: Vec<String> with max 10 entries of 32 chars
+        8 + // per_tx_limit
+        4 + // daily_tx_count_limit
+        4 + // current_daily_count
+        8 + // last_daily_reset
         1 + // revoked
         1 // bump
     }

@@ -19,7 +19,7 @@ use anchor_spl::token;
 use crate::state::SessionKeyAccount;
 use crate::error::SessionError;
 
-declare_id!("6EFvVTh7rEBpHH2JGryjKQmBLRtbYtSEerGNfkHqKiei");
+declare_id!("Avu35SYnvcSpWeYQhC7w2XT6DCurhnYB5PdajTqet9o");
 
 #[program]
 pub mod ignite_pay_session_program {
@@ -35,6 +35,8 @@ pub mod ignite_pay_session_program {
         spending_limit: u64,
         scopes: Vec<String>,
         token_mint: Pubkey,
+        per_tx_limit: u64,
+        daily_tx_count_limit: u32,
     )]
     pub struct RegisterSessionKey<'info> {
         #[account(
@@ -61,6 +63,8 @@ pub mod ignite_pay_session_program {
         spending_limit: u64,
         scopes: Vec<String>,
         token_mint: Pubkey,
+        per_tx_limit: u64,
+        daily_tx_count_limit: u32,
     ) -> Result<()> {
         let now = ctx.accounts.clock.unix_timestamp;
         require!(expires_at > now, SessionError::SessionExpired);
@@ -76,6 +80,10 @@ pub mod ignite_pay_session_program {
         session.expires_at = expires_at;
         session.spending_limit = spending_limit;
         session.current_spent = 0;
+        session.per_tx_limit = per_tx_limit;
+        session.daily_tx_count_limit = daily_tx_count_limit;
+        session.current_daily_count = 0;
+        session.last_daily_reset = now;
         session.scopes = scopes;
         session.revoked = false;
         session.bump = ctx.bumps.session;
@@ -111,6 +119,26 @@ pub mod ignite_pay_session_program {
         require!(now < session.expires_at, SessionError::SessionExpired);
         require!(!session.revoked, SessionError::SessionRevoked);
         require!(session.scopes.contains(&scope), SessionError::ScopeNotPermitted);
+
+        // Per-tx limit check
+        if session.per_tx_limit > 0 {
+            require!(amount <= session.per_tx_limit, SessionError::PerTxLimitExceeded);
+        }
+
+        // Daily window reset
+        if now - session.last_daily_reset >= 86400 {
+            session.current_daily_count = 0;
+            session.last_daily_reset = now;
+        }
+
+        // Daily tx count check
+        if session.daily_tx_count_limit > 0 {
+            require!(
+                session.current_daily_count + 1 <= session.daily_tx_count_limit,
+                SessionError::DailyTxCountExceeded
+            );
+        }
+
         let new_spent = session.current_spent.checked_add(amount)
             .ok_or(SessionError::ArithmeticOverflow)?;
         require!(new_spent <= session.spending_limit, SessionError::SpendingLimitExceeded);
@@ -129,6 +157,7 @@ pub mod ignite_pay_session_program {
             ],
         )?;
         session.current_spent = new_spent;
+        session.current_daily_count = session.current_daily_count.saturating_add(1);
         Ok(())
     }
 
@@ -189,6 +218,25 @@ pub mod ignite_pay_session_program {
             SessionError::SolSessionOnly
         );
 
+        // Per-tx limit check
+        if session.per_tx_limit > 0 {
+            require!(amount <= session.per_tx_limit, SessionError::PerTxLimitExceeded);
+        }
+
+        // Daily window reset
+        if now - session.last_daily_reset >= 86400 {
+            session.current_daily_count = 0;
+            session.last_daily_reset = now;
+        }
+
+        // Daily tx count check
+        if session.daily_tx_count_limit > 0 {
+            require!(
+                session.current_daily_count + 1 <= session.daily_tx_count_limit,
+                SessionError::DailyTxCountExceeded
+            );
+        }
+
         // Validate spending limit
         let new_spent = session
             .current_spent
@@ -211,6 +259,7 @@ pub mod ignite_pay_session_program {
 
         // Update spent amount
         session.current_spent = new_spent;
+        session.current_daily_count = session.current_daily_count.saturating_add(1);
 
         Ok(())
     }

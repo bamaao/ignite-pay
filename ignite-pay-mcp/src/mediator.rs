@@ -1248,6 +1248,11 @@ async fn handle_incoming_message(
             let payment_method = body.get("payment_method")
                 .and_then(|v| v.as_str())
                 .map(String::from);
+            let per_tx_limit = body.get("per_tx_limit")
+                .and_then(|v| v.as_u64());
+            let daily_tx_count_limit = body.get("daily_tx_count_limit")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
             let response = AuthResponse {
                 authorized,
                 list_action,
@@ -1262,6 +1267,8 @@ async fn handle_incoming_message(
                 list_max_amount,
                 token_mint,
                 payment_method,
+                per_tx_limit,
+                daily_tx_count_limit,
             };
             if pending.resolve(payment_id, response) {
                 tracing::info!("Resolved pending auth: {} -> {}", payment_id, authorized);
@@ -1501,6 +1508,11 @@ async fn process_inner_message(
             let payment_method = msg.body.get("payment_method")
                 .and_then(|v| v.as_str())
                 .map(String::from);
+            let per_tx_limit = msg.body.get("per_tx_limit")
+                .and_then(|v| v.as_u64());
+            let daily_tx_count_limit = msg.body.get("daily_tx_count_limit")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
             let response = AuthResponse {
                 authorized,
                 list_action,
@@ -1515,6 +1527,8 @@ async fn process_inner_message(
                 list_max_amount,
                 token_mint,
                 payment_method,
+                per_tx_limit,
+                daily_tx_count_limit,
             };
             if pending.resolve(payment_id, response) {
                 tracing::info!(

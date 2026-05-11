@@ -323,6 +323,17 @@ pub fn decrypt_message(storage_path: String, jwe: String) -> Result<DecryptedMes
                     .filter_map(|v| v.as_str().map(String::from))
                     .collect()
             }),
+        suggested_per_tx_limit: msg
+            .body
+            .get("new_session_key")
+            .and_then(|sk| sk.get("suggested_per_tx_limit"))
+            .and_then(|v| v.as_u64()),
+        suggested_daily_tx_count_limit: msg
+            .body
+            .get("new_session_key")
+            .and_then(|sk| sk.get("suggested_daily_tx_count_limit"))
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32),
         // F3/F7: session-fund-request fields
         session_fund_required_amount: msg.body.get("required_amount").and_then(|v| v.as_u64()),
         session_fund_current_balance: msg.body.get("current_balance").and_then(|v| v.as_u64()),
@@ -468,6 +479,8 @@ pub fn create_session_key_for_payment(
         scopes,
         spending_limit,
         duration_secs,
+        0, // per_tx_limit: 0 = no limit
+        0, // daily_tx_count_limit: 0 = no limit
     )?;
 
     Ok(session_info)

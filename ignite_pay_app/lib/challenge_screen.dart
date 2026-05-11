@@ -141,6 +141,19 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
             _perTxLimit = (policy.perTxLimit.toInt() / 1000000000.0).toStringAsFixed(2);
             _durationHours = (policy.durationSecs / 3600).round().toString();
           });
+        } else if (mounted) {
+          // Use MCP-suggested values as defaults if no saved policy
+          final req = widget.request;
+          if (req != null) {
+            setState(() {
+              if (req.suggestedPerTxLimit != null && req.suggestedPerTxLimit! > 0) {
+                _perTxLimit = (req.suggestedPerTxLimit! / 1000000000.0).toStringAsFixed(2);
+              }
+              if (req.suggestedDailyTxCountLimit != null && req.suggestedDailyTxCountLimit! > 0) {
+                _dailyTxCountLimit = req.suggestedDailyTxCountLimit.toString();
+              }
+            });
+          }
         }
       }
     } catch (_) {

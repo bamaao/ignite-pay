@@ -33,6 +33,8 @@ fn test_register_session_key() {
             vec!["sol:transfer".into()],
             1_000_000,
             3600,
+            0,
+            0,
         )
         .unwrap();
 
@@ -69,6 +71,8 @@ fn test_execute_payment_via_session() {
             vec!["sol:transfer".into()],
             10_000,
             3600,
+            0,
+            0,
         )
         .unwrap();
 
@@ -100,6 +104,8 @@ fn test_spending_limit_enforced() {
             vec!["sol:transfer".into()],
             1_000,
             3600,
+            0,
+            0,
         )
         .unwrap();
 
@@ -129,6 +135,8 @@ fn test_expired_session_rejected() {
             &solana_sdk::system_program::id(),
             vec!["sol:transfer".into()],
             10_000,
+            0,
+            0,
             0,
         )
         .unwrap();

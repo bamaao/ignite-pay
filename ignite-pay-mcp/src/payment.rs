@@ -150,6 +150,9 @@ pub struct AuthResponse {
     pub token_mint: Option<String>,
     // V1.3: payment method chosen by user (session_key, magicblock, relayer)
     pub payment_method: Option<String>,
+    // Per-tx and daily limits from phone auth response
+    pub per_tx_limit: Option<u64>,
+    pub daily_tx_count_limit: Option<u32>,
 }
 
 /// In-memory store for pending authorization requests with oneshot channels.
@@ -337,6 +340,8 @@ mod tests {
             list_max_amount: None,
             token_mint: None,
             payment_method: None,
+            per_tx_limit: None,
+            daily_tx_count_limit: None,
         }));
         let resp = rx.blocking_recv().unwrap();
         assert!(resp.authorized);
@@ -361,6 +366,8 @@ mod tests {
             list_max_amount: None,
             token_mint: None,
             payment_method: None,
+            per_tx_limit: None,
+            daily_tx_count_limit: None,
         }));
         // Second resolve returns false (already consumed)
         assert!(!store.resolve("pay-1", AuthResponse {
@@ -377,6 +384,8 @@ mod tests {
             list_max_amount: None,
             token_mint: None,
             payment_method: None,
+            per_tx_limit: None,
+            daily_tx_count_limit: None,
         }));
     }
 
@@ -397,6 +406,8 @@ mod tests {
             list_max_amount: None,
             token_mint: None,
             payment_method: None,
+            per_tx_limit: None,
+            daily_tx_count_limit: None,
         }));
     }
 
@@ -422,6 +433,8 @@ mod tests {
             list_max_amount: None,
             token_mint: None,
             payment_method: None,
+            per_tx_limit: None,
+            daily_tx_count_limit: None,
         }));
         assert!(store.resolve("pay-1", AuthResponse {
             authorized: false,
@@ -437,6 +450,8 @@ mod tests {
             list_max_amount: None,
             token_mint: None,
             payment_method: None,
+            per_tx_limit: None,
+            daily_tx_count_limit: None,
         }));
 
         assert!(!rx1.blocking_recv().unwrap().authorized);
@@ -535,6 +550,8 @@ mod tests {
             list_max_amount: Some(50_000),
             token_mint: None,
             payment_method: None,
+            per_tx_limit: None,
+            daily_tx_count_limit: None,
         }));
 
         let resp = rx.blocking_recv().unwrap();

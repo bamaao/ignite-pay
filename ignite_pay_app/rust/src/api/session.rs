@@ -48,6 +48,10 @@ pub struct SessionKeyEntry {
     pub session_pda: Option<String>,
     /// Status: "active", "expired", or "unknown".
     pub status: String,
+    /// Per-transaction spending limit in lamports (0 = no limit).
+    pub per_tx_limit: u64,
+    /// Daily transaction count limit (0 = no limit).
+    pub daily_tx_count_limit: u32,
 }
 
 /// An unsigned register transaction ready for external wallet signing.
@@ -71,6 +75,8 @@ pub fn create_session_key(
     scopes: Vec<String>,
     spending_limit: u64,
     duration_secs: i64,
+    per_tx_limit: u64,
+    daily_tx_count_limit: u32,
 ) -> Result<SessionKeyInfo> {
     let db = sled::open(&storage_path)?;
 
@@ -84,11 +90,14 @@ pub fn create_session_key(
     let expires_at = now + duration_secs;
 
     // Store the keypair bytes in sled
+    // Layout: [64-byte keypair | 8-byte expires_at LE | 8-byte spending_limit LE | 8-byte per_tx_limit LE | 4-byte daily_tx_count_limit LE]
     let key = format!("session:{}", bs58::encode(&pubkey_bytes).into_string());
     let mut value = Vec::new();
     value.extend_from_slice(&keypair.to_bytes());
     value.extend_from_slice(&expires_at.to_le_bytes());
     value.extend_from_slice(&spending_limit.to_le_bytes());
+    value.extend_from_slice(&per_tx_limit.to_le_bytes());
+    value.extend_from_slice(&daily_tx_count_limit.to_le_bytes());
     db.insert(key.as_bytes(), value)?;
 
     Ok(SessionKeyInfo {
@@ -152,7 +161,7 @@ pub async fn create_and_register_session_key(
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid target program ID"))?;
 
-    let ix_data = build_register_ix_data(&program_id_bytes, expires_at, spending_limit, &scopes, &[0u8; 32]);
+    let ix_data = build_register_ix_data(&program_id_bytes, expires_at, spending_limit, &scopes, &[0u8; 32], 0, 0);
 
     // 5. Build raw transaction via JSON-RPC
     let client = reqwest::Client::new();
@@ -176,6 +185,7 @@ pub async fn create_and_register_session_key(
     let tx_signature = send_transaction(&client, &rpc_url, &tx_bytes).await?;
 
     // Store locally in sled
+    // Layout: [64-byte keypair | 8-byte expires_at | 8-byte spending_limit | 8-byte per_tx_limit | 4-byte daily_tx_count_limit]
     let key = format!(
         "session:{}",
         bs58::encode(&ephemeral_pubkey_bytes).into_string()
@@ -184,6 +194,8 @@ pub async fn create_and_register_session_key(
     value.extend_from_slice(&ephemeral_secret_bytes);
     value.extend_from_slice(&expires_at.to_le_bytes());
     value.extend_from_slice(&spending_limit.to_le_bytes());
+    value.extend_from_slice(&0u64.to_le_bytes()); // per_tx_limit
+    value.extend_from_slice(&0u32.to_le_bytes()); // daily_tx_count_limit
     db.insert(key.as_bytes(), value)?;
 
     Ok(SessionKeyInfo {
@@ -271,7 +283,7 @@ pub async fn register_external_session_key(
             .map_err(|_| anyhow::anyhow!("Invalid token mint"))?,
         None => [0u8; 32],
     };
-    let ix_data = build_register_ix_data(&program_id_bytes, expires_at, spending_limit, &scopes, &token_mint_bytes);
+    let ix_data = build_register_ix_data(&program_id_bytes, expires_at, spending_limit, &scopes, &token_mint_bytes, 0, 0);
 
     // 5. Build raw transaction via JSON-RPC
     let client = reqwest::Client::new();
@@ -292,6 +304,7 @@ pub async fn register_external_session_key(
     let tx_signature = send_transaction(&client, &rpc_url, &tx_bytes).await?;
 
     // Store locally in sled
+    // Layout: [64-byte keypair | 8-byte expires_at | 8-byte spending_limit | 8-byte per_tx_limit | 4-byte daily_tx_count_limit]
     let key = format!(
         "session:{}",
         bs58::encode(&ephemeral_pubkey_bytes).into_string()
@@ -300,6 +313,8 @@ pub async fn register_external_session_key(
     value.extend_from_slice(&ephemeral_secret_bytes);
     value.extend_from_slice(&expires_at.to_le_bytes());
     value.extend_from_slice(&spending_limit.to_le_bytes());
+    value.extend_from_slice(&0u64.to_le_bytes()); // per_tx_limit
+    value.extend_from_slice(&0u32.to_le_bytes()); // daily_tx_count_limit
     db.insert(key.as_bytes(), value)?;
 
     Ok(SessionKeyInfo {
@@ -583,13 +598,15 @@ fn get_session_program_id_bytes() -> [u8; 32] {
 }
 
 /// Build the Anchor instruction data for register_session_key.
-/// sighash(8) + target_program(32) + expires_at(8) + spending_limit(8) + scopes(borsh Vec<String>) + token_mint(32)
+/// sighash(8) + target_program(32) + expires_at(8) + spending_limit(8) + scopes(borsh Vec<String>) + token_mint(32) + per_tx_limit(8) + daily_tx_count_limit(4)
 fn build_register_ix_data(
     target_program: &[u8; 32],
     expires_at: i64,
     spending_limit: u64,
     scopes: &[String],
     token_mint: &[u8; 32],
+    per_tx_limit: u64,
+    daily_tx_count_limit: u32,
 ) -> Vec<u8> {
     use sha2::{Digest, Sha256};
 
@@ -617,6 +634,11 @@ fn build_register_ix_data(
 
     // token_mint: 32 bytes (Pubkey::default() for SOL sessions)
     data.extend_from_slice(token_mint);
+
+    // per_tx_limit: 8 bytes LE (0 = no limit)
+    data.extend_from_slice(&per_tx_limit.to_le_bytes());
+    // daily_tx_count_limit: 4 bytes LE (0 = no limit)
+    data.extend_from_slice(&daily_tx_count_limit.to_le_bytes());
 
     data
 }
@@ -819,12 +841,22 @@ pub fn list_session_keys(storage_path: String) -> Result<Vec<SessionKeyEntry>> {
         let (key, value) = item?;
         let pubkey_b58 = String::from_utf8_lossy(&key[prefix.len()..]).to_string();
 
-        // Value layout: [64-byte keypair | 8-byte expires_at LE | 8-byte spending_limit LE]
+        // Value layout: [64-byte keypair | 8-byte expires_at LE | 8-byte spending_limit LE | 8-byte per_tx_limit LE | 4-byte daily_tx_count_limit LE]
         if value.len() < 80 {
             continue;
         }
         let expires_at = i64::from_le_bytes(value[64..72].try_into().unwrap());
         let spending_limit = u64::from_le_bytes(value[72..80].try_into().unwrap());
+        let per_tx_limit = if value.len() >= 88 {
+            u64::from_le_bytes(value[80..88].try_into().unwrap())
+        } else {
+            0
+        };
+        let daily_tx_count_limit = if value.len() >= 92 {
+            u32::from_le_bytes(value[88..92].try_into().unwrap())
+        } else {
+            0
+        };
 
         let status = if expires_at < now {
             "expired".to_string()
@@ -839,6 +871,8 @@ pub fn list_session_keys(storage_path: String) -> Result<Vec<SessionKeyEntry>> {
             tx_signature: None, // not persisted locally yet
             session_pda: None,
             status,
+            per_tx_limit,
+            daily_tx_count_limit,
         });
     }
 
@@ -896,6 +930,8 @@ pub async fn build_unsigned_register_tx(
         spending_limit,
         &["sol:transfer".to_string()],
         &[0u8; 32], // SOL session: default Pubkey
+        0, // per_tx_limit: 0 = no limit
+        0, // daily_tx_count_limit: 0 = no limit
     );
 
     // Fetch blockhash
@@ -972,12 +1008,14 @@ pub async fn build_unsigned_register_tx(
     let ephemeral_pubkey_b58 = bs58::encode(&ephemeral_pubkey_bytes).into_string();
     let session_pda_b58 = bs58::encode(&session_pda).into_string();
 
-    // Store pending keypair: "pending:{pubkey}" -> [64-byte keypair | 8-byte expires_at LE | 8-byte spending_limit LE]
+    // Store pending keypair: "pending:{pubkey}" -> [64-byte keypair | 8-byte expires_at | 8-byte spending_limit | 8-byte per_tx_limit | 4-byte daily_tx_count_limit]
     let pending_key = format!("pending:{}", ephemeral_pubkey_b58);
     let mut pending_value = Vec::new();
     pending_value.extend_from_slice(&ephemeral_secret_bytes);
     pending_value.extend_from_slice(&expires_at.to_le_bytes());
     pending_value.extend_from_slice(&spending_limit.to_le_bytes());
+    pending_value.extend_from_slice(&0u64.to_le_bytes()); // per_tx_limit
+    pending_value.extend_from_slice(&0u32.to_le_bytes()); // daily_tx_count_limit
     db.insert(pending_key.as_bytes(), pending_value)?;
 
     Ok(UnsignedRegisterTx {
@@ -1004,12 +1042,15 @@ pub async fn complete_register_with_signature(
         .ok_or_else(|| anyhow::anyhow!("No pending session key for {}", ephemeral_pubkey))?;
 
     // Parse pending value
-    if pending_value.len() < 80 {
+    // Layout: [64-byte keypair | 8-byte expires_at | 8-byte spending_limit | 8-byte per_tx_limit | 4-byte daily_tx_count_limit]
+    if pending_value.len() < 92 {
         return Err(anyhow::anyhow!("Invalid pending session key data"));
     }
     let ephemeral_secret_bytes: [u8; 64] = pending_value[..64].try_into().unwrap();
     let expires_at = i64::from_le_bytes(pending_value[64..72].try_into().unwrap());
     let spending_limit = u64::from_le_bytes(pending_value[72..80].try_into().unwrap());
+    let _per_tx_limit = u64::from_le_bytes(pending_value[80..88].try_into().unwrap());
+    let _daily_tx_count_limit = u32::from_le_bytes(pending_value[88..92].try_into().unwrap());
 
     // Decode owner signature
     let owner_sig_bytes = bs58::decode(&owner_signature_b58).into_vec()?;
@@ -1042,6 +1083,8 @@ pub async fn complete_register_with_signature(
         spending_limit,
         &["sol:transfer".to_string()],
         &[0u8; 32], // SOL session: default Pubkey
+        0, // per_tx_limit: 0 = no limit
+        0, // daily_tx_count_limit: 0 = no limit
     );
 
     // Fetch fresh blockhash
@@ -1117,6 +1160,8 @@ pub async fn complete_register_with_signature(
     perm_value.extend_from_slice(&ephemeral_secret_bytes);
     perm_value.extend_from_slice(&expires_at.to_le_bytes());
     perm_value.extend_from_slice(&spending_limit.to_le_bytes());
+    perm_value.extend_from_slice(&_per_tx_limit.to_le_bytes());
+    perm_value.extend_from_slice(&_daily_tx_count_limit.to_le_bytes());
     db.insert(perm_key.as_bytes(), perm_value)?;
 
     Ok(SessionKeyInfo {

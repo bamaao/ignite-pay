@@ -70,6 +70,12 @@ pub struct CreateSessionInput {
     /// SPL Token mint address (base58). If provided, creates an SPL session with "spl:transfer" scope.
     #[serde(default)]
     pub token_mint: Option<String>,
+    /// Per-transaction spending limit in lamports. 0 = no limit.
+    #[serde(default)]
+    pub per_tx_limit: Option<u64>,
+    /// Daily transaction count limit. 0 = no limit.
+    #[serde(default)]
+    pub daily_tx_count_limit: Option<u32>,
 }
 
 fn default_duration() -> i64 {

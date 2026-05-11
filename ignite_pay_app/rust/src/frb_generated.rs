@@ -1061,6 +1061,8 @@ fn wire__crate__api__session__create_session_key_impl(
             let api_scopes = <Vec<String>>::sse_decode(&mut deserializer);
             let api_spending_limit = <u64>::sse_decode(&mut deserializer);
             let api_duration_secs = <i64>::sse_decode(&mut deserializer);
+            let api_per_tx_limit = <u64>::sse_decode(&mut deserializer);
+            let api_daily_tx_count_limit = <u32>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
@@ -1072,6 +1074,8 @@ fn wire__crate__api__session__create_session_key_impl(
                             api_scopes,
                             api_spending_limit,
                             api_duration_secs,
+                            api_per_tx_limit,
+                            api_daily_tx_count_limit,
                         )?;
                         Ok(output_ok)
                     })(),
@@ -3289,6 +3293,8 @@ impl SseDecode for crate::api::notification::DecryptedMessage {
         let mut var_newSessionKeySuggestedSolFunding = <Option<u64>>::sse_decode(deserializer);
         let mut var_newSessionKeySuggestedTokenFunding = <Option<u64>>::sse_decode(deserializer);
         let mut var_availablePaymentMethods = <Option<Vec<String>>>::sse_decode(deserializer);
+        let mut var_suggestedPerTxLimit = <Option<u64>>::sse_decode(deserializer);
+        let mut var_suggestedDailyTxCountLimit = <Option<u32>>::sse_decode(deserializer);
         let mut var_sessionFundRequiredAmount = <Option<u64>>::sse_decode(deserializer);
         let mut var_sessionFundCurrentBalance = <Option<u64>>::sse_decode(deserializer);
         let mut var_sessionFundSpendingLimitRemaining = <Option<u64>>::sse_decode(deserializer);
@@ -3323,6 +3329,8 @@ impl SseDecode for crate::api::notification::DecryptedMessage {
             new_session_key_suggested_sol_funding: var_newSessionKeySuggestedSolFunding,
             new_session_key_suggested_token_funding: var_newSessionKeySuggestedTokenFunding,
             available_payment_methods: var_availablePaymentMethods,
+            suggested_per_tx_limit: var_suggestedPerTxLimit,
+            suggested_daily_tx_count_limit: var_suggestedDailyTxCountLimit,
             session_fund_required_amount: var_sessionFundRequiredAmount,
             session_fund_current_balance: var_sessionFundCurrentBalance,
             session_fund_spending_limit_remaining: var_sessionFundSpendingLimitRemaining,
@@ -3698,6 +3706,8 @@ impl SseDecode for crate::api::session::SessionKeyEntry {
         let mut var_txSignature = <Option<String>>::sse_decode(deserializer);
         let mut var_sessionPda = <Option<String>>::sse_decode(deserializer);
         let mut var_status = <String>::sse_decode(deserializer);
+        let mut var_perTxLimit = <u64>::sse_decode(deserializer);
+        let mut var_dailyTxCountLimit = <u32>::sse_decode(deserializer);
         return crate::api::session::SessionKeyEntry {
             ephemeral_pubkey: var_ephemeralPubkey,
             expires_at: var_expiresAt,
@@ -3705,6 +3715,8 @@ impl SseDecode for crate::api::session::SessionKeyEntry {
             tx_signature: var_txSignature,
             session_pda: var_sessionPda,
             status: var_status,
+            per_tx_limit: var_perTxLimit,
+            daily_tx_count_limit: var_dailyTxCountLimit,
         };
     }
 }
@@ -4653,6 +4665,8 @@ impl SseEncode for crate::api::notification::DecryptedMessage {
         <Option<u64>>::sse_encode(self.new_session_key_suggested_sol_funding, serializer);
         <Option<u64>>::sse_encode(self.new_session_key_suggested_token_funding, serializer);
         <Option<Vec<String>>>::sse_encode(self.available_payment_methods, serializer);
+        <Option<u64>>::sse_encode(self.suggested_per_tx_limit, serializer);
+        <Option<u32>>::sse_encode(self.suggested_daily_tx_count_limit, serializer);
         <Option<u64>>::sse_encode(self.session_fund_required_amount, serializer);
         <Option<u64>>::sse_encode(self.session_fund_current_balance, serializer);
         <Option<u64>>::sse_encode(self.session_fund_spending_limit_remaining, serializer);
@@ -4930,6 +4944,8 @@ impl SseEncode for crate::api::session::SessionKeyEntry {
         <Option<String>>::sse_encode(self.tx_signature, serializer);
         <Option<String>>::sse_encode(self.session_pda, serializer);
         <String>::sse_encode(self.status, serializer);
+        <u64>::sse_encode(self.per_tx_limit, serializer);
+        <u32>::sse_encode(self.daily_tx_count_limit, serializer);
     }
 }
 

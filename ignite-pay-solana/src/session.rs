@@ -49,6 +49,8 @@ impl SessionManager {
         scopes: Vec<String>,
         spending_limit: u64,
         duration_secs: i64,
+        per_tx_limit: u64,
+        daily_tx_count_limit: u32,
     ) -> Result<SessionKeypair> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -65,6 +67,8 @@ impl SessionManager {
             expires_at: now + duration_secs,
             spending_limit,
             current_spent: 0,
+            per_tx_limit,
+            daily_tx_count_limit,
             scopes,
         };
 
@@ -215,6 +219,8 @@ mod tests {
                 vec!["sol:transfer".into()],
                 1_000_000,
                 3600,
+                0,
+                0,
             )
             .unwrap();
 
@@ -243,6 +249,8 @@ mod tests {
                 vec![],
                 1000,
                 3600,
+                0,
+                0,
             )
             .unwrap();
 
@@ -264,6 +272,8 @@ mod tests {
                 vec![],
                 10_000,
                 3600,
+                0,
+                0,
             )
             .unwrap();
 
@@ -286,6 +296,8 @@ mod tests {
                 vec![],
                 1000,
                 3600,
+                0,
+                0,
             )
             .unwrap();
 
@@ -302,7 +314,7 @@ mod tests {
         let owner = Pubkey::new_unique();
         // Create session that expires immediately (0 seconds duration)
         let session = mgr
-            .create_session(&owner, &solana_sdk::system_program::id(), vec![], 1000, 0)
+            .create_session(&owner, &solana_sdk::system_program::id(), vec![], 1000, 0, 0, 0)
             .unwrap();
 
         // Should be expired already
@@ -326,6 +338,8 @@ mod tests {
                     vec![],
                     5000,
                     3600,
+                    0,
+                    0,
                 )
                 .unwrap();
             session.keypair.pubkey()

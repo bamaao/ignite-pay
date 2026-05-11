@@ -48,6 +48,10 @@ pub struct SessionTokenData {
     pub spending_limit: u64,
     /// Cumulative amount spent so far
     pub current_spent: u64,
+    /// Per-transaction spending limit in lamports. 0 = no limit.
+    pub per_tx_limit: u64,
+    /// Daily transaction count limit. 0 = no limit.
+    pub daily_tx_count_limit: u32,
     /// Permission scopes (e.g., ["sol:transfer", "spl:transfer"])
     pub scopes: Vec<String>,
 }

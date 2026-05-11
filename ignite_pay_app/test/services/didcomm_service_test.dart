@@ -141,6 +141,8 @@ class _MockRustLibApi extends RustLibApi {
     required List<String> scopes,
     required BigInt spendingLimit,
     required PlatformInt64 durationSecs,
+    required BigInt perTxLimit,
+    required int dailyTxCountLimit,
   }) async =>
       SessionKeyInfo(
         ephemeralPubkey: 'mockPubkey',

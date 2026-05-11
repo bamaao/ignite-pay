@@ -246,6 +246,8 @@ abstract class RustLibApi extends BaseApi {
     required List<String> scopes,
     required BigInt spendingLimit,
     required PlatformInt64 durationSecs,
+    required BigInt perTxLimit,
+    required int dailyTxCountLimit,
   });
 
   Future<SessionKeyInfo> crateApiSimpleCreateSessionKeyForPayment({
@@ -1587,6 +1589,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required List<String> scopes,
     required BigInt spendingLimit,
     required PlatformInt64 durationSecs,
+    required BigInt perTxLimit,
+    required int dailyTxCountLimit,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -1598,6 +1602,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_list_String(scopes, serializer);
           sse_encode_u_64(spendingLimit, serializer);
           sse_encode_i_64(durationSecs, serializer);
+          sse_encode_u_64(perTxLimit, serializer);
+          sse_encode_u_32(dailyTxCountLimit, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -1617,6 +1623,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           scopes,
           spendingLimit,
           durationSecs,
+          perTxLimit,
+          dailyTxCountLimit,
         ],
         apiImpl: this,
       ),
@@ -1633,6 +1641,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "scopes",
           "spendingLimit",
           "durationSecs",
+          "perTxLimit",
+          "dailyTxCountLimit",
         ],
       );
 
@@ -4161,8 +4171,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SessionKeyEntry dco_decode_session_key_entry(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
     return SessionKeyEntry(
       ephemeralPubkey: dco_decode_String(arr[0]),
       expiresAt: dco_decode_i_64(arr[1]),
@@ -4170,6 +4180,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       txSignature: dco_decode_opt_String(arr[3]),
       sessionPda: dco_decode_opt_String(arr[4]),
       status: dco_decode_String(arr[5]),
+      perTxLimit: dco_decode_u_64(arr[6]),
+      dailyTxCountLimit: dco_decode_u_32(arr[7]),
     );
   }
 
@@ -4414,6 +4426,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_newSessionKeySuggestedTokenFunding =
         sse_decode_opt_box_autoadd_u_64(deserializer);
     var var_availablePaymentMethods = sse_decode_opt_list_String(deserializer);
+    var var_suggestedPerTxLimit = sse_decode_opt_box_autoadd_u_64(
+      deserializer,
+    );
+    var var_suggestedDailyTxCountLimit = sse_decode_opt_box_autoadd_u_32(
+      deserializer,
+    );
     var var_sessionFundRequiredAmount = sse_decode_opt_box_autoadd_u_64(
       deserializer,
     );
@@ -4461,6 +4479,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       newSessionKeySuggestedTokenFunding:
           var_newSessionKeySuggestedTokenFunding,
       availablePaymentMethods: var_availablePaymentMethods,
+      suggestedPerTxLimit: var_suggestedPerTxLimit,
+      suggestedDailyTxCountLimit: var_suggestedDailyTxCountLimit,
       sessionFundRequiredAmount: var_sessionFundRequiredAmount,
       sessionFundCurrentBalance: var_sessionFundCurrentBalance,
       sessionFundSpendingLimitRemaining: var_sessionFundSpendingLimitRemaining,
@@ -4819,6 +4839,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_txSignature = sse_decode_opt_String(deserializer);
     var var_sessionPda = sse_decode_opt_String(deserializer);
     var var_status = sse_decode_String(deserializer);
+    var var_perTxLimit = sse_decode_u_64(deserializer);
+    var var_dailyTxCountLimit = sse_decode_u_32(deserializer);
     return SessionKeyEntry(
       ephemeralPubkey: var_ephemeralPubkey,
       expiresAt: var_expiresAt,
@@ -4826,6 +4848,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       txSignature: var_txSignature,
       sessionPda: var_sessionPda,
       status: var_status,
+      perTxLimit: var_perTxLimit,
+      dailyTxCountLimit: var_dailyTxCountLimit,
     );
   }
 

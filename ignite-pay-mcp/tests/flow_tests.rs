@@ -66,6 +66,8 @@ fn test_session_lifecycle() {
             vec!["sol:transfer".into(), "spl:transfer".into()],
             5_000_000,
             3600,
+            0,
+            0,
         )
         .unwrap();
 
@@ -92,6 +94,8 @@ fn test_spl_spending_limit() {
             vec!["spl:transfer".into()],
             100_000_000,
             3600,
+            0,
+            0,
         )
         .unwrap();
 

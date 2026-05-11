@@ -12,8 +12,37 @@ ignite-pay-merchant-mcp/data/
 **/data/channel_*/
 **/data/merchant-router/
 
+# Local runtime data & logs
+data/
+logs/
+
 # Solana local validator ledger
 test-ledger/
+
+# Local dev scripts
+build-local.sh
+deploy-local.sh
+install-protoc.sh
+install-py-deps.sh
+restart-mcp-auto.sh
+restart-mcp.sh
+start-devnet.sh
+start-ecom.sh
+start-local.sh
+switch-devnet.sh
+test-create-session.sh
+test-x402-payment.sh
+
+# Downloaded tools
+protoc-*.zip
+
+# E-commerce demo local config & test files
+ignite-pay-ecom-demo/config.json.bak
+ignite-pay-ecom-demo/config.local.json
+ignite-pay-ecom-demo/test_*.py
+
+# E2E test scripts at repo root
+test_*.py
 
 # Python
 __pycache__/

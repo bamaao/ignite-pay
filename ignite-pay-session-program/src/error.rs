@@ -42,4 +42,10 @@ pub enum SessionError {
 
     #[msg("Session is for SOL, not SPL tokens")]
     SolSessionOnly,
+
+    #[msg("Per-transaction spending limit exceeded")]
+    PerTxLimitExceeded,
+
+    #[msg("Daily transaction count limit exceeded")]
+    DailyTxCountExceeded,
 }

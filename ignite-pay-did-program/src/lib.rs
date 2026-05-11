@@ -18,7 +18,7 @@ use anchor_lang::prelude::*;
 use error::DidError;
 use state::{PlatformConfig, RevokedVc};
 
-declare_id!("D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D");
+declare_id!("B9dKkAcbrMxNZvBEmBHcaSD9fXsG6skChTxFRGsJpyUa");
 
 /// Verify an Ed25519 signature against a message and public key.
 /// Uses ed25519_dalek v1.x for on-chain verification.

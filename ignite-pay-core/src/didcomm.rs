@@ -293,6 +293,10 @@ pub struct NewSessionKeyRequest {
     /// Sent via DIDComm JWE (authcrypt) so it's end-to-end encrypted.
     /// The phone needs this to sign the on-chain register_session_key instruction.
     pub ephemeral_secret_key: Option<String>,
+    /// Suggested per-transaction spending limit in lamports. None = no limit.
+    pub suggested_per_tx_limit: Option<u64>,
+    /// Suggested daily transaction count limit. None = no limit.
+    pub suggested_daily_tx_count_limit: Option<u32>,
 }
 
 pub fn build_authorization_request(
@@ -390,6 +394,12 @@ fn build_authorization_request_inner(
         });
         if let Some(ref secret_key) = sk.ephemeral_secret_key {
             sk_obj["ephemeral_secret_key"] = json!(secret_key);
+        }
+        if let Some(per_tx) = sk.suggested_per_tx_limit {
+            sk_obj["suggested_per_tx_limit"] = json!(per_tx);
+        }
+        if let Some(daily_limit) = sk.suggested_daily_tx_count_limit {
+            sk_obj["suggested_daily_tx_count_limit"] = json!(daily_limit);
         }
         body.as_object_mut().unwrap().insert(
             "new_session_key".to_string(),
@@ -1228,6 +1238,8 @@ mod tests {
             suggested_sol_funding: 5000,
             suggested_token_funding: None,
             ephemeral_secret_key: None,
+            suggested_per_tx_limit: None,
+            suggested_daily_tx_count_limit: None,
         };
         let methods = vec![PaymentMethod::SessionKey];
         let msg = build_authorization_request_with_methods(

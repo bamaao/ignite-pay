@@ -529,6 +529,8 @@ impl IgnitePayClient {
         spending_limit: u64,
         scopes: Vec<String>,
         token_mint: &Pubkey,
+        per_tx_limit: u64,
+        daily_tx_count_limit: u32,
     ) -> Result<(Pubkey, String)> {
         let program_id = session_prog::session_program_id();
         let (session_pda, _) = derive_session_pda(
@@ -547,6 +549,8 @@ impl IgnitePayClient {
             spending_limit,
             scopes,
             token_mint,
+            per_tx_limit,
+            daily_tx_count_limit,
         );
 
         let recent_blockhash = self

@@ -80,6 +80,13 @@ class DecryptedMessage {
 
   /// Available payment methods (e.g., ["session_key", "magicblock"]).
   final List<String>? availablePaymentMethods;
+
+  /// Suggested per-transaction spending limit (lamports).
+  final BigInt? suggestedPerTxLimit;
+
+  /// Suggested daily transaction count limit.
+  final int? suggestedDailyTxCountLimit;
+
   final BigInt? sessionFundRequiredAmount;
   final BigInt? sessionFundCurrentBalance;
   final BigInt? sessionFundSpendingLimitRemaining;
@@ -114,6 +121,8 @@ class DecryptedMessage {
     this.newSessionKeySuggestedSolFunding,
     this.newSessionKeySuggestedTokenFunding,
     this.availablePaymentMethods,
+    this.suggestedPerTxLimit,
+    this.suggestedDailyTxCountLimit,
     this.sessionFundRequiredAmount,
     this.sessionFundCurrentBalance,
     this.sessionFundSpendingLimitRemaining,
@@ -150,6 +159,8 @@ class DecryptedMessage {
       newSessionKeySuggestedSolFunding.hashCode ^
       newSessionKeySuggestedTokenFunding.hashCode ^
       availablePaymentMethods.hashCode ^
+      suggestedPerTxLimit.hashCode ^
+      suggestedDailyTxCountLimit.hashCode ^
       sessionFundRequiredAmount.hashCode ^
       sessionFundCurrentBalance.hashCode ^
       sessionFundSpendingLimitRemaining.hashCode ^
@@ -190,6 +201,8 @@ class DecryptedMessage {
           newSessionKeySuggestedTokenFunding ==
               other.newSessionKeySuggestedTokenFunding &&
           availablePaymentMethods == other.availablePaymentMethods &&
+          suggestedPerTxLimit == other.suggestedPerTxLimit &&
+          suggestedDailyTxCountLimit == other.suggestedDailyTxCountLimit &&
           sessionFundRequiredAmount == other.sessionFundRequiredAmount &&
           sessionFundCurrentBalance == other.sessionFundCurrentBalance &&
           sessionFundSpendingLimitRemaining ==

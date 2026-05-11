@@ -202,6 +202,13 @@ fn load_config() -> Result<Config, anyhow::Error> {
 
 /// Resolve a token identifier to an on-chain mint Pubkey.
 fn resolve_mint(token: &str, network: &str) -> Option<Pubkey> {
+    // If token is already a valid mint address (base58, 32-44 chars), parse it directly
+    if let Ok(pubkey) = Pubkey::try_from(token) {
+        // Verify it's not the wrapped SOL mint being treated as SPL
+        if pubkey != solana_sdk::system_program::id() {
+            return Some(pubkey);
+        }
+    }
     match (token.to_uppercase().as_str(), network) {
         // USDC
         ("USDC", "solana:mainnet") => Some(
@@ -579,6 +586,8 @@ impl IgnitePayMcpServer {
             scopes.clone(),
             spending_limit,
             duration_secs,
+            0, // per_tx_limit
+            0, // daily_tx_count_limit
         ).ok()?;
 
         Some(ignite_pay_core::didcomm::NewSessionKeyRequest {
@@ -590,6 +599,8 @@ impl IgnitePayMcpServer {
             suggested_sol_funding: payment.amount + 10_000_000, // payment + 0.01 SOL for gas
             suggested_token_funding: if token_mint.is_some() { Some(payment.amount) } else { None },
             ephemeral_secret_key: Some(bs58::encode(session.keypair.to_bytes()).into_string()),
+            suggested_per_tx_limit: None,
+            suggested_daily_tx_count_limit: None,
         })
     }
 
@@ -835,6 +846,8 @@ impl IgnitePayMcpServer {
             scopes.clone(),
             input.spending_limit,
             input.duration_secs,
+            input.per_tx_limit.unwrap_or(0),
+            input.daily_tx_count_limit.unwrap_or(0),
         ) {
             Ok(mut session) => {
                 // Set token_mint on the session data
@@ -869,6 +882,8 @@ impl IgnitePayMcpServer {
                                                     expires_at: 0,
                                                     spending_limit: 0,
                                                     current_spent: 0,
+                                                    per_tx_limit: 0,
+                                                    daily_tx_count_limit: 0,
                                                     scopes: vec![],
                                                 },
                                             };
@@ -880,6 +895,8 @@ impl IgnitePayMcpServer {
                                                 input.spending_limit,
                                                 scopes.clone(),
                                                 &token_mint,
+                                                input.per_tx_limit.unwrap_or(0),
+                                                input.daily_tx_count_limit.unwrap_or(0),
                                             ).await {
                                                 Ok((pda, sig)) => {
                                                     result.push_str(&format!(
@@ -1719,6 +1736,13 @@ impl IgnitePayMcpServer {
             .map(|s| s.to_string())
             .unwrap_or(recipient);
 
+        // Normalize native SOL asset identifiers to "SOL"
+        let token = if token == "So11111111111111111111111111111111111111112" {
+            "SOL".to_string()
+        } else {
+            token
+        };
+
         let spl_params = if token != "SOL" && token != "sol" && token != "unknown" {
             match resolve_mint(&token, &network) {
                 Some(mint) => Some(SplPaymentParams {
@@ -1976,6 +2000,8 @@ impl IgnitePayMcpServer {
                         list_max_amount: None,
                         token_mint: None,
                         payment_method: None,
+                        per_tx_limit: None,
+                        daily_tx_count_limit: None,
                     },
                 );
                 return X402Result::Error {
@@ -2065,6 +2091,8 @@ impl IgnitePayMcpServer {
                         list_max_amount: None,
                         token_mint: None,
                         payment_method: None,
+                        per_tx_limit: None,
+                        daily_tx_count_limit: None,
                     },
                 );
                 let _ = self.payments.update_status(&payment_id, &PaymentStatus::Expired);
@@ -2458,6 +2486,8 @@ impl IgnitePayMcpServer {
             expires_at,
             spending_limit,
             current_spent: 0,
+            per_tx_limit: resp.per_tx_limit.unwrap_or(0),
+            daily_tx_count_limit: resp.daily_tx_count_limit.unwrap_or(0),
             scopes,
         };
 
@@ -2550,6 +2580,88 @@ impl ServerHandler for IgnitePayMcpServer {
 }
 
 // ── REST API Handler ───────────────────────────────────────────────────────
+
+/// Axum handler for `GET /api/pairing-qr`.
+/// Returns the pairing QR code. Accepts `?format=svg|ascii|url` (default: svg).
+async fn handle_pairing_qr(
+    axum::extract::State(server): axum::extract::State<Arc<IgnitePayMcpServer>>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> axum::response::Response {
+    let format = params.get("format").map(|s| s.as_str()).unwrap_or("svg");
+
+    match format {
+        "url" => {
+            let url = server.mediator.generate_invitation();
+            (
+                axum::http::StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "text/plain")],
+                url,
+            ).into_response()
+        }
+        "ascii" => {
+            let qr = match server.mediator.generate_invitation_qr() {
+                Ok(q) => q,
+                Err(e) => {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        [(axum::http::header::CONTENT_TYPE, "text/plain")],
+                        format!("QR generation failed: {}", e),
+                    ).into_response();
+                }
+            };
+            let url = server.mediator.generate_invitation();
+            let body = format!("MCP DID: {}\n\nInvitation URL:\n{}\n\nQR Code:\n{}", server.mediator.our_did(), url, qr);
+            (
+                axum::http::StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                body,
+            ).into_response()
+        }
+        _ => {
+            // Default: SVG
+            let tmp = "/tmp/ignite-local/pairing-qr.svg";
+            match server.mediator.generate_invitation_qr_svg(tmp) {
+                Ok(url) => {
+                    match std::fs::read_to_string(tmp) {
+                        Ok(svg) => (
+                            axum::http::StatusCode::OK,
+                            [(axum::http::header::CONTENT_TYPE, "image/svg+xml")],
+                            svg,
+                        ).into_response(),
+                        Err(e) => (
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                            [(axum::http::header::CONTENT_TYPE, "text/plain")],
+                            format!("Failed to read SVG: {}", e),
+                        ).into_response(),
+                    }
+                }
+                Err(e) => (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    [(axum::http::header::CONTENT_TYPE, "text/plain")],
+                    format!("QR generation failed: {}", e),
+                ).into_response(),
+            }
+        }
+    }
+}
+
+/// Axum handler for `GET /api/identity`.
+/// Returns MCP identity info as JSON.
+async fn handle_identity(
+    axum::extract::State(server): axum::extract::State<Arc<IgnitePayMcpServer>>,
+) -> axum::response::Response {
+    let paired = server.mediator.paired_phone_did().await;
+    let body = serde_json::json!({
+        "did": server.mediator.our_did(),
+        "paired_phone": paired,
+        "invitation_url": server.mediator.generate_invitation(),
+    });
+    (
+        axum::http::StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        serde_json::to_string(&body).unwrap(),
+    ).into_response()
+}
 
 /// Axum handler for `POST /api/x402`.
 async fn handle_x402_api(
@@ -3177,6 +3289,8 @@ async fn main() -> anyhow::Result<()> {
         let router = axum::Router::new()
             .nest_service("/mcp", http_service)
             .route("/api/x402", axum::routing::post(handle_x402_api))
+            .route("/api/pairing-qr", axum::routing::get(handle_pairing_qr))
+            .route("/api/identity", axum::routing::get(handle_identity))
             .with_state(Arc::new(server.clone()));
 
         let listener = match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", sse_port)).await {

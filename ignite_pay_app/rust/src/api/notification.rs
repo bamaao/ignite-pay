@@ -56,6 +56,10 @@ pub struct DecryptedMessage {
     pub new_session_key_suggested_token_funding: Option<u64>,
     /// Available payment methods (e.g., ["session_key", "magicblock"]).
     pub available_payment_methods: Option<Vec<String>>,
+    /// Suggested per-transaction spending limit (lamports).
+    pub suggested_per_tx_limit: Option<u64>,
+    /// Suggested daily transaction count limit.
+    pub suggested_daily_tx_count_limit: Option<u32>,
     // F3/F7: Session fund request fields
     pub session_fund_required_amount: Option<u64>,
     pub session_fund_current_balance: Option<u64>,

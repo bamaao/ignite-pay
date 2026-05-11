@@ -30,6 +30,8 @@ Future<SessionKeyInfo> createSessionKey({
   required List<String> scopes,
   required BigInt spendingLimit,
   required PlatformInt64 durationSecs,
+  required BigInt perTxLimit,
+  required int dailyTxCountLimit,
 }) => RustLib.instance.api.crateApiSessionCreateSessionKey(
   storagePath: storagePath,
   ownerPubkey: ownerPubkey,
@@ -37,6 +39,8 @@ Future<SessionKeyInfo> createSessionKey({
   scopes: scopes,
   spendingLimit: spendingLimit,
   durationSecs: durationSecs,
+  perTxLimit: perTxLimit,
+  dailyTxCountLimit: dailyTxCountLimit,
 );
 
 /// Create a session key and register it on-chain via JSON-RPC.
@@ -396,6 +400,12 @@ class SessionKeyEntry {
   /// Status: "active", "expired", or "unknown".
   final String status;
 
+  /// Per-transaction spending limit in lamports (0 = no limit).
+  final BigInt perTxLimit;
+
+  /// Daily transaction count limit (0 = no limit).
+  final int dailyTxCountLimit;
+
   const SessionKeyEntry({
     required this.ephemeralPubkey,
     required this.expiresAt,
@@ -403,6 +413,8 @@ class SessionKeyEntry {
     this.txSignature,
     this.sessionPda,
     required this.status,
+    required this.perTxLimit,
+    required this.dailyTxCountLimit,
   });
 
   @override
@@ -412,7 +424,9 @@ class SessionKeyEntry {
       spendingLimit.hashCode ^
       txSignature.hashCode ^
       sessionPda.hashCode ^
-      status.hashCode;
+      status.hashCode ^
+      perTxLimit.hashCode ^
+      dailyTxCountLimit.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -424,7 +438,9 @@ class SessionKeyEntry {
           spendingLimit == other.spendingLimit &&
           txSignature == other.txSignature &&
           sessionPda == other.sessionPda &&
-          status == other.status;
+          status == other.status &&
+          perTxLimit == other.perTxLimit &&
+          dailyTxCountLimit == other.dailyTxCountLimit;
 }
 
 /// Session key information exposed to Flutter.
