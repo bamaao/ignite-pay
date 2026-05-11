@@ -817,7 +817,7 @@ class _DashboardHeader extends StatelessWidget {
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    'Mainnet',
+                    'Devnet',
                     style: GoogleFonts.inter(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
@@ -878,28 +878,12 @@ class _QuickNavRow extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: _QuickNavCard(
-                icon: LucideIcons.arrowDownToLine,
-                label: 'Deposit',
-                subtitle: 'Cross-chain USDC',
-                gradientColors: [const Color(0xFF4CAF50), const Color(0xFF2E7D32)],
-                onTap: () => openCctpTransfer(context),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _QuickNavCard(
-                icon: LucideIcons.layers,
-                label: 'Channels',
-                subtitle: 'State channels',
-                gradientColors: [const Color(0xFFFF6E40), const Color(0xFFE65100)],
-                onTap: () => openChannelTopology(context),
-              ),
-            ),
-          ],
+        _QuickNavCard(
+          icon: LucideIcons.arrowDownToLine,
+          label: 'Deposit',
+          subtitle: 'Cross-chain USDC',
+          gradientColors: [const Color(0xFF4CAF50), const Color(0xFF2E7D32)],
+          onTap: () => openCctpTransfer(context),
         ),
       ],
     );
