@@ -8,6 +8,7 @@ import 'api/channel.dart';
 import 'api/channel_store.dart';
 import 'api/mb_voucher.dart';
 import 'api/notification.dart';
+import 'api/phantom_crypto.dart';
 import 'api/session.dart';
 import 'api/simple.dart';
 import 'dart:async';
@@ -140,6 +141,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PaymentResult dco_decode_payment_result(dynamic raw);
+
+  @protected
+  PhantomKeypair dco_decode_phantom_keypair(dynamic raw);
 
   @protected
   SessionKeyEntry dco_decode_session_key_entry(dynamic raw);
@@ -303,6 +307,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PaymentResult sse_decode_payment_result(SseDeserializer deserializer);
+
+  @protected
+  PhantomKeypair sse_decode_phantom_keypair(SseDeserializer deserializer);
 
   @protected
   SessionKeyEntry sse_decode_session_key_entry(SseDeserializer deserializer);
@@ -512,6 +519,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_payment_result(PaymentResult self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_phantom_keypair(
+    PhantomKeypair self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_session_key_entry(

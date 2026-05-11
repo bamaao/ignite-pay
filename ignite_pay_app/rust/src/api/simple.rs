@@ -102,6 +102,24 @@ pub async fn disconnect_mediator() -> Result<()> {
     Ok(())
 }
 
+/// Register an MCP peer in the DIDComm agent using its DID document.
+/// Must be called after pairing so the agent can decrypt authcrypt JWE
+/// messages from this peer.
+pub async fn register_mcp_peer(storage_path: String, mcp_did: String, mcp_did_doc_json: String) -> Result<()> {
+    let mgr = IdentityManager::new(&storage_path)?;
+    let agent = mgr.agent();
+
+    if let Ok(mcp_doc) = serde_json::from_str::<serde_json::Value>(&mcp_did_doc_json) {
+        if let Some(resolved) = ignite_pay_core::parse_did_document(&mcp_did, &mcp_doc) {
+            let mut agent_guard = agent.lock().await;
+            agent_guard.add_peer(resolved);
+            tracing::info!("Registered MCP peer: {}", mcp_did);
+            return Ok(());
+        }
+    }
+    Err(anyhow::anyhow!("Failed to parse MCP DID document"))
+}
+
 /// Send a payment authorization response back to the MCP server.
 pub async fn send_auth_response(
     _storage_path: String,
@@ -149,6 +167,9 @@ pub async fn send_auth_response(
         response.scopes = Some(info.scopes.clone());
         response.token_mint = token_mint;
     }
+
+    // Ensure MCP peer is registered in the WS client agent for encryption
+    client.add_peer(&mcp_did).await;
 
     client.send_auth_response(&response, &mcp_did).await?;
     Ok(())
@@ -205,16 +226,58 @@ pub async fn pull_messages(
 }
 
 /// Decrypt a JWE message using the local identity.
-pub fn decrypt_message(storage_path: String, jwe: String) -> Result<DecryptedMessage> {
+/// Optionally accepts MCP peer DID + DID doc so authcrypt JWE from MCP can be verified.
+pub fn decrypt_message(
+    storage_path: String,
+    jwe: String,
+    mcp_did: Option<String>,
+    mcp_did_doc_json: Option<String>,
+) -> Result<DecryptedMessage> {
     let mgr = IdentityManager::new(&storage_path)?;
     let agent = mgr.agent();
 
-    // We need to use blocking code here since the bridge function is sync.
-    // Use tokio's block_in_place to avoid blocking the runtime.
-    let agent_guard =
-        tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(agent.lock()));
+    // Create a new Tokio runtime since this is called from a Dart thread
+    // without an existing Tokio reactor.
+    let rt = tokio::runtime::Runtime::new()?;
+    let mut agent_guard = rt.block_on(agent.lock());
 
-    let msg = ignite_pay_core::didcomm::unpack_message(&agent_guard, &jwe, None)
+    // Register MCP peer if provided so authcrypt JWE can be decrypted.
+    tracing::info!(
+        "decrypt_message: mcp_did={:?}, has_doc={}",
+        mcp_did,
+        mcp_did_doc_json.is_some()
+    );
+    // Save sender DID for unpack_message before the if-let consumes it.
+    let sender_did = mcp_did.clone();
+    if let (Some(did), Some(doc_json)) = (mcp_did, mcp_did_doc_json) {
+        match serde_json::from_str::<serde_json::Value>(&doc_json) {
+            Ok(doc) => {
+                match ignite_pay_core::parse_did_document(&did, &doc) {
+                    Some(resolved) => {
+                        tracing::info!(
+                            "decrypt_message: add_peer did={}, kid={}",
+                            did,
+                            resolved.key_agreement_kid
+                        );
+                        agent_guard.add_peer(resolved);
+                    }
+                    None => {
+                        tracing::error!(
+                            "decrypt_message: parse_did_document returned None for did={}",
+                            did
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("decrypt_message: failed to parse DID doc JSON: {}", e);
+            }
+        }
+    } else {
+        tracing::warn!("decrypt_message: no MCP peer info provided");
+    }
+
+    let msg = ignite_pay_core::didcomm::unpack_message(&agent_guard, &jwe, sender_did.as_deref())
         .map_err(|e| anyhow::anyhow!("Decryption failed: {}", e))?;
     drop(agent_guard);
 
@@ -234,6 +297,16 @@ pub fn decrypt_message(storage_path: String, jwe: String) -> Result<DecryptedMes
             .and_then(|v| v.as_str())
             .map(String::from),
         amount: msg.body.get("amount").and_then(|v| v.as_u64()),
+        token_mint: msg.body.get("token_mint")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .or_else(|| msg.body.get("sk_token_mint").and_then(|v| v.as_str()).map(String::from))
+            .or_else(|| {
+                msg.body.get("new_session_key")
+                    .and_then(|sk| sk.get("token_mint"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            }),
         description: msg
             .body
             .get("description")
@@ -265,55 +338,32 @@ pub fn decrypt_message(storage_path: String, jwe: String) -> Result<DecryptedMes
             .get("list_label")
             .and_then(|v| v.as_str())
             .map(String::from),
-        // F2: extract new_session_key fields from nested object
-        new_session_key_pubkey: msg
-            .body
-            .get("new_session_key")
-            .and_then(|sk| sk.get("session_key_pubkey"))
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        new_session_key_secret_key: msg
-            .body
-            .get("new_session_key")
-            .and_then(|sk| sk.get("ephemeral_secret_key"))
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        new_session_key_spending_limit: msg
-            .body
-            .get("new_session_key")
-            .and_then(|sk| sk.get("spending_limit"))
-            .and_then(|v| v.as_u64()),
-        new_session_key_duration_secs: msg
-            .body
-            .get("new_session_key")
-            .and_then(|sk| sk.get("duration_secs"))
-            .and_then(|v| v.as_i64()),
-        new_session_key_scopes: msg
-            .body
-            .get("new_session_key")
-            .and_then(|sk| sk.get("scopes"))
+        // F2: extract session key fields — try top-level first, then nested
+        new_session_key_pubkey: msg.body.get("session_key_pubkey")
+            .and_then(|v| v.as_str()).map(String::from)
+            .or_else(|| msg.body.get("new_session_key").and_then(|sk| sk.get("session_key_pubkey")).and_then(|v| v.as_str()).map(String::from)),
+        new_session_key_secret_key: msg.body.get("ephemeral_secret_key")
+            .and_then(|v| v.as_str()).map(String::from)
+            .or_else(|| msg.body.get("new_session_key").and_then(|sk| sk.get("ephemeral_secret_key")).and_then(|v| v.as_str()).map(String::from)),
+        new_session_key_spending_limit: msg.body.get("spending_limit")
+            .and_then(|v| v.as_u64())
+            .or_else(|| msg.body.get("new_session_key").and_then(|sk| sk.get("spending_limit")).and_then(|v| v.as_u64())),
+        new_session_key_duration_secs: msg.body.get("duration_secs")
+            .and_then(|v| v.as_i64())
+            .or_else(|| msg.body.get("new_session_key").and_then(|sk| sk.get("duration_secs")).and_then(|v| v.as_i64())),
+        new_session_key_scopes: msg.body.get("scopes")
             .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            }),
-        new_session_key_token_mint: msg
-            .body
-            .get("new_session_key")
-            .and_then(|sk| sk.get("token_mint"))
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        new_session_key_suggested_sol_funding: msg
-            .body
-            .get("new_session_key")
-            .and_then(|sk| sk.get("suggested_sol_funding"))
-            .and_then(|v| v.as_u64()),
-        new_session_key_suggested_token_funding: msg
-            .body
-            .get("new_session_key")
-            .and_then(|sk| sk.get("suggested_token_funding"))
-            .and_then(|v| v.as_u64()),
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .or_else(|| msg.body.get("new_session_key").and_then(|sk| sk.get("scopes")).and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())),
+        new_session_key_token_mint: msg.body.get("sk_token_mint")
+            .and_then(|v| v.as_str()).map(String::from)
+            .or_else(|| msg.body.get("new_session_key").and_then(|sk| sk.get("token_mint")).and_then(|v| v.as_str()).map(String::from)),
+        new_session_key_suggested_sol_funding: msg.body.get("suggested_sol_funding")
+            .and_then(|v| v.as_u64())
+            .or_else(|| msg.body.get("new_session_key").and_then(|sk| sk.get("suggested_sol_funding")).and_then(|v| v.as_u64())),
+        new_session_key_suggested_token_funding: msg.body.get("suggested_token_funding")
+            .and_then(|v| v.as_u64())
+            .or_else(|| msg.body.get("new_session_key").and_then(|sk| sk.get("suggested_token_funding")).and_then(|v| v.as_u64())),
         available_payment_methods: msg
             .body
             .get("available_payment_methods")
@@ -323,16 +373,12 @@ pub fn decrypt_message(storage_path: String, jwe: String) -> Result<DecryptedMes
                     .filter_map(|v| v.as_str().map(String::from))
                     .collect()
             }),
-        suggested_per_tx_limit: msg
-            .body
-            .get("new_session_key")
-            .and_then(|sk| sk.get("suggested_per_tx_limit"))
-            .and_then(|v| v.as_u64()),
-        suggested_daily_tx_count_limit: msg
-            .body
-            .get("new_session_key")
-            .and_then(|sk| sk.get("suggested_daily_tx_count_limit"))
+        suggested_per_tx_limit: msg.body.get("suggested_per_tx_limit")
             .and_then(|v| v.as_u64())
+            .or_else(|| msg.body.get("new_session_key").and_then(|sk| sk.get("suggested_per_tx_limit")).and_then(|v| v.as_u64())),
+        suggested_daily_tx_count_limit: msg.body.get("suggested_daily_tx_count_limit")
+            .and_then(|v| v.as_u64())
+            .or_else(|| msg.body.get("new_session_key").and_then(|sk| sk.get("suggested_daily_tx_count_limit")).and_then(|v| v.as_u64()))
             .map(|v| v as u32),
         // F3/F7: session-fund-request fields
         session_fund_required_amount: msg.body.get("required_amount").and_then(|v| v.as_u64()),

@@ -14,7 +14,9 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:ignite_pay_app/services/app_log_service.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:ignite_pay_app/services/phantom_wallet_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
 import 'package:ignite_pay_app/services/wallet_deep_link_service.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
@@ -175,7 +177,117 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   Future<void> _onAuthorize() async {
     final svc = SessionKeyService();
 
+    // F2: If MCP provided a new session key, always go through Phantom flow
+    final mcpSessionKey = widget.request?.newSessionKeyPubkey;
+    AppLogService().info('Auth', 'onAuthorize: newSessionKeyPubkey=$mcpSessionKey, tokenMint=${widget.request?.tokenMint}, hasRequest=${widget.request != null}');
+    if (mcpSessionKey != null && mcpSessionKey.isNotEmpty) {
+      setState(() {
+        _isAuthorizing = true;
+        _authResult = 'Connecting to Phantom wallet...';
+      });
+      try {
+        final req = widget.request!;
+        await svc.initialize();
+
+        final dir = await getApplicationSupportDirectory();
+
+        // 1. Connect to Phantom wallet
+        final phantom = PhantomWalletService();
+        await phantom.loadSession();
+        if (!phantom.isConnected) {
+          final connected = await phantom.connect();
+          if (!connected) throw 'Failed to connect to Phantom wallet';
+        }
+
+        // Determine target program from scopes
+        final isSpl = (req.newSessionKeyScopes ?? []).any((s) => s.contains('spl'));
+        final targetProgram = isSpl
+            ? 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+            : '11111111111111111111111111111111';
+
+        // 2. Build register tx with Phantom as owner, ephemeral pre-signed
+        setState(() => _authResult = 'Building register transaction...');
+        final unsignedRegister = await session.buildRegisterTxForPhantom(
+          storagePath: dir.path,
+          rpcUrl: svc.rpcUrl,
+          ownerPubkeyB58: phantom.walletPublicKey!,
+          ephemeralPubkeyB58: req.newSessionKeyPubkey!,
+          ephemeralSecretKeyB58: req.newSessionKeySecretKey!,
+          targetProgram: targetProgram,
+          scopes: req.newSessionKeyScopes ?? ['sol:transfer', 'spl:transfer'],
+          spendingLimit: BigInt.from(req.newSessionKeySpendingLimit ?? 0),
+          durationSecs: req.newSessionKeyDurationSecs ?? 3600,
+          perTxLimit: BigInt.from((_parseSol(_perTxLimit) * 1000000000).round()),
+          dailyTxCountLimit: int.tryParse(_dailyTxCountLimit) ?? 50,
+          tokenMint: req.newSessionKeyTokenMint,
+        );
+
+        // 3. Phantom signTransaction (signs but does not broadcast)
+        setState(() => _authResult = 'Open Phantom to sign register tx...');
+        final signedRegisterTx = await phantom.signTransaction(unsignedRegister.unsignedTxB58);
+        if (signedRegisterTx == null) throw 'Phantom rejected register transaction';
+
+        // 4. Broadcast the fully signed register tx
+        setState(() => _authResult = 'Broadcasting register transaction...');
+        final registerSig = await session.broadcastSignedTx(
+          rpcUrl: svc.rpcUrl,
+          signedTxB58: signedRegisterTx,
+        );
+
+        // 5. Finalize: move pending key to permanent storage
+        final info = await session.finalizePhantomSessionKey(
+          storagePath: dir.path,
+          ephemeralPubkey: unsignedRegister.ephemeralPubkey,
+          txSignature: registerSig,
+          sessionPda: unsignedRegister.sessionPda,
+        );
+
+        // 6. Transfer SOL to session key via Phantom signAndSendTransaction
+        final solFunding = req.newSessionKeySuggestedSolFunding ?? 0;
+        if (solFunding > 0) {
+          setState(() => _authResult = 'Open Phantom to send SOL...');
+          final txB58 = await session.buildUnsignedTransferTx(
+            rpcUrl: svc.rpcUrl,
+            walletPubkeyB58: phantom.walletPublicKey!,
+            merchantDid: info.ephemeralPubkey,
+            amountLamports: BigInt.from(solFunding),
+          );
+          final sig = await phantom.signAndSendTransaction(txB58);
+          if (sig == null) throw 'Phantom rejected SOL transfer';
+        }
+
+        // 7. Transfer USDC to session key via Phantom signAndSendTransaction
+        final usdcFunding = req.newSessionKeySuggestedTokenFunding ?? 0;
+        final tokenMint = req.newSessionKeyTokenMint;
+        if (usdcFunding > 0 && tokenMint != null && tokenMint.isNotEmpty) {
+          setState(() => _authResult = 'Open Phantom to send USDC...');
+          final txB58 = await session.buildUnsignedSplTransferTx(
+            rpcUrl: svc.rpcUrl,
+            walletPubkeyB58: phantom.walletPublicKey!,
+            merchantWalletB58: info.ephemeralPubkey,
+            amount: BigInt.from(usdcFunding),
+            tokenMintB58: tokenMint,
+          );
+          final sig = await phantom.signAndSendTransaction(txB58);
+          if (sig == null) throw 'Phantom rejected USDC transfer';
+        }
+
+        // 8. Send auth response with the registered session key info
+        await _sendAuthResponseWithExternalKey(info);
+        setState(() => _authResult = 'Authorized with Phantom-funded session key');
+        await Future.delayed(const Duration(milliseconds: 1200));
+        if (mounted) Navigator.of(context).pop('authorized');
+      } catch (e) {
+        setState(() {
+          _authResult = 'Error: $e';
+          _isAuthorizing = false;
+        });
+      }
+      return;
+    }
+
     // If an active key already exists, skip creation
+    AppLogService().info('Auth', 'No MCP session key, checking existing: activeSessionKey=${svc.activeSessionKey}');
     if (svc.activeSessionKey != null) {
       setState(() {
         _isAuthorizing = true;
@@ -195,105 +307,22 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
       return;
     }
 
-    // F2: If MCP provided a session key, register + fund + respond in one flow
-    final mcpSessionKey = widget.request?.newSessionKeyPubkey;
-    if (mcpSessionKey != null && mcpSessionKey.isNotEmpty) {
-      setState(() {
-        _isAuthorizing = true;
-        _authResult = 'Registering MCP session key on-chain...';
-      });
-      try {
-        final req = widget.request!;
-        await svc.initialize();
-
-        // Determine owner key: derive from DID (same as existing flow)
-        final dir = await getApplicationSupportDirectory();
-
-        // Determine target program from scopes
-        final isSpl = (req.newSessionKeyScopes ?? []).any((s) => s.contains('spl'));
-        final targetProgram = isSpl
-            ? 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
-            : '11111111111111111111111111111111';
-
-        setState(() => _authResult = 'Registering + funding session key...');
-
-        final info = await rust.registerAndFundSessionKey(
-          storagePath: dir.path,
-          rpcUrl: svc.rpcUrl,
-          ownerSecretKey: '', // Rust derives owner from DID when empty
-          ephemeralPubkey: req.newSessionKeyPubkey!,
-          ephemeralSecretKey: req.newSessionKeySecretKey!,
-          targetProgram: targetProgram,
-          scopes: req.newSessionKeyScopes ?? ['sol:transfer'],
-          spendingLimit: BigInt.from(req.newSessionKeySpendingLimit ?? 0),
-          durationSecs: req.newSessionKeyDurationSecs ?? 3600,
-          tokenMint: req.newSessionKeyTokenMint,
-          solFunding: BigInt.from(req.newSessionKeySuggestedSolFunding ?? 0),
-          tokenFunding: req.newSessionKeySuggestedTokenFunding != null
-              ? BigInt.from(req.newSessionKeySuggestedTokenFunding!)
-              : null,
-        );
-
-        // Send auth response with the registered session key info
-        await _sendAuthResponseWithExternalKey(info);
-        setState(() => _authResult = 'Authorized with MCP session key');
-        await Future.delayed(const Duration(milliseconds: 1200));
-        if (mounted) Navigator.of(context).pop('authorized');
-      } catch (e) {
-        setState(() {
-          _authResult = 'Error: $e';
-          _isAuthorizing = false;
-        });
-      }
-      return;
-    }
-
-    // Show signing method selector
-    final method = await _showSigningMethodSelector();
-    if (method == null || !mounted) return;
-
+    // Default: no new session key from MCP and no existing key — create one
     setState(() {
       _isAuthorizing = true;
       _authResult = 'Registering session key on-chain...';
     });
 
-    // Parse policy values for session key creation
     final dailyLimitLamports = (_parseSol(_dailySpendingLimit) * 1000000000).round();
     final durationSecs = (int.tryParse(_durationHours) ?? 24) * 3600;
 
     try {
-      switch (method) {
-        case SigningMethod.builtIn:
-          await svc.createWithBuiltInKey(
-            spendingLimit: dailyLimitLamports,
-            durationSecs: durationSecs,
-          );
-          break;
-        case SigningMethod.deepLink:
-          final walletUrl = await svc.createWithDeepLink(
-            spendingLimit: dailyLimitLamports,
-            durationSecs: durationSecs,
-          );
-          if (walletUrl != null) {
-            // Open the wallet app for signing
-            await WalletDeepLinkService().openWalletUrl(walletUrl);
-            setState(() => _authResult = 'Open wallet to sign transaction...');
-            // Poll for session key completion (set by deep link callback)
-            _pollForSessionKeyCompletion();
-            return; // Don't proceed to auth response yet
-          }
-          break;
-        case SigningMethod.mwa:
-          // MWA stub — falls through to built-in for now
-          await svc.createWithBuiltInKey(
-            spendingLimit: dailyLimitLamports,
-            durationSecs: durationSecs,
-          );
-          break;
-      }
-
+      await svc.createWithBuiltInKey(
+        spendingLimit: dailyLimitLamports,
+        durationSecs: durationSecs,
+      );
       await _sendAuthResponse();
-      setState(() => _authResult = 'Authorized with session key');
+      setState(() => _authResult = 'Session key registered & authorized');
       await Future.delayed(const Duration(milliseconds: 1200));
       if (mounted) Navigator.of(context).pop('authorized');
     } catch (e) {
@@ -567,7 +596,7 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
                     const SizedBox(height: 20),
                     _MerchantCard(merchantDid: _merchantDid),
                     const SizedBox(height: 20),
-                    _AmountDisplay(amount: _amount),
+                    _AmountDisplay(amount: _amount, tokenMint: widget.request?.tokenMint),
                     const SizedBox(height: 8),
                     _ReasonBlock(description: _description),
                     const SizedBox(height: 16),
@@ -799,10 +828,25 @@ class _MerchantCard extends StatelessWidget {
 // ---------------------------------------------------------------------------
 class _AmountDisplay extends StatelessWidget {
   final int amount;
-  const _AmountDisplay({required this.amount});
+  final String? tokenMint;
+  const _AmountDisplay({required this.amount, this.tokenMint});
 
-  /// Convert lamports to SOL.
-  String get _solAmount {
+  /// USDC mint addresses on Solana
+  static const _usdcMints = [
+    'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // mainnet
+    '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', // devnet
+  ];
+
+  bool get _isUsdc => tokenMint != null && _usdcMints.contains(tokenMint);
+
+  String get _displayAmount {
+    if (_isUsdc) {
+      final usdc = amount / 1000000.0;
+      if (usdc >= 1.0) {
+        return usdc.toStringAsFixed(usdc.truncateToDouble() == usdc ? 0 : 2);
+      }
+      return usdc.toStringAsFixed(4).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
+    }
     final sol = amount / 1000000000.0;
     if (sol >= 1.0) {
       return sol.toStringAsFixed(sol.truncateToDouble() == sol ? 0 : 2);
@@ -810,8 +854,12 @@ class _AmountDisplay extends StatelessWidget {
     return sol.toStringAsFixed(4).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
   }
 
+  String get _currencyLabel => _isUsdc ? 'USDC' : 'SOL';
+
   @override
   Widget build(BuildContext context) {
+    // Debug: log tokenMint and _isUsdc result
+    AppLogService().info('AmountDisplay', 'tokenMint="$tokenMint", isUsdc=$_isUsdc, amount=$amount');
     return Column(
       children: [
         Text(
@@ -830,7 +878,7 @@ class _AmountDisplay extends StatelessWidget {
           textBaseline: TextBaseline.alphabetic,
           children: [
             Text(
-              _solAmount,
+              _displayAmount,
               style: GoogleFonts.inter(
                 fontSize: 52,
                 fontWeight: FontWeight.w800,
@@ -840,7 +888,7 @@ class _AmountDisplay extends StatelessWidget {
             ),
             const SizedBox(width: 6),
             Text(
-              'SOL',
+              _currencyLabel,
               style: GoogleFonts.inter(
                 fontSize: 20,
                 fontWeight: FontWeight.w600,

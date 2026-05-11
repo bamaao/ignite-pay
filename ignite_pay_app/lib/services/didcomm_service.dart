@@ -27,6 +27,7 @@ class AuthRequest {
   final String paymentId;
   final String merchantDid;
   final int amount;
+  final String? tokenMint;
   final String description;
   // F2: MCP-provided session key info for embedded payment flow
   final String? newSessionKeyPubkey;
@@ -45,6 +46,7 @@ class AuthRequest {
     required this.paymentId,
     required this.merchantDid,
     required this.amount,
+    this.tokenMint,
     required this.description,
     this.newSessionKeyPubkey,
     this.newSessionKeySecretKey,
@@ -209,6 +211,7 @@ class DecryptedMsg {
   final String? paymentId;
   final String? merchantDid;
   final int? amount;
+  final String? tokenMint;
   final String? description;
   final String rawBody;
   final String? listCid; // V1.1: IPFS CID from list-sync-notification
@@ -248,6 +251,7 @@ class DecryptedMsg {
     this.paymentId,
     this.merchantDid,
     this.amount,
+    this.tokenMint,
     this.description,
     required this.rawBody,
     this.listCid,
@@ -378,7 +382,7 @@ class DidcommService extends ChangeNotifier {
 
       _isInitialized = true;
       AppLogService().info('DID', 'Initialized: $_did');
-      _loadPairedMcps();
+      await _loadPairedMcps();
       notifyListeners();
     } catch (e) {
       AppLogService().error('DID', 'Failed to initialize: $e');
@@ -443,7 +447,7 @@ class DidcommService extends ChangeNotifier {
         paymentId: response.paymentId,
         authorized: response.authorized,
         listAction: response.listAction,
-        mcpDid: _pendingAuth?.merchantDid ?? '',
+        mcpDid: _pairedMcps.isNotEmpty ? _pairedMcps.first.did : (_pendingAuth?.merchantDid ?? ''),
         sessionKeyInfo: null,
         listLabel: response.listLabel,
         listMaxAmount: response.listMaxAmount != null
@@ -495,7 +499,7 @@ class DidcommService extends ChangeNotifier {
         paymentId: paymentId,
         authorized: authorized,
         listAction: listAction,
-        mcpDid: _pendingAuth?.merchantDid ?? '',
+        mcpDid: _pairedMcps.isNotEmpty ? _pairedMcps.first.did : (_pendingAuth?.merchantDid ?? ''),
         sessionKeyInfo: sessionKey,
         listLabel: listLabel,
         listMaxAmount: listMaxAmount != null ? BigInt.from(listMaxAmount) : null,
@@ -617,33 +621,94 @@ class DidcommService extends ChangeNotifier {
   /// Also handles plaintext JSON messages (e.g. connection-response forwarded
   /// by the mediator without encryption).
   Future<void> _decryptAndProcess(String rawMessage) async {
+    // Log raw message details for debugging
+    final preview = rawMessage.length > 200 ? '${rawMessage.substring(0, 200)}...' : rawMessage;
+    final isJweLike = rawMessage.contains('"ciphertext"') && rawMessage.contains('"recipients"');
+    AppLogService().info('DIDComm', 'recv msg: isJWE=$isJweLike, len=${rawMessage.length}, preview=$preview');
+
     try {
+      // Pass the paired MCP's DID doc so the Rust agent can verify authcrypt JWE.
+      final pairedMcp = _pairedMcps.isNotEmpty ? _pairedMcps.first : null;
+      AppLogService().info('DIDComm', 'decryptMessage: pairedMcps=${_pairedMcps.length}, mcpDid=${pairedMcp?.did ?? "null"}, hasDoc=${pairedMcp?.didDocJson != null}');
       final decrypted = await rust.decryptMessage(
         storagePath: _storagePath,
         jwe: rawMessage,
+        mcpDid: pairedMcp?.did,
+        mcpDidDocJson: pairedMcp?.didDocJson,
       );
+
+      // Extract fields from rawBody as fallback (Rust bridge may not pass them)
+      String? effectiveTokenMint = decrypted.tokenMint;
+      String? effectiveSkPubkey = decrypted.newSessionKeyPubkey;
+      String? effectiveSkSecretKey = decrypted.newSessionKeySecretKey;
+      int? effectiveSkSpendingLimit = decrypted.newSessionKeySpendingLimit?.toInt();
+      int? effectiveSkDurationSecs = decrypted.newSessionKeyDurationSecs;
+      List<String>? effectiveSkScopes = decrypted.newSessionKeyScopes;
+      String? effectiveSkTokenMint = decrypted.newSessionKeyTokenMint;
+      int? effectiveSkSolFunding = decrypted.newSessionKeySuggestedSolFunding?.toInt();
+      int? effectiveSkTokenFunding = decrypted.newSessionKeySuggestedTokenFunding?.toInt();
+      List<String>? effectivePaymentMethods = decrypted.availablePaymentMethods;
+      int? effectivePerTxLimit = decrypted.suggestedPerTxLimit?.toInt();
+      int? effectiveDailyTxCountLimit = decrypted.suggestedDailyTxCountLimit?.toInt();
+
+      if (decrypted.rawBody.isNotEmpty) {
+        try {
+          final bodyMap = jsonDecode(decrypted.rawBody) as Map<String, dynamic>;
+          // Try top-level flattened fields first (MCP v2 format)
+          effectiveTokenMint ??= bodyMap['token_mint'] as String? ?? bodyMap['sk_token_mint'] as String?;
+          effectiveSkPubkey ??= bodyMap['session_key_pubkey'] as String?;
+          effectiveSkSecretKey ??= bodyMap['ephemeral_secret_key'] as String?;
+          effectiveSkSpendingLimit ??= (bodyMap['spending_limit'] as num?)?.toInt();
+          effectiveSkDurationSecs ??= bodyMap['duration_secs'] as int?;
+          effectiveSkScopes ??= (bodyMap['scopes'] as List<dynamic>?)?.cast<String>();
+          effectiveSkTokenMint ??= bodyMap['sk_token_mint'] as String?;
+          effectiveSkSolFunding ??= (bodyMap['suggested_sol_funding'] as num?)?.toInt();
+          effectiveSkTokenFunding ??= (bodyMap['suggested_token_funding'] as num?)?.toInt();
+          effectivePerTxLimit ??= (bodyMap['suggested_per_tx_limit'] as num?)?.toInt();
+          effectiveDailyTxCountLimit ??= (bodyMap['suggested_daily_tx_count_limit'] as num?)?.toInt();
+          effectivePaymentMethods ??= (bodyMap['available_payment_methods'] as List<dynamic>?)?.cast<String>();
+          // Also try nested new_session_key (MCP v1 format)
+          final sk = bodyMap['new_session_key'] as Map<String, dynamic>?;
+          if (sk != null) {
+            effectiveTokenMint ??= sk['token_mint'] as String?;
+            effectiveSkPubkey ??= sk['session_key_pubkey'] as String?;
+            effectiveSkSecretKey ??= sk['ephemeral_secret_key'] as String?;
+            effectiveSkSpendingLimit ??= (sk['spending_limit'] as num?)?.toInt();
+            effectiveSkDurationSecs ??= sk['duration_secs'] as int?;
+            effectiveSkScopes ??= (sk['scopes'] as List<dynamic>?)?.cast<String>();
+            effectiveSkTokenMint ??= sk['token_mint'] as String?;
+            effectiveSkSolFunding ??= (sk['suggested_sol_funding'] as num?)?.toInt();
+            effectiveSkTokenFunding ??= (sk['suggested_token_funding'] as num?)?.toInt();
+            effectivePerTxLimit ??= (sk['suggested_per_tx_limit'] as num?)?.toInt();
+            effectiveDailyTxCountLimit ??= (sk['suggested_daily_tx_count_limit'] as num?)?.toInt();
+          }
+        } catch (_) {}
+      }
+
+      AppLogService().info('DIDComm', 'Fallback result: effectiveSkPubkey=$effectiveSkPubkey, effectiveSkSecretKey=${effectiveSkSecretKey != null ? "present" : "null"}, effectiveTokenMint=$effectiveTokenMint');
 
       final msg = DecryptedMsg(
         msgType: decrypted.msgType,
         paymentId: decrypted.paymentId,
         merchantDid: decrypted.merchantDid,
         amount: decrypted.amount?.toInt(),
+        tokenMint: effectiveTokenMint,
         description: decrypted.description,
         rawBody: decrypted.rawBody,
         listCid: decrypted.listCid,
         listType: decrypted.listType,
         label: decrypted.label,
-        newSessionKeyPubkey: decrypted.newSessionKeyPubkey,
-        newSessionKeySecretKey: decrypted.newSessionKeySecretKey,
-        newSessionKeySpendingLimit: decrypted.newSessionKeySpendingLimit?.toInt(),
-        newSessionKeyDurationSecs: decrypted.newSessionKeyDurationSecs,
-        newSessionKeyScopes: decrypted.newSessionKeyScopes,
-        newSessionKeyTokenMint: decrypted.newSessionKeyTokenMint,
-        newSessionKeySuggestedSolFunding: decrypted.newSessionKeySuggestedSolFunding?.toInt(),
-        newSessionKeySuggestedTokenFunding: decrypted.newSessionKeySuggestedTokenFunding?.toInt(),
-        availablePaymentMethods: decrypted.availablePaymentMethods,
-        suggestedPerTxLimit: decrypted.suggestedPerTxLimit?.toInt(),
-        suggestedDailyTxCountLimit: decrypted.suggestedDailyTxCountLimit?.toInt(),
+        newSessionKeyPubkey: effectiveSkPubkey,
+        newSessionKeySecretKey: effectiveSkSecretKey,
+        newSessionKeySpendingLimit: effectiveSkSpendingLimit,
+        newSessionKeyDurationSecs: effectiveSkDurationSecs,
+        newSessionKeyScopes: effectiveSkScopes,
+        newSessionKeyTokenMint: effectiveSkTokenMint,
+        newSessionKeySuggestedSolFunding: effectiveSkSolFunding,
+        newSessionKeySuggestedTokenFunding: effectiveSkTokenFunding,
+        availablePaymentMethods: effectivePaymentMethods,
+        suggestedPerTxLimit: effectivePerTxLimit,
+        suggestedDailyTxCountLimit: effectiveDailyTxCountLimit,
         sessionFundRequiredAmount: decrypted.sessionFundRequiredAmount?.toInt(),
         sessionFundCurrentBalance: decrypted.sessionFundCurrentBalance?.toInt(),
         sessionFundSpendingLimitRemaining: decrypted.sessionFundSpendingLimitRemaining?.toInt(),
@@ -661,6 +726,14 @@ class DidcommService extends ChangeNotifier {
       _messages.add(msg);
 
       AppLogService().info('DIDComm', 'Decrypted: ${msg.msgType} (paymentId: ${msg.paymentId ?? "N/A"})');
+      AppLogService().info('DIDComm', 'DecryptedMsg: skPubkey=${msg.newSessionKeyPubkey}, skSecretKey=${msg.newSessionKeySecretKey != null ? "present" : "null"}, tokenMint=${msg.tokenMint}, rawBodyLen=${msg.rawBody.length}');
+      if (msg.msgType.contains('payment-auth-request')) {
+        // Log rawBody in chunks to avoid truncation
+        final rb = msg.rawBody;
+        for (int i = 0; i < rb.length; i += 500) {
+          AppLogService().info('DIDComm', 'rawBody[${i}]: ${rb.substring(i, i + 500 > rb.length ? rb.length : i + 500)}');
+        }
+      }
 
       // Check if it's a connection-response (pairing reply from MCP)
       if (msg.msgType.contains('connection-response')) {
@@ -715,6 +788,18 @@ class DidcommService extends ChangeNotifier {
             await _savePairedMcps();
             AppLogService().info('DIDComm', 'MCP paired and saved: $mcpDidFromDoc');
 
+            // Register MCP as a peer in the Rust DIDComm agent
+            try {
+              await rust.registerMcpPeer(
+                storagePath: _storagePath,
+                mcpDid: mcpDidFromDoc,
+                mcpDidDocJson: didDocJson,
+              );
+              AppLogService().info('DIDComm', 'MCP peer registered in DIDComm agent: $mcpDidFromDoc');
+            } catch (e) {
+              AppLogService().error('DIDComm', 'Failed to register MCP peer in agent: $e');
+            }
+
             // Send connection-confirm with our signed nonce
             _sendConnectionConfirm(mcpDidFromDoc, mcpMediatorHttpUrl);
           }
@@ -729,16 +814,28 @@ class DidcommService extends ChangeNotifier {
       if (msg.msgType.contains('payment-auth-request')) {
         final body = jsonDecode(msg.rawBody) as Map<String, dynamic>;
         final newSk = body['new_session_key'] as Map<String, dynamic>?;
+        // Resolve tokenMint from all possible sources
+        final resolvedTokenMint = msg.tokenMint
+            ?? msg.newSessionKeyTokenMint
+            ?? body['token_mint'] as String?
+            ?? newSk?['token_mint'] as String?;
+        AppLogService().info('DIDComm', 'Auth-request debug: msg.tokenMint=${msg.tokenMint}, msg.newSessionKeyPubkey=${msg.newSessionKeyPubkey}, bodySkPubkey=${newSk?['session_key_pubkey']}, bodyTopLevelSkPubkey=${body['session_key_pubkey']}, resolvedTokenMint=$resolvedTokenMint');
+        final resolvedSkPubkey = msg.newSessionKeyPubkey
+            ?? body['session_key_pubkey'] as String?
+            ?? newSk?['session_key_pubkey'] as String?;
+        final resolvedSkSecretKey = msg.newSessionKeySecretKey
+            ?? body['ephemeral_secret_key'] as String?;
         final authReq = AuthRequest(
           paymentId: msg.paymentId ?? '',
           merchantDid: msg.merchantDid ?? '',
           amount: msg.amount ?? 0,
+          tokenMint: resolvedTokenMint,
           description: msg.description ?? '',
-          newSessionKeyPubkey: msg.newSessionKeyPubkey,
-          newSessionKeySecretKey: msg.newSessionKeySecretKey,
-          newSessionKeySpendingLimit: msg.newSessionKeySpendingLimit,
-          newSessionKeyDurationSecs: msg.newSessionKeyDurationSecs,
-          newSessionKeyScopes: msg.newSessionKeyScopes,
+          newSessionKeyPubkey: resolvedSkPubkey,
+          newSessionKeySecretKey: resolvedSkSecretKey,
+          newSessionKeySpendingLimit: msg.newSessionKeySpendingLimit ?? (body['spending_limit'] as num?)?.toInt(),
+          newSessionKeyDurationSecs: msg.newSessionKeyDurationSecs ?? body['duration_secs'] as int?,
+          newSessionKeyScopes: msg.newSessionKeyScopes ?? (body['scopes'] as List<dynamic>?)?.cast<String>(),
           newSessionKeyTokenMint: msg.newSessionKeyTokenMint,
           newSessionKeySuggestedSolFunding: msg.newSessionKeySuggestedSolFunding,
           newSessionKeySuggestedTokenFunding: msg.newSessionKeySuggestedTokenFunding,
@@ -746,6 +843,7 @@ class DidcommService extends ChangeNotifier {
           suggestedPerTxLimit: msg.suggestedPerTxLimit ?? newSk?['suggested_per_tx_limit'] as int?,
           suggestedDailyTxCountLimit: msg.suggestedDailyTxCountLimit ?? newSk?['suggested_daily_tx_count_limit'] as int?,
         );
+        AppLogService().info('DIDComm', 'AuthRequest created: tokenMint=${authReq.tokenMint}, amount=${authReq.amount}, newSessionKeyPubkey=${authReq.newSessionKeyPubkey}');
         _pendingAuth = authReq;
         _authRequestController.add(authReq);
       }
@@ -831,12 +929,154 @@ class DidcommService extends ChangeNotifier {
 
       notifyListeners();
     } catch (e) {
+      // JWE decryption failed — try re-registering MCP peer and retry once.
+      // This handles the case where the Rust agent was recreated without the peer.
+      final pairedMcp2 = _pairedMcps.isNotEmpty ? _pairedMcps.first : null;
+      if (pairedMcp2 != null && isJweLike) {
+        AppLogService().info('DIDComm', 'Retrying JWE decrypt after re-registering MCP peer');
+        try {
+          await rust.registerMcpPeer(
+            storagePath: _storagePath,
+            mcpDid: pairedMcp2.did,
+            mcpDidDocJson: pairedMcp2.didDocJson,
+          );
+          final retry = await rust.decryptMessage(
+            storagePath: _storagePath,
+            jwe: rawMessage,
+            mcpDid: pairedMcp2.did,
+            mcpDidDocJson: pairedMcp2.didDocJson,
+          );
+          // Retry succeeded — process the decrypted message
+          // Extract fields from rawBody as fallback
+          String? retryTokenMint = retry.tokenMint;
+          String? retrySkPubkey = retry.newSessionKeyPubkey;
+          String? retrySkSecretKey = retry.newSessionKeySecretKey;
+          int? retrySkSpendingLimit = retry.newSessionKeySpendingLimit?.toInt();
+          int? retrySkDurationSecs = retry.newSessionKeyDurationSecs;
+          List<String>? retrySkScopes = retry.newSessionKeyScopes;
+          String? retrySkTokenMint = retry.newSessionKeyTokenMint;
+          int? retrySkSolFunding = retry.newSessionKeySuggestedSolFunding?.toInt();
+          int? retrySkTokenFunding = retry.newSessionKeySuggestedTokenFunding?.toInt();
+          List<String>? retryPaymentMethods = retry.availablePaymentMethods;
+          int? retryPerTxLimit = retry.suggestedPerTxLimit?.toInt();
+          int? retryDailyTxCountLimit = retry.suggestedDailyTxCountLimit?.toInt();
+
+          if (retry.rawBody.isNotEmpty) {
+            try {
+              final bodyMap = jsonDecode(retry.rawBody) as Map<String, dynamic>;
+              // Try top-level flattened fields first
+              retryTokenMint ??= bodyMap['token_mint'] as String? ?? bodyMap['sk_token_mint'] as String?;
+              retrySkPubkey ??= bodyMap['session_key_pubkey'] as String?;
+              retrySkSecretKey ??= bodyMap['ephemeral_secret_key'] as String?;
+              retrySkSpendingLimit ??= (bodyMap['spending_limit'] as num?)?.toInt();
+              retrySkDurationSecs ??= bodyMap['duration_secs'] as int?;
+              retrySkScopes ??= (bodyMap['scopes'] as List<dynamic>?)?.cast<String>();
+              retrySkTokenMint ??= bodyMap['sk_token_mint'] as String?;
+              retrySkSolFunding ??= (bodyMap['suggested_sol_funding'] as num?)?.toInt();
+              retrySkTokenFunding ??= (bodyMap['suggested_token_funding'] as num?)?.toInt();
+              retryPerTxLimit ??= (bodyMap['suggested_per_tx_limit'] as num?)?.toInt();
+              retryDailyTxCountLimit ??= (bodyMap['suggested_daily_tx_count_limit'] as num?)?.toInt();
+              retryPaymentMethods ??= (bodyMap['available_payment_methods'] as List<dynamic>?)?.cast<String>();
+              // Also try nested
+              final sk = bodyMap['new_session_key'] as Map<String, dynamic>?;
+              if (sk != null) {
+                retryTokenMint ??= sk['token_mint'] as String?;
+                retrySkPubkey ??= sk['session_key_pubkey'] as String?;
+                retrySkSecretKey ??= sk['ephemeral_secret_key'] as String?;
+                retrySkSpendingLimit ??= (sk['spending_limit'] as num?)?.toInt();
+                retrySkDurationSecs ??= sk['duration_secs'] as int?;
+                retrySkScopes ??= (sk['scopes'] as List<dynamic>?)?.cast<String>();
+                retrySkTokenMint ??= sk['token_mint'] as String?;
+                retrySkSolFunding ??= (sk['suggested_sol_funding'] as num?)?.toInt();
+                retrySkTokenFunding ??= (sk['suggested_token_funding'] as num?)?.toInt();
+                retryPerTxLimit ??= (sk['suggested_per_tx_limit'] as num?)?.toInt();
+                retryDailyTxCountLimit ??= (sk['suggested_daily_tx_count_limit'] as num?)?.toInt();
+              }
+            } catch (_) {}
+          }
+          final msg = DecryptedMsg(
+            msgType: retry.msgType,
+            paymentId: retry.paymentId,
+            merchantDid: retry.merchantDid,
+            amount: retry.amount?.toInt(),
+            tokenMint: retryTokenMint,
+            description: retry.description,
+            rawBody: retry.rawBody,
+            listCid: retry.listCid,
+            listType: retry.listType,
+            label: retry.label,
+            newSessionKeyPubkey: retrySkPubkey,
+            newSessionKeySecretKey: retrySkSecretKey,
+            newSessionKeySpendingLimit: retrySkSpendingLimit,
+            newSessionKeyDurationSecs: retrySkDurationSecs,
+            newSessionKeyScopes: retrySkScopes,
+            newSessionKeyTokenMint: retrySkTokenMint,
+            newSessionKeySuggestedSolFunding: retrySkSolFunding,
+            newSessionKeySuggestedTokenFunding: retrySkTokenFunding,
+            availablePaymentMethods: retryPaymentMethods,
+            suggestedPerTxLimit: retryPerTxLimit,
+            suggestedDailyTxCountLimit: retryDailyTxCountLimit,
+            sessionFundRequiredAmount: retry.sessionFundRequiredAmount?.toInt(),
+            sessionFundCurrentBalance: retry.sessionFundCurrentBalance?.toInt(),
+            sessionFundSpendingLimitRemaining: retry.sessionFundSpendingLimitRemaining?.toInt(),
+            sessionFundTokenMint: retry.sessionFundTokenMint,
+            sessionFundReason: retry.sessionFundReason,
+            balanceNotificationBalance: retry.balanceNotificationBalance?.toInt(),
+            balanceNotificationThreshold: retry.balanceNotificationThreshold?.toInt(),
+            balanceNotificationSpendingLimitRemaining: retry.balanceNotificationSpendingLimitRemaining?.toInt(),
+            oldSessionKeyPubkey: retry.oldSessionKeyPubkey,
+            sessionRenewExpiresAt: retry.sessionRenewExpiresAt,
+            relayerPubkey: retry.relayerPubkey,
+            relayerUrl: retry.relayerUrl,
+          );
+          _messages.add(msg);
+          AppLogService().info('DIDComm', 'Retry decrypted: ${msg.msgType} (paymentId: ${msg.paymentId ?? "N/A"})');
+          // Fall through to process payment-auth-request below
+          if (msg.msgType.contains('payment-auth-request')) {
+            final body = jsonDecode(msg.rawBody) as Map<String, dynamic>;
+            final newSk = body['new_session_key'] as Map<String, dynamic>?;
+            // Resolve tokenMint from all possible sources for retry path
+            final retryResolvedTokenMint = msg.tokenMint
+                ?? msg.newSessionKeyTokenMint
+                ?? body['token_mint'] as String?
+                ?? newSk?['token_mint'] as String?;
+            AppLogService().info('DIDComm', 'Retry auth-request debug: msg.tokenMint=${msg.tokenMint}, resolved=$retryResolvedTokenMint');
+            final authReq = AuthRequest(
+              paymentId: msg.paymentId ?? '',
+              merchantDid: msg.merchantDid ?? '',
+              amount: msg.amount ?? 0,
+              tokenMint: retryResolvedTokenMint,
+              description: msg.description ?? '',
+              newSessionKeyPubkey: msg.newSessionKeyPubkey,
+              newSessionKeySecretKey: msg.newSessionKeySecretKey,
+              newSessionKeySpendingLimit: msg.newSessionKeySpendingLimit,
+              newSessionKeyDurationSecs: msg.newSessionKeyDurationSecs,
+              newSessionKeyScopes: msg.newSessionKeyScopes,
+              newSessionKeyTokenMint: msg.newSessionKeyTokenMint,
+              newSessionKeySuggestedSolFunding: msg.newSessionKeySuggestedSolFunding,
+              newSessionKeySuggestedTokenFunding: msg.newSessionKeySuggestedTokenFunding,
+              availablePaymentMethods: msg.availablePaymentMethods,
+              suggestedPerTxLimit: msg.suggestedPerTxLimit ?? newSk?['suggested_per_tx_limit'] as int?,
+              suggestedDailyTxCountLimit: msg.suggestedDailyTxCountLimit ?? newSk?['suggested_daily_tx_count_limit'] as int?,
+            );
+            _pendingAuth = authReq;
+            _authRequestController.add(authReq);
+          }
+          notifyListeners();
+          return;
+        } catch (retryErr) {
+          AppLogService().error('DIDComm', 'Retry JWE decrypt also failed: $retryErr');
+        }
+      }
+
       // JWE decryption failed — try plaintext JSON fallback for messages
       // that the mediator forwards without encryption (e.g. connection-response).
-      AppLogService().info('DIDComm', 'JWE decrypt failed, trying plaintext fallback');
+      AppLogService().info('DIDComm', 'JWE decrypt failed: $e, trying plaintext fallback');
       try {
         final v = jsonDecode(rawMessage) as Map<String, dynamic>;
         final msgType = v['type'] as String? ?? '';
+        final from = v['from'] as String? ?? '';
+        AppLogService().info('DIDComm', 'Plaintext msg: type=$msgType, from=$from');
 
         if (msgType.contains('connection-response')) {
           await _handlePlaintextConnectionResponse(v);
@@ -845,7 +1085,7 @@ class DidcommService extends ChangeNotifier {
 
         AppLogService().info('DIDComm', 'Plaintext message type not handled: $msgType');
       } catch (e2) {
-        AppLogService().error('DIDComm', 'Decrypt/parse failed: $e');
+        AppLogService().error('DIDComm', 'Decrypt/parse failed (not JSON): $e');
       }
     }
   }
@@ -910,6 +1150,19 @@ class DidcommService extends ChangeNotifier {
       _pairedMcps[existing] = paired;
     } else {
       _pairedMcps.add(paired);
+    }
+
+    // Register MCP as a peer in the Rust DIDComm agent so we can decrypt
+    // authcrypt JWE messages from MCP.
+    try {
+      await rust.registerMcpPeer(
+        storagePath: _storagePath,
+        mcpDid: mcpDid,
+        mcpDidDocJson: didDocJson,
+      );
+      AppLogService().info('DIDComm', 'MCP peer registered in DIDComm agent: $mcpDid');
+    } catch (e) {
+      AppLogService().error('DIDComm', 'Failed to register MCP peer in agent: $e');
     }
     await _savePairedMcps();
     AppLogService().info('DIDComm', 'MCP paired and saved: $mcpDid');
@@ -1183,18 +1436,17 @@ class DidcommService extends ChangeNotifier {
   }
 
   /// Load paired MCPs from SharedPreferences.
-  void _loadPairedMcps() {
-    SharedPreferences.getInstance().then((prefs) {
-      final json = prefs.getString('paired_mcps');
-      if (json != null) {
-        final list = jsonDecode(json) as List<dynamic>;
-        _pairedMcps.clear();
-        _pairedMcps.addAll(
-          list.map((e) => PairedMcp.fromJson(e as Map<String, dynamic>)),
-        );
-        notifyListeners();
-      }
-    });
+  Future<void> _loadPairedMcps() async {
+    final prefs = await SharedPreferences.getInstance();
+    final json = prefs.getString('paired_mcps');
+    if (json != null) {
+      final list = jsonDecode(json) as List<dynamic>;
+      _pairedMcps.clear();
+      _pairedMcps.addAll(
+        list.map((e) => PairedMcp.fromJson(e as Map<String, dynamic>)),
+      );
+      notifyListeners();
+    }
   }
 
   /// Save paired MCPs to SharedPreferences.
@@ -1202,6 +1454,13 @@ class DidcommService extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final json = jsonEncode(_pairedMcps.map((e) => e.toJson()).toList());
     await prefs.setString('paired_mcps', json);
+  }
+
+  /// Remove a paired MCP by DID.
+  Future<void> removePairedMcp(String did) async {
+    _pairedMcps.removeWhere((m) => m.did == did);
+    await _savePairedMcps();
+    notifyListeners();
   }
 
   @override

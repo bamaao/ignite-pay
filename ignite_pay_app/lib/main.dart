@@ -665,29 +665,52 @@ class IgnitePayDashboard extends StatelessWidget {
               const _DashboardHeader(),
               const SizedBox(height: 20),
               Expanded(
-                child: SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      const DIDCard(),
-                      const SizedBox(height: 20),
-                      const _QuickNavRow(),
-                      const SizedBox(height: 20),
-                      const TrustScoreGauge(
-                        spent: 0.42,
-                        limit: 1.0,
-                        spentLabel: '0.42 SOL',
-                        limitLabel: '1.00 SOL',
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    return SingleChildScrollView(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const DIDCard(),
+                            const SizedBox(height: 20),
+                            const _QuickNavRow(),
+                            const SizedBox(height: 20),
+                            Consumer<SessionKeyService>(
+                              builder: (context, skSvc, _) {
+                                final active = skSvc.activeSessionKey;
+                                if (active != null && active.spendingLimit > BigInt.zero) {
+                                  final limitVal = (active.spendingLimit / BigInt.from(1000000)).toDouble();
+                                  final spent = 0.0;
+                                  return TrustScoreGauge(
+                                    spent: spent,
+                                    limit: limitVal > 0 ? limitVal : 1.0,
+                                    spentLabel: '${spent.toStringAsFixed(2)} USDC',
+                                    limitLabel: '${limitVal.toStringAsFixed(2)} USDC',
+                                  );
+                                }
+                                return const TrustScoreGauge(
+                                  spent: 0,
+                                  limit: 1.0,
+                                  spentLabel: '--',
+                                  limitLabel: 'No limit set',
+                                );
+                              },
+                            ),
+                            const SizedBox(height: 24),
+                            Consumer<DidcommService>(
+                              builder: (context, svc, _) {
+                                return ActivityFeed(messages: svc.messages);
+                              },
+                            ),
+                            const SizedBox(height: 24),
+                            const _AuthAction(),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 24),
-                      Consumer<DidcommService>(
-                        builder: (context, svc, _) {
-                          return ActivityFeed(messages: svc.messages);
-                        },
-                      ),
-                      const SizedBox(height: 24),
-                      const _AuthAction(),
-                    ],
-                  ),
+                    );
+                  },
                 ),
               ),
             ],
@@ -850,7 +873,7 @@ class _QuickNavRow extends StatelessWidget {
               child: _QuickNavCard(
                 icon: LucideIcons.scanLine,
                 label: 'Scan',
-                subtitle: '扫码支付',
+                subtitle: 'Scan to Pay',
                 gradientColors: [const Color(0xFF00E5FF), const Color(0xFF0097A7)],
                 onTap: () => _scanAndPay(context),
               ),
@@ -1201,8 +1224,9 @@ class TrustScoreGauge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final remaining = (limit - spent).clamp(0.0, limit);
-    final pct = spent / limit;
+    final safeLimit = limit > 0 ? limit : 1.0;
+    final remaining = (safeLimit - spent).clamp(0.0, safeLimit);
+    final pct = spent / safeLimit;
 
     return Container(
       width: double.infinity,

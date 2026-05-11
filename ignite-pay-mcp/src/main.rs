@@ -1757,7 +1757,14 @@ impl IgnitePayMcpServer {
         };
 
         let payment_id = uuid::Uuid::new_v4().to_string();
-        let description = format!("{} SOL transfer on {} to {}", amount, network, recipient);
+        let token_symbol = if token == "SOL" || token == "sol" {
+            "SOL".to_string()
+        } else if token.contains("EPjFWdd5") || token.contains("4zMMC9srt5") {
+            "USDC".to_string()
+        } else {
+            format!("token({})", &token[..8.min(token.len())])
+        };
+        let description = format!("{} {} transfer on {} to {}", amount, token_symbol, network, recipient);
 
         // 2. Create payment record
         let payment = PaymentRequest {
@@ -2061,6 +2068,15 @@ impl IgnitePayMcpServer {
                 }
             }
             Ok(Ok(_)) => {
+                // Clear pending ephemeral session key if it was created for this request
+                if let Some(ref sk) = new_session_key {
+                    if let Some(client) = &self.solana_client {
+                        if let Ok(pk) = sk.session_key_pubkey.parse::<solana_sdk::pubkey::Pubkey>() {
+                            let _ = client.session_manager().close_session(&pk);
+                            tracing::info!("Cleared pending session key {} after rejection", sk.session_key_pubkey);
+                        }
+                    }
+                }
                 let _ = self.payments.update_status(&payment_id, &PaymentStatus::Rejected);
                 X402Result::Rejected {
                     payment_id: payment_id.clone(),
@@ -2075,6 +2091,15 @@ impl IgnitePayMcpServer {
                 }
             }
             Err(_) => {
+                // Clear pending ephemeral session key if it was created for this request
+                if let Some(ref sk) = new_session_key {
+                    if let Some(client) = &self.solana_client {
+                        if let Ok(pk) = sk.session_key_pubkey.parse::<solana_sdk::pubkey::Pubkey>() {
+                            let _ = client.session_manager().close_session(&pk);
+                            tracing::info!("Cleared pending session key {} after timeout", sk.session_key_pubkey);
+                        }
+                    }
+                }
                 self.pending.resolve(
                     &payment_id,
                     AuthResponse {
@@ -2618,9 +2643,10 @@ async fn handle_pairing_qr(
             ).into_response()
         }
         _ => {
-            // Default: SVG
-            let tmp = "/tmp/ignite-local/pairing-qr.svg";
-            match server.mediator.generate_invitation_qr_svg(tmp) {
+            // Default: SVG — use a temp dir that works on both Linux and Windows
+            let tmp = std::env::temp_dir().join("ignite-pay-pairing-qr.svg");
+            let tmp_str = tmp.to_string_lossy().to_string();
+            match server.mediator.generate_invitation_qr_svg(&tmp_str) {
                 Ok(url) => {
                     match std::fs::read_to_string(tmp) {
                         Ok(svg) => (

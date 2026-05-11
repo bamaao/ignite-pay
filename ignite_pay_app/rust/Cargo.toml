@@ -10,7 +10,10 @@ crate-type = ["cdylib", "staticlib"]
 flutter_rust_bridge = "=2.12.0"
 anyhow = "1.0"
 tokio = { version = "1.0", features = ["full"] }
-ed25519-dalek = "2.1"
+ed25519-dalek = { version = "2.1", features = ["default"] }
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+xsalsa20poly1305 = "0.9"
+zeroize = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 base64 = "0.22"

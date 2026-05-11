@@ -306,9 +306,10 @@ pub fn build_authorization_request(
     merchant_did: &str,
     amount: u64,
     description: &str,
+    token_mint: Option<&str>,
 ) -> Message {
     build_authorization_request_inner(
-        from_did, to_did, payment_id, merchant_did, amount, description, None, None, None, None,
+        from_did, to_did, payment_id, merchant_did, amount, description, None, None, None, None, token_mint,
     )
 }
 
@@ -324,8 +325,9 @@ pub fn build_authorization_request_with_session_key(
     description: &str,
     new_session_key: &NewSessionKeyRequest,
 ) -> Message {
+    let token_mint = new_session_key.token_mint.as_deref();
     build_authorization_request_inner(
-        from_did, to_did, payment_id, merchant_did, amount, description, Some(new_session_key), None, None, None,
+        from_did, to_did, payment_id, merchant_did, amount, description, Some(new_session_key), None, None, None, token_mint,
     )
 }
 
@@ -339,9 +341,10 @@ pub fn build_authorization_request_with_methods(
     description: &str,
     new_session_key: Option<&NewSessionKeyRequest>,
     available_payment_methods: &[PaymentMethod],
+    token_mint: Option<&str>,
 ) -> Message {
     build_authorization_request_inner(
-        from_did, to_did, payment_id, merchant_did, amount, description, new_session_key, Some(available_payment_methods), None, None,
+        from_did, to_did, payment_id, merchant_did, amount, description, new_session_key, Some(available_payment_methods), None, None, token_mint,
     )
 }
 
@@ -358,8 +361,9 @@ pub fn build_authorization_request_with_relayer(
     relayer_pubkey: &str,
     relayer_url: &str,
 ) -> Message {
+    let token_mint = new_session_key.and_then(|sk| sk.token_mint.as_deref());
     build_authorization_request_inner(
-        from_did, to_did, payment_id, merchant_did, amount, description, new_session_key, Some(available_payment_methods), Some(relayer_pubkey), Some(relayer_url),
+        from_did, to_did, payment_id, merchant_did, amount, description, new_session_key, Some(available_payment_methods), Some(relayer_pubkey), Some(relayer_url), token_mint,
     )
 }
 
@@ -374,6 +378,7 @@ fn build_authorization_request_inner(
     available_payment_methods: Option<&[PaymentMethod]>,
     relayer_pubkey: Option<&str>,
     relayer_url: Option<&str>,
+    token_mint: Option<&str>,
 ) -> Message {
     let mut body = json!({
         "payment_id": payment_id,
@@ -382,8 +387,39 @@ fn build_authorization_request_inner(
         "description": description,
     });
 
+    if let Some(mint) = token_mint {
+        body.as_object_mut().unwrap().insert(
+            "token_mint".to_string(),
+            json!(mint),
+        );
+    }
+
     if let Some(sk) = new_session_key {
-        let mut sk_obj = json!({
+        // Flatten session key fields to body top-level (nested objects may be
+        // stripped by the DIDComm library's unpack on the phone side).
+        let obj = body.as_object_mut().unwrap();
+        obj.insert("session_key_pubkey".to_string(), json!(sk.session_key_pubkey));
+        obj.insert("spending_limit".to_string(), json!(sk.spending_limit));
+        obj.insert("duration_secs".to_string(), json!(sk.duration_secs));
+        obj.insert("scopes".to_string(), json!(sk.scopes));
+        if let Some(ref mint) = sk.token_mint {
+            obj.insert("sk_token_mint".to_string(), json!(mint));
+        }
+        obj.insert("suggested_sol_funding".to_string(), json!(sk.suggested_sol_funding));
+        if let Some(tf) = sk.suggested_token_funding {
+            obj.insert("suggested_token_funding".to_string(), json!(tf));
+        }
+        if let Some(ref secret_key) = sk.ephemeral_secret_key {
+            obj.insert("ephemeral_secret_key".to_string(), json!(secret_key));
+        }
+        if let Some(per_tx) = sk.suggested_per_tx_limit {
+            obj.insert("suggested_per_tx_limit".to_string(), json!(per_tx));
+        }
+        if let Some(daily_limit) = sk.suggested_daily_tx_count_limit {
+            obj.insert("suggested_daily_tx_count_limit".to_string(), json!(daily_limit));
+        }
+        // Also keep the nested form for backward compatibility
+        let sk_obj = json!({
             "session_key_pubkey": sk.session_key_pubkey,
             "spending_limit": sk.spending_limit,
             "duration_secs": sk.duration_secs,
@@ -392,19 +428,7 @@ fn build_authorization_request_inner(
             "suggested_sol_funding": sk.suggested_sol_funding,
             "suggested_token_funding": sk.suggested_token_funding,
         });
-        if let Some(ref secret_key) = sk.ephemeral_secret_key {
-            sk_obj["ephemeral_secret_key"] = json!(secret_key);
-        }
-        if let Some(per_tx) = sk.suggested_per_tx_limit {
-            sk_obj["suggested_per_tx_limit"] = json!(per_tx);
-        }
-        if let Some(daily_limit) = sk.suggested_daily_tx_count_limit {
-            sk_obj["suggested_daily_tx_count_limit"] = json!(daily_limit);
-        }
-        body.as_object_mut().unwrap().insert(
-            "new_session_key".to_string(),
-            sk_obj,
-        );
+        obj.insert("new_session_key".to_string(), sk_obj);
     }
 
     if let Some(methods) = available_payment_methods {

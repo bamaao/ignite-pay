@@ -19,6 +19,7 @@ import 'package:ignite_pay_app/src/rust/api/channel_store.dart';
 import 'package:ignite_pay_app/src/rust/api/notification.dart';
 import 'package:ignite_pay_app/src/rust/api/session.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart';
+import 'package:ignite_pay_app/src/rust/api/phantom_crypto.dart';
 import 'package:ignite_pay_app/src/rust/api/cctp_transfer.dart';
 import 'package:ignite_pay_app/src/rust/api/mb_voucher.dart';
 import 'package:ignite_pay_app/src/rust/frb_generated.dart';
@@ -100,6 +101,8 @@ class _MockRustLibApi extends RustLibApi {
   Future<DecryptedMessage> crateApiSimpleDecryptMessage({
     required String storagePath,
     required String jwe,
+    String? mcpDid,
+    String? mcpDidDocJson,
   }) async =>
       DecryptedMessage(
         msgType: 'placeholder',
@@ -580,7 +583,7 @@ class _MockRustLibApi extends RustLibApi {
     required String targetProgram,
     required List<String> scopes,
     required BigInt spendingLimit,
-    required int durationSecs,
+    required PlatformInt64 durationSecs,
     String? tokenMint,
   }) async =>
       SessionKeyInfo(
@@ -613,7 +616,7 @@ class _MockRustLibApi extends RustLibApi {
     required String targetProgram,
     required List<String> scopes,
     required BigInt spendingLimit,
-    required int durationSecs,
+    required PlatformInt64 durationSecs,
     String? tokenMint,
     required BigInt solFunding,
     BigInt? tokenFunding,
@@ -781,6 +784,85 @@ class _MockRustLibApi extends RustLibApi {
         txSignature: 'mock_tx_sig',
         sessionPda: 'mock_pda',
       );
+
+  // --- Phantom crypto bridge mocks ---
+
+  @override
+  Future<String> crateApiPhantomCryptoPhantomDecrypt({
+    required String sharedSecretB64,
+    required String nonceB64,
+    required String ciphertextB64,
+  }) async => 'mock_decrypted_b64';
+
+  @override
+  Future<String> crateApiPhantomCryptoPhantomEncrypt({
+    required String sharedSecretB64,
+    required String nonceB64,
+    required String plaintextB64,
+  }) async => 'mock_encrypted_b64';
+
+  @override
+  Future<PhantomKeypair> crateApiPhantomCryptoPhantomGenerateKeypair() async =>
+      PhantomKeypair(publicKeyB64: 'mock_pub_b64', secretKeyB64: 'mock_sec_b64');
+
+  @override
+  Future<String> crateApiPhantomCryptoPhantomSharedSecret({
+    required String mySecretKeyB64,
+    required String theirPublicKeyB64,
+  }) async => 'mock_shared_secret_b64';
+
+  // --- Phantom session bridge mocks ---
+
+  @override
+  Future<UnsignedRegisterTx> crateApiSessionBuildRegisterTxForPhantom({
+    required String storagePath,
+    required String rpcUrl,
+    required String ownerPubkeyB58,
+    required String ephemeralPubkeyB58,
+    required String ephemeralSecretKeyB58,
+    required String targetProgram,
+    required List<String> scopes,
+    required BigInt spendingLimit,
+    required PlatformInt64 durationSecs,
+    required BigInt perTxLimit,
+    required int dailyTxCountLimit,
+    String? tokenMint,
+  }) async =>
+      UnsignedRegisterTx(
+        unsignedTxB58: 'mock_phantom_unsigned_tx',
+        sessionPda: 'mock_phantom_pda',
+        ephemeralPubkey: ephemeralPubkeyB58,
+      );
+
+  @override
+  Future<String> crateApiSessionBroadcastSignedTx({
+    required String rpcUrl,
+    required String signedTxB58,
+  }) async => 'mock_broadcast_tx_sig';
+
+  @override
+  Future<SessionKeyInfo> crateApiSessionFinalizePhantomSessionKey({
+    required String storagePath,
+    required String ephemeralPubkey,
+    required String txSignature,
+    required String sessionPda,
+  }) async =>
+      SessionKeyInfo(
+        ephemeralPubkey: ephemeralPubkey,
+        ephemeralSecretKey: 'mockSecretKey',
+        expiresAt: DateTime.now().millisecondsSinceEpoch + 3600000,
+        spendingLimit: BigInt.from(5000000000),
+        scopes: ['sol:transfer', 'spl:transfer'],
+        txSignature: txSignature,
+        sessionPda: sessionPda,
+      );
+
+  @override
+  Future<void> crateApiSimpleRegisterMcpPeer({
+    required String storagePath,
+    required String mcpDid,
+    required String mcpDidDocJson,
+  }) async {}
 }
 
 void main() {

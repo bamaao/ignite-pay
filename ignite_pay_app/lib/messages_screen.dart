@@ -359,7 +359,7 @@ class _MessageTile extends StatelessWidget {
             if (_msgType == _MsgType.payment && msg.amount != null) ...[
               const SizedBox(width: 8),
               Text(
-                '${(msg.amount! / 1e9).toStringAsFixed(4)} SOL',
+                _formatAmount(msg.amount!),
                 style: GoogleFonts.jetBrainsMono(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
@@ -381,12 +381,26 @@ class _MessageTile extends StatelessWidget {
     return did;
   }
 
+  /// Format amount with correct token label based on tokenMint.
+  String _formatAmount(int amount) {
+    const usdcMints = [
+      'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+      '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+    ];
+    final mint = msg.tokenMint ?? msg.newSessionKeyTokenMint;
+    if (mint != null && usdcMints.contains(mint)) {
+      return '${(amount / 1e6).toStringAsFixed(4)} USDC';
+    }
+    return '${(amount / 1e9).toStringAsFixed(4)} SOL';
+  }
+
   void _handleTap(BuildContext context) {
     if (_msgType == _MsgType.payment) {
       final request = AuthRequest(
         paymentId: msg.paymentId ?? '',
         merchantDid: msg.merchantDid ?? '',
         amount: msg.amount ?? 0,
+        tokenMint: msg.tokenMint ?? msg.newSessionKeyTokenMint,
         description: msg.description ?? '',
       );
       showX402Challenge(context, request: request);
@@ -406,6 +420,18 @@ class _MessageTile extends StatelessWidget {
 class _MessageDetailDialog extends StatelessWidget {
   final DecryptedMsg msg;
   const _MessageDetailDialog({required this.msg});
+
+  String _formatAmountDetail(int amount) {
+    const usdcMints = [
+      'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+      '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+    ];
+    final mint = msg.tokenMint ?? msg.newSessionKeyTokenMint;
+    if (mint != null && usdcMints.contains(mint)) {
+      return '${(amount / 1e6).toStringAsFixed(6)} USDC';
+    }
+    return '${(amount / 1e9).toStringAsFixed(6)} SOL';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -440,7 +466,7 @@ class _MessageDetailDialog extends StatelessWidget {
             if (msg.paymentId != null) _field('Payment ID', msg.paymentId!),
             if (msg.merchantDid != null) _field('Merchant', msg.merchantDid!),
             if (msg.amount != null)
-              _field('Amount', '${(msg.amount! / 1e9).toStringAsFixed(6)} SOL'),
+              _field('Amount', _formatAmountDetail(msg.amount!)),
             if (msg.description != null) _field('Description', msg.description!),
             if (msg.listCid != null) _field('List CID', msg.listCid!),
             if (msg.listType != null) _field('List Type', msg.listType!),

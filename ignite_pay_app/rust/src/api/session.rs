@@ -11,8 +11,34 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha2::Digest;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Request a devnet SOL airdrop (2 SOL) to the given pubkey.
+async fn devnet_airdrop(rpc_url: &str, pubkey_b58: &str) -> Result<String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(rpc_url)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "requestAirdrop",
+            "params": [pubkey_b58, 2_000_000_000]
+        }))
+        .send()
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
+    if let Some(err) = body.get("error") {
+        return Err(anyhow::anyhow!("Airdrop failed: {}", err));
+    }
+    let signature = body["result"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("No airdrop signature in response"))?;
+    // Wait for confirmation
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    Ok(signature.to_string())
+}
 
 /// Session key information exposed to Flutter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,14 +168,30 @@ pub async fn create_and_register_session_key(
     let ephemeral_pubkey_bytes = ephemeral_pubkey.to_bytes();
     let ephemeral_secret_bytes = ephemeral_signing.to_bytes();
 
-    // 2. Decode owner keypair
-    let owner_keypair_bytes = bs58::decode(&owner_secret_key).into_vec()?;
-    if owner_keypair_bytes.len() != 64 {
-        return Err(anyhow::anyhow!("Invalid owner keypair length"));
-    }
-    let owner_signing =
-        ed25519_dalek::SigningKey::from_bytes(&owner_keypair_bytes[..32].try_into().unwrap());
-    let owner_pubkey_bytes = owner_signing.verifying_key().to_bytes();
+    // 2. Decode owner keypair (derive from DID if empty)
+    let (owner_keypair_bytes, owner_signing, owner_pubkey_bytes) = if owner_secret_key.is_empty() {
+        let identity_mgr = crate::api::identity::IdentityManager::new(&storage_path)?;
+        let did = identity_mgr.did();
+        let owner_seed = sha2::Sha256::digest(did.as_bytes());
+        let owner_seed_bytes: &[u8; 32] = owner_seed
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid seed length"))?;
+        let signing = ed25519_dalek::SigningKey::from_bytes(owner_seed_bytes);
+        let pubkey = signing.verifying_key().to_bytes();
+        let mut kp_bytes = signing.to_bytes().to_vec();
+        kp_bytes.extend_from_slice(&pubkey);
+        (kp_bytes, signing, pubkey)
+    } else {
+        let kp_bytes = bs58::decode(&owner_secret_key).into_vec()?;
+        if kp_bytes.len() != 64 {
+            return Err(anyhow::anyhow!("Invalid owner keypair length"));
+        }
+        let signing =
+            ed25519_dalek::SigningKey::from_bytes(&kp_bytes[..32].try_into().unwrap());
+        let pubkey = signing.verifying_key().to_bytes();
+        (kp_bytes, signing, pubkey)
+    };
 
     // 3. Derive session PDA
     // PDA seeds: ["session", owner.as_ref(), ephemeral.as_ref()]
@@ -526,6 +568,41 @@ pub async fn register_and_fund_session_key(
         owner_secret_key
     };
 
+    // 0. Extract owner pubkey for airdrop check
+    let owner_kp_bytes = bs58::decode(&resolved_owner_key).into_vec()?;
+    if owner_kp_bytes.len() != 64 {
+        return Err(anyhow::anyhow!("Invalid owner keypair length"));
+    }
+    let owner_pubkey_bytes = &owner_kp_bytes[32..64];
+    let owner_pubkey_b58 = bs58::encode(owner_pubkey_bytes).into_string();
+
+    // Check owner SOL balance, airdrop if needed (devnet)
+    {
+        let client = reqwest::Client::new();
+        let resp: serde_json::Value = client
+            .post(&rpc_url)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getBalance",
+                "params": [&owner_pubkey_b58]
+            }))
+            .send()
+            .await?
+            .json()
+            .await?;
+        let balance: u64 = resp
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        // If owner has less than needed (sol_funding + rent), request airdrop
+        let needed = sol_funding + 5_000_000; // extra for rent + fees
+        if balance < needed {
+            let _ = devnet_airdrop(&rpc_url, &owner_pubkey_b58).await;
+        }
+    }
+
     // 1. Register on-chain
     let info = register_external_session_key(
         storage_path,
@@ -590,7 +667,7 @@ fn is_on_curve(point: &[u8; 32]) -> bool {
 
 /// Get the session program ID bytes.
 fn get_session_program_id_bytes() -> [u8; 32] {
-    bs58::decode("6EFvVTh7rEBpHH2JGryjKQmBLRtbYtSEerGNfkHqKiei")
+    bs58::decode("Avu35SYnvcSpWeYQhC7w2XT6DCurhnYB5PdajTqet9o")
         .into_vec()
         .unwrap()
         .try_into()
@@ -1025,6 +1102,242 @@ pub async fn build_unsigned_register_tx(
     })
 }
 
+/// Build an unsigned register-session-key transaction for an external wallet (e.g. Phantom).
+/// The owner is the wallet's public key (placeholder signature), and the ephemeral key
+/// (provided by MCP) is pre-signed locally. The transaction has 2 signature slots:
+///   slot 0: owner (Phantom wallet) — placeholder (64 zero bytes)
+///   slot 1: ephemeral (MCP key) — pre-signed
+///
+/// After Phantom signs via `signTransaction`, call `complete_register_with_signature`
+/// to fill in the owner signature and broadcast.
+pub async fn build_register_tx_for_phantom(
+    storage_path: String,
+    rpc_url: String,
+    owner_pubkey_b58: String,
+    ephemeral_pubkey_b58: String,
+    ephemeral_secret_key_b58: String,
+    target_program: String,
+    scopes: Vec<String>,
+    spending_limit: u64,
+    duration_secs: i64,
+    per_tx_limit: u64,
+    daily_tx_count_limit: u32,
+    token_mint: Option<String>,
+) -> Result<UnsignedRegisterTx> {
+    let db = sled::open(&storage_path)?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
+    let expires_at = now + duration_secs;
+
+    // Parse owner pubkey (Phantom wallet)
+    let owner_pubkey_bytes: [u8; 32] = bs58::decode(&owner_pubkey_b58)
+        .into_vec()?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid owner pubkey"))?;
+
+    // Parse ephemeral keypair (from MCP)
+    let ephemeral_secret_bytes = bs58::decode(&ephemeral_secret_key_b58).into_vec()?;
+    // Support both 32-byte seed and 64-byte expanded keypair
+    let ephemeral_signing = if ephemeral_secret_bytes.len() == 32 {
+        let seed: [u8; 32] = ephemeral_secret_bytes.try_into().unwrap();
+        ed25519_dalek::SigningKey::from_bytes(&seed)
+    } else if ephemeral_secret_bytes.len() == 64 {
+        let expanded: [u8; 64] = ephemeral_secret_bytes.try_into().unwrap();
+        ed25519_dalek::SigningKey::from_bytes(&expanded[..32].try_into().unwrap())
+    } else {
+        return Err(anyhow::anyhow!("Invalid ephemeral secret key length: {}", ephemeral_secret_bytes.len()));
+    };
+    let ephemeral_pubkey_bytes = ephemeral_signing.verifying_key().to_bytes();
+
+    // Verify the provided pubkey matches
+    let expected_pubkey: [u8; 32] = bs58::decode(&ephemeral_pubkey_b58)
+        .into_vec()?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid ephemeral pubkey"))?;
+    if ephemeral_pubkey_bytes != expected_pubkey {
+        return Err(anyhow::anyhow!("Ephemeral pubkey mismatch"));
+    }
+
+    // Derive session PDA
+    let session_pda = derive_session_pda_simple(&owner_pubkey_bytes, &ephemeral_pubkey_bytes);
+
+    // Parse target program
+    let target_program_bytes: [u8; 32] = bs58::decode(&target_program)
+        .into_vec()?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid target program"))?;
+
+    // Parse token mint
+    let token_mint_bytes: [u8; 32] = match &token_mint {
+        Some(mint) => bs58::decode(mint)
+            .into_vec()?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid token mint"))?,
+        None => [0u8; 32],
+    };
+
+    let ix_data = build_register_ix_data(
+        &target_program_bytes,
+        expires_at,
+        spending_limit,
+        &scopes,
+        &token_mint_bytes,
+        per_tx_limit,
+        daily_tx_count_limit,
+    );
+
+    // Fetch blockhash
+    let client = reqwest::Client::new();
+    let blockhash = get_recent_blockhash(&client, &rpc_url).await?;
+    let blockhash_bytes = bs58::decode(&blockhash).into_vec()?;
+    if blockhash_bytes.len() != 32 {
+        return Err(anyhow::anyhow!("Invalid blockhash"));
+    }
+    let blockhash_arr: [u8; 32] = blockhash_bytes.try_into().unwrap();
+
+    let system_program: [u8; 32] = [
+        0x06, 0x9b, 0x88, 0x64, 0xd1, 0x6a, 0xed, 0x71, 0x48, 0xb5, 0xd0, 0x40, 0xb1, 0x3e, 0xa0,
+        0x17, 0x42, 0xaf, 0x28, 0x37, 0xa0, 0xc8, 0x72, 0x21, 0x53, 0x25, 0x04, 0xb2, 0x5d, 0x2d,
+        0x5e, 0x06,
+    ];
+    let clock_sysvar: [u8; 32] = [
+        0x06, 0xa7, 0xd5, 0xde, 0x18, 0x4a, 0x62, 0xa4, 0x54, 0xd2, 0x8d, 0x8c, 0xf2, 0xf4, 0xdc,
+        0xb2, 0x3d, 0x50, 0x25, 0x6b, 0x3e, 0xfb, 0x75, 0xbf, 0x15, 0xbe, 0x6e, 0x2a, 0xb1, 0xc8,
+        0x91, 0x24,
+    ];
+
+    let session_program_id = get_session_program_id_bytes();
+    let account_keys: Vec<[u8; 32]> = vec![
+        owner_pubkey_bytes,      // 0: owner (signer, writable) — Phantom wallet
+        ephemeral_pubkey_bytes,  // 1: ephemeral (signer, readonly) — MCP key
+        session_pda,             // 2: session PDA (writable, non-signer)
+        session_program_id,      // 3: session program (readonly, non-signer)
+        target_program_bytes,    // 4: target program (readonly, non-signer)
+        system_program,          // 5: system program (readonly, non-signer)
+        clock_sysvar,            // 6: clock sysvar (readonly, non-signer)
+    ];
+
+    let mut message = Vec::new();
+    message.push(2); // num_required_signatures
+    message.push(1); // num_readonly_signed (ephemeral)
+    message.push(4); // num_readonly_unsigned
+    compact_u64_encode(&mut message, account_keys.len() as u64);
+    for key in &account_keys {
+        message.extend_from_slice(key);
+    }
+    message.extend_from_slice(&blockhash_arr);
+    compact_u64_encode(&mut message, 1); // 1 instruction
+    message.push(3); // program_id_index = session program
+    let ix_accounts: Vec<u8> = vec![2, 0, 1, 4, 5, 6]; // session_pda, owner, ephemeral, target, system, clock
+    compact_u64_encode(&mut message, ix_accounts.len() as u64);
+    message.extend_from_slice(&ix_accounts);
+    compact_u64_encode(&mut message, ix_data.len() as u64);
+    message.extend_from_slice(&ix_data);
+
+    // Sign message with ephemeral key (owner slot left as zeros for Phantom)
+    use ed25519_dalek::Signer;
+    let msg_hash = {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&message);
+        let hash = hasher.finalize();
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&hash);
+        arr
+    };
+    let ephemeral_sig = ephemeral_signing.sign(&msg_hash).to_bytes();
+
+    // Build transaction: 2 signatures (owner placeholder + ephemeral pre-signed) + message
+    let mut tx = Vec::new();
+    compact_u64_encode(&mut tx, 2);
+    tx.extend_from_slice(&[0u8; 64]); // placeholder owner signature
+    tx.extend_from_slice(&ephemeral_sig);
+    tx.extend_from_slice(&message);
+
+    let unsigned_tx_b58 = bs58::encode(&tx).into_string();
+    let ephemeral_pubkey_b58_out = bs58::encode(&ephemeral_pubkey_bytes).into_string();
+    let session_pda_b58 = bs58::encode(&session_pda).into_string();
+
+    // Store pending keypair (same format as build_unsigned_register_tx)
+    let ephemeral_secret_32 = ephemeral_signing.to_bytes();
+    let pending_key = format!("pending:{}", ephemeral_pubkey_b58_out);
+    let mut pending_value = Vec::new();
+    pending_value.extend_from_slice(&ephemeral_secret_32);
+    pending_value.extend_from_slice(&expires_at.to_le_bytes());
+    pending_value.extend_from_slice(&spending_limit.to_le_bytes());
+    pending_value.extend_from_slice(&per_tx_limit.to_le_bytes());
+    pending_value.extend_from_slice(&daily_tx_count_limit.to_le_bytes());
+    db.insert(pending_key.as_bytes(), pending_value)?;
+
+    Ok(UnsignedRegisterTx {
+        unsigned_tx_b58,
+        session_pda: session_pda_b58,
+        ephemeral_pubkey: ephemeral_pubkey_b58_out,
+    })
+}
+
+/// Broadcast a fully-signed base58-encoded transaction to the Solana cluster.
+pub async fn broadcast_signed_tx(
+    rpc_url: String,
+    signed_tx_b58: String,
+) -> Result<String> {
+    let tx_bytes = bs58::decode(&signed_tx_b58).into_vec()?;
+    let client = reqwest::Client::new();
+    let signature = send_transaction(&client, &rpc_url, &tx_bytes).await?;
+    Ok(signature)
+}
+
+/// Finalize a Phantom-signed session key registration.
+/// Moves the key from `pending:{pubkey}` to `session:{pubkey}` in sled storage
+/// after the transaction has been successfully broadcast.
+pub fn finalize_phantom_session_key(
+    storage_path: String,
+    ephemeral_pubkey: String,
+    tx_signature: String,
+    session_pda: String,
+) -> Result<SessionKeyInfo> {
+    let db = sled::open(&storage_path)?;
+
+    let pending_key = format!("pending:{}", ephemeral_pubkey);
+    let pending_value = db
+        .remove(pending_key.as_bytes())?
+        .ok_or_else(|| anyhow::anyhow!("No pending session key for {}", ephemeral_pubkey))?;
+
+    // Parse pending value
+    // Layout: [32-byte seed | 8-byte expires_at | 8-byte spending_limit | 8-byte per_tx_limit | 4-byte daily_tx_count_limit]
+    if pending_value.len() < 60 {
+        return Err(anyhow::anyhow!("Invalid pending session key data: {} bytes", pending_value.len()));
+    }
+    let ephemeral_secret_32: [u8; 32] = pending_value[..32].try_into().unwrap();
+    // Build 64-byte expanded keypair for storage consistency
+    let ephemeral_signing = ed25519_dalek::SigningKey::from_bytes(&ephemeral_secret_32);
+    let ephemeral_pubkey_bytes = ephemeral_signing.verifying_key().to_bytes();
+    let ephemeral_secret_64 = ephemeral_signing.to_bytes();
+    let expires_at = i64::from_le_bytes(pending_value[32..40].try_into().unwrap());
+    let spending_limit = u64::from_le_bytes(pending_value[40..48].try_into().unwrap());
+    let per_tx_limit = u64::from_le_bytes(pending_value[48..56].try_into().unwrap());
+    let daily_tx_count_limit = u32::from_le_bytes(pending_value[56..60].try_into().unwrap());
+
+    // Store permanently
+    let perm_key = format!("session:{}", ephemeral_pubkey);
+    let mut perm_value = Vec::new();
+    perm_value.extend_from_slice(&ephemeral_secret_64);
+    perm_value.extend_from_slice(&expires_at.to_le_bytes());
+    perm_value.extend_from_slice(&spending_limit.to_le_bytes());
+    perm_value.extend_from_slice(&per_tx_limit.to_le_bytes());
+    perm_value.extend_from_slice(&daily_tx_count_limit.to_le_bytes());
+    db.insert(perm_key.as_bytes(), perm_value)?;
+
+    Ok(SessionKeyInfo {
+        ephemeral_pubkey,
+        ephemeral_secret_key: bs58::encode(&ephemeral_secret_64).into_string(),
+        expires_at,
+        spending_limit,
+        scopes: vec!["sol:transfer".to_string(), "spl:transfer".to_string()],
+        tx_signature: Some(tx_signature),
+        session_pda: Some(session_pda),
+    })
+}
+
 /// Complete session key registration after receiving the owner signature from an external wallet.
 /// Reconstructs the signed transaction, submits it, and moves the key from pending to permanent storage.
 pub async fn complete_register_with_signature(
@@ -1345,6 +1658,9 @@ pub fn load_merchant_policy(
 /// The first signature slot is filled with 64 zero bytes (placeholder) so that
 /// the receiving wallet can replace it with the real signature.
 ///
+/// The `merchant_did` parameter accepts either a DID string (`did:ignite:z...`)
+/// or a raw base58-encoded Solana pubkey (for funding arbitrary addresses).
+///
 /// Returns the base58-encoded unsigned transaction bytes.
 pub async fn build_unsigned_transfer_tx(
     rpc_url: String,
@@ -1352,9 +1668,20 @@ pub async fn build_unsigned_transfer_tx(
     merchant_did: String,
     amount_lamports: u64,
 ) -> Result<String> {
-    // 1. Extract merchant Solana address from DID
-    let merchant_pubkey = ignite_pay_core::identity::extract_pubkey_from_did(&merchant_did)
-        .ok_or_else(|| anyhow::anyhow!("Cannot extract Solana pubkey from merchant DID: {}", merchant_did))?;
+    // Extract recipient Solana address from DID or raw base58 pubkey
+    let merchant_pubkey = if merchant_did.starts_with("did:") {
+        ignite_pay_core::identity::extract_pubkey_from_did(&merchant_did)
+            .ok_or_else(|| anyhow::anyhow!("Cannot extract Solana pubkey from merchant DID: {}", merchant_did))?
+    } else {
+        // Treat as raw base58 pubkey (e.g. for funding session keys)
+        let bytes = bs58::decode(&merchant_did).into_vec()?;
+        if bytes.len() != 32 {
+            return Err(anyhow::anyhow!("Invalid recipient pubkey length: expected 32, got {}", bytes.len()));
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+        arr
+    };
 
     // 2. Decode wallet pubkey
     let wallet_pubkey = bs58::decode(&wallet_pubkey_b58)

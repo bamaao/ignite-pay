@@ -17,6 +17,7 @@ pub mod identity;
 pub mod log_store;
 pub mod mb_voucher;
 pub mod notification;
+pub mod phantom_crypto;
 pub mod session;
 pub mod simple;
 pub mod ws_client;

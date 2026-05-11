@@ -54,12 +54,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   // Step 2: Mediator config
   final _mediatorController = TextEditingController(
-    text: 'wss://relay.ignite.did',
+    text: 'ws://192.168.0.101:8080/ws',
   );
 
   // Step 2b: Hub registry URL
   final _hubRegistryController = TextEditingController(
-    text: 'http://localhost:3004',
+    text: 'http://192.168.0.101:8081',
   );
 
   // Step 2c: connecting state

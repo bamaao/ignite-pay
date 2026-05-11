@@ -228,6 +228,7 @@ impl IgnitePayCore {
                 &merchant_did,
                 amount,
                 "Payment authorization request",
+                None,
             );
 
             let jwe = {

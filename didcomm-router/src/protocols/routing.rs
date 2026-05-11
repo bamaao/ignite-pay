@@ -41,6 +41,10 @@ pub async fn handle_forward(msg: &Message, state: &RouterState) -> Result<()> {
 
     // Extract the inner encrypted message from attachments
     let inner_msg = extract_inner_forward(msg)?;
+    let inner_preview = if inner_msg.len() > 200 { &inner_msg[..200] } else { &inner_msg };
+    let has_ciphertext = inner_msg.contains("\"ciphertext\"");
+    let has_type = inner_msg.contains("\"type\"");
+    info!("Forward inner_msg: len={}, has_ciphertext={}, has_type={}, preview={}", inner_msg.len(), has_ciphertext, has_type, inner_preview);
 
     // Look up which session owns this recipient DID via the keylist.
     // Try exact match first, then prefix match (handles DID without fragment vs keylist with #key-1).
@@ -161,13 +165,22 @@ pub async fn handle_forward(msg: &Message, state: &RouterState) -> Result<()> {
 }
 
 /// Extract the inner encrypted message from a forward message's attachments.
+/// Extract the inner value from a `serde_json::Value`.
+/// If the value is a string, return the inner string directly (avoids double-quoting).
+/// Otherwise, serialize it to a JSON string.
+fn value_to_raw_string(v: &serde_json::Value) -> Result<String> {
+    match v {
+        serde_json::Value::String(s) => Ok(s.clone()),
+        other => serde_json::to_string(other).map_err(RouterError::Serialization),
+    }
+}
+
 fn extract_inner_forward(msg: &Message) -> Result<String> {
     // First try the structured attachments field
     if let Some(attachments) = &msg.attachments {
         if let Some(first) = attachments.first() {
             if let Some(json) = &first.data.json {
-                return serde_json::to_string(json)
-                    .map_err(RouterError::Serialization);
+                return value_to_raw_string(json);
             }
             if let Some(b64) = &first.data.base64 {
                 return Ok(b64.clone());
@@ -180,8 +193,7 @@ fn extract_inner_forward(msg: &Message) -> Result<String> {
         if let Some(arr) = attachments.as_array() {
             if let Some(first) = arr.first() {
                 if let Some(json) = first.get("data").and_then(|d| d.get("json")) {
-                    return serde_json::to_string(json)
-                        .map_err(RouterError::Serialization);
+                    return value_to_raw_string(json);
                 }
             }
         }

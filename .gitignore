@@ -124,3 +124,16 @@ generate-pptx*.js
 
 # Claude Code
 .claude/
+
+# Build outputs
+*.apk
+
+# Runtime logs
+*.log
+mcp-stdout.log
+mcp-stderr.log
+
+# Temp/dev files
+NUL
+clear_pairing.rs
+~$*

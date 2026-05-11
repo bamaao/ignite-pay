@@ -11,6 +11,10 @@ zk-compression = ["ignite-pay-core/zk-compression", "ignite-pay-solana/zk-compre
 name = "ignite-pay-mcp"
 path = "src/main.rs"
 
+[[bin]]
+name = "clear-pairing"
+path = "clear_pairing.rs"
+
 [dependencies]
 # Shared library
 ignite-pay-core = { path = "../ignite-pay-core", features = ["solana", "kubo"] }

@@ -54,7 +54,12 @@ PRODUCTS = {p["id"]: p for p in CONFIG["products"]}
 X402_NETWORK = CONFIG["solana"]["network"]
 X402_SCHEME = CONFIG["x402"]["scheme"]
 X402_ASSET_NATIVE = CONFIG["solana"]["asset_native"]
+X402_ASSET_DECIMALS = CONFIG["solana"].get("asset_decimals", 9)
 X402_MAX_TIMEOUT = CONFIG["x402"]["maxTimeoutSeconds"]
+
+# Detect payment mode: SOL (wrapped SOL mint) vs SPL token (e.g. USDC)
+SOL_MINT = "So11111111111111111111111111111111111111112"
+IS_SOL_PAYMENT = (X402_ASSET_NATIVE == SOL_MINT)
 
 # ---------------------------------------------------------------------------
 # In-memory order store
@@ -73,13 +78,13 @@ app = FastAPI(title="Ignite Demo Store", version="0.1.0")
 # Helpers
 # ---------------------------------------------------------------------------
 
-def make_payment_requirements(amount_lamports: int) -> dict:
+def make_payment_requirements(amount_units: int) -> dict:
     """Build a Coinbase x402 PaymentRequirements object for Solana."""
     return {
         "scheme": X402_SCHEME,
         "network": X402_NETWORK,
         "maxTimeoutSeconds": X402_MAX_TIMEOUT,
-        "amount": str(amount_lamports),
+        "amount": str(amount_units),
         "asset": X402_ASSET_NATIVE,
         "payTo": PAYMENT_ADDRESS,
         "extra": {
@@ -90,7 +95,7 @@ def make_payment_requirements(amount_lamports: int) -> dict:
 
 def make_402_challenge(order_id: str, product: dict) -> JSONResponse:
     """Build a Coinbase x402 HTTP 402 response with standard PaymentRequirements."""
-    payment_req = make_payment_requirements(product["price_lamports"])
+    payment_req = make_payment_requirements(product["price_units"])
     payment_req_b64 = base64.b64encode(
         json.dumps(payment_req).encode()
     ).decode()
@@ -110,7 +115,7 @@ def make_402_challenge(order_id: str, product: dict) -> JSONResponse:
 
 
 def verify_on_chain_tx(tx_signature: str, expected_amount: int, recipient: str) -> bool:
-    """Call Solana RPC getTransaction to verify a SOL transfer."""
+    """Call Solana RPC getTransaction to verify a SOL or SPL token transfer."""
     try:
         client = SolanaClient(SOLANA_RPC)
         resp = client.get_transaction(
@@ -126,19 +131,65 @@ def verify_on_chain_tx(tx_signature: str, expected_amount: int, recipient: str) 
         if not meta or meta.err:
             return False
 
-        # Check post-balances for a transfer to the recipient.
-        account_keys = tx.transaction.transaction.message.account_keys
-        post_balances = meta.post_balances
-        pre_balances = meta.pre_balances
+        if IS_SOL_PAYMENT:
+            # Native SOL transfer: check post_balances
+            account_keys = tx.transaction.transaction.message.account_keys
+            post_balances = meta.post_balances
+            pre_balances = meta.pre_balances
 
-        for i, key in enumerate(account_keys):
-            if str(key) == recipient:
-                diff = post_balances[i] - pre_balances[i]
-                if diff >= expected_amount:
-                    return True
-        return False
+            for i, key in enumerate(account_keys):
+                if str(key) == recipient:
+                    diff = post_balances[i] - pre_balances[i]
+                    if diff >= expected_amount:
+                        return True
+            return False
+        else:
+            # SPL token transfer: check inner instructions for Token Transfer
+            return _verify_spl_transfer(meta, expected_amount, recipient)
     except Exception:
         return False
+
+
+def _verify_spl_transfer(meta, expected_amount: int, recipient: str) -> bool:
+    """Verify an SPL token transfer by checking inner instructions."""
+    # Check pre/post token balances
+    if meta.post_token_balances and meta.pre_token_balances:
+        post_by_account = {}
+        for tb in meta.post_token_balances:
+            acct = str(tb.account_index)
+            post_by_account[acct] = int(tb.ui_token_amount.amount)
+
+        pre_by_account = {}
+        for tb in meta.pre_token_balances:
+            acct = str(tb.account_index)
+            pre_by_account[acct] = int(tb.ui_token_amount.amount)
+
+        # Look for an account where the balance increased by >= expected_amount
+        # and the mint matches our asset
+        for tb in meta.post_token_balances:
+            if str(tb.mint) != X402_ASSET_NATIVE:
+                continue
+            acct_idx = str(tb.account_index)
+            post_amt = post_by_account.get(acct_idx, 0)
+            pre_amt = pre_by_account.get(acct_idx, 0)
+            diff = post_amt - pre_amt
+            if diff >= expected_amount:
+                return True
+
+    # Fallback: check parsed inner instructions for Transfer/TransferChecked
+    if meta.inner_instructions:
+        for inner in meta.inner_instructions:
+            for ix in inner.instructions:
+                if hasattr(ix, 'parsed') and ix.parsed:
+                    parsed = ix.parsed
+                    if isinstance(parsed, dict) and parsed.get("type") in ("transfer", "transferChecked"):
+                        info = parsed.get("info", {})
+                        dest = info.get("destination", info.get("dest", ""))
+                        amount = int(info.get("amount", "0"))
+                        # Check if destination is the recipient's ATA and amount matches
+                        if amount >= expected_amount:
+                            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -156,13 +207,16 @@ def health():
 
 @app.get("/products")
 def list_products():
+    divisor = 10 ** X402_ASSET_DECIMALS
+    label = "USDC" if not IS_SOL_PAYMENT else "SOL"
     return {
         "products": [
             {
                 "id": p["id"],
                 "name": p["name"],
-                "price_lamports": p["price_lamports"],
-                "price_sol": p["price_lamports"] / 1_000_000_000,
+                "price_units": p["price_units"],
+                f"price_{label.lower()}": p["price_units"] / divisor,
+                "asset": X402_ASSET_NATIVE,
             }
             for p in CONFIG["products"]
         ]
@@ -183,7 +237,7 @@ async def create_order(request: Request, x_payment_proof: Optional[str] = Header
     # If a payment proof (tx signature) is supplied, verify and confirm immediately.
     if x_payment_proof:
         verified = verify_on_chain_tx(
-            x_payment_proof, product["price_lamports"], PAYMENT_ADDRESS
+            x_payment_proof, product["price_units"], PAYMENT_ADDRESS
         )
         if not verified:
             raise HTTPException(status_code=400, detail="Payment verification failed")
@@ -192,7 +246,8 @@ async def create_order(request: Request, x_payment_proof: Optional[str] = Header
             "id": order_id,
             "product_id": product_id,
             "product_name": product["name"],
-            "amount_lamports": product["price_lamports"],
+            "amount_units": product["price_units"],
+            "asset": X402_ASSET_NATIVE,
             "status": "paid",
             "tx_signature": x_payment_proof,
             "created_at": time.time(),
@@ -206,7 +261,8 @@ async def create_order(request: Request, x_payment_proof: Optional[str] = Header
         "id": order_id,
         "product_id": product_id,
         "product_name": product["name"],
-        "amount_lamports": product["price_lamports"],
+        "amount_units": product["price_units"],
+        "asset": X402_ASSET_NATIVE,
         "status": "pending_payment",
         "created_at": time.time(),
     }
@@ -258,7 +314,7 @@ async def verify_tx(order_id: str, request: Request):
     if not tx_signature:
         raise HTTPException(status_code=400, detail="tx_signature is required")
 
-    verified = verify_on_chain_tx(tx_signature, order["amount_lamports"], PAYMENT_ADDRESS)
+    verified = verify_on_chain_tx(tx_signature, order["amount_units"], PAYMENT_ADDRESS)
     if not verified:
         raise HTTPException(status_code=400, detail="Payment verification failed")
 

@@ -9,12 +9,13 @@
     "rpc_url": "https://api.devnet.solana.com",
     "session_program_id": "Avu35SYnvcSpWeYQhC7w2XT6DCurhnYB5PdajTqet9o",
     "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
-    "asset_native": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+    "asset_native": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    "asset_decimals": 6
   },
   "x402": {"scheme": "exact", "maxTimeoutSeconds": 60},
   "products": [
-    {"id": "coffee", "name": "Coffee", "price_lamports": 100000},
-    {"id": "sandwich", "name": "Sandwich", "price_lamports": 250000},
-    {"id": "juice", "name": "Juice", "price_lamports": 150000}
+    {"id": "coffee", "name": "Coffee", "price_units": 100000},
+    {"id": "sandwich", "name": "Sandwich", "price_units": 250000},
+    {"id": "juice", "name": "Juice", "price_units": 150000}
   ]
 }

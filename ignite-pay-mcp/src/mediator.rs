@@ -108,6 +108,20 @@ fn load_phone_mediator_http_url(db: &sled::Db) -> Option<String> {
         .map(|v| String::from_utf8_lossy(&v).to_string())
 }
 
+fn save_phone_did_doc(db: &sled::Db, doc: &serde_json::Value) {
+    if let Ok(bytes) = serde_json::to_vec(doc) {
+        let _ = db.insert("__phone_did_doc__", bytes);
+        let _ = db.flush();
+    }
+}
+
+fn load_phone_did_doc(db: &sled::Db) -> Option<serde_json::Value> {
+    db.get("__phone_did_doc__")
+        .ok()
+        .flatten()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+}
+
 impl std::fmt::Debug for MediatorConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MediatorConnection")
@@ -138,7 +152,15 @@ impl MediatorConnection {
         let did_doc = build_did_document(&did, &identity);
         let signing_private = identity.signing_private
             .ok_or_else(|| anyhow::anyhow!("no signing key in identity"))?;
-        let (agent, _) = didcomm::create_agent(identity);
+        let (mut agent, _) = didcomm::create_agent(identity);
+
+        // Restore phone peer from saved DID document (needed after restart)
+        if let (Some(phone_did), Some(phone_doc)) = (load_paired_phone(db), load_phone_did_doc(db)) {
+            if let Some(resolved) = parse_did_document(&phone_did, &phone_doc) {
+                agent.add_peer(resolved);
+                tracing::info!("Restored phone peer from DB: {}", phone_did);
+            }
+        }
 
         let (outgoing_tx, _outgoing_rx) = mpsc::unbounded_channel();
 
@@ -348,6 +370,7 @@ impl MediatorConnection {
                     &payment.description,
                     new_session_key,
                     available_payment_methods.unwrap_or(&[]),
+                    Some(&payment.token),
                 )
             }
         } else {
@@ -361,6 +384,7 @@ impl MediatorConnection {
                     &payment.description,
                     Some(sk),
                     methods,
+                    Some(&payment.token),
                 ),
                 (Some(sk), None) => didcomm::build_authorization_request_with_session_key(
                     &self.our_did,
@@ -380,6 +404,7 @@ impl MediatorConnection {
                     &payment.description,
                     None,
                     methods,
+                    Some(&payment.token),
                 ),
                 (None, None) => didcomm::build_authorization_request(
                     &self.our_did,
@@ -388,11 +413,13 @@ impl MediatorConnection {
                     &payment.merchant_did,
                     payment.amount,
                     &payment.description,
+                    Some(&payment.token),
                 ),
             }
         };
 
         let agent = self.agent.lock().await;
+        tracing::info!("Auth request body for payment {}: token={}, body_token_mint={}", payment.id, payment.token, msg.body.get("token_mint").and_then(|v| v.as_str()).unwrap_or("NONE"));
         let jwe = didcomm::pack_encrypted(&agent, &msg, &self.our_did, phone_did)
             .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
         drop(agent);
@@ -522,33 +549,8 @@ impl MediatorConnection {
 
     /// Send a JWE to the phone's mediator via HTTP POST.
     /// Wraps the JWE in a forward message so the mediator routes it to the phone.
-    /// Uses the mediator's public POST / endpoint (no auth required).
     async fn send_to_phone_mediator(&self, phone_did: &str, jwe: &str) -> Result<()> {
         let phone_http_url = self.phone_mediator_http_url.lock().await.clone();
-
-        // If same mediator, send through our own outgoing channel
-        let same_mediator = match &phone_http_url {
-            Some(url) => {
-                // Derive our own HTTP URL from WS URL for comparison
-                let our_http = self.ws_url
-                    .replace("wss://", "https://")
-                    .replace("ws://", "http://")
-                    .trim_end_matches("/ws")
-                    .to_string() + "/";
-                url == &our_http
-            }
-            None => false,
-        };
-
-        if same_mediator {
-            let sender = self.outgoing.lock().await;
-            sender
-                .send(jwe.to_string())
-                .map_err(|_| anyhow::anyhow!("WebSocket channel closed"))?;
-            return Ok(());
-        }
-
-        // Different mediator — wrap in forward and send via HTTP POST
         let http_url = phone_http_url
             .ok_or_else(|| anyhow::anyhow!("Phone mediator HTTP URL not known (not paired?)"))?;
 
@@ -557,14 +559,14 @@ impl MediatorConnection {
             "id": format!("fwd-{}", uuid::Uuid::new_v4()),
             "body": { "next": phone_did },
             "attachments": [{
-                "data": { "json": serde_json::Value::String(jwe.to_string()) }
+                "data": { "json": serde_json::from_str::<serde_json::Value>(jwe).unwrap_or_else(|_| serde_json::Value::String(jwe.to_string())) }
             }]
         });
 
         let forward_str = serde_json::to_string(&forward_msg)?;
 
         tracing::info!(
-            "Sending forward-wrapped JWE to phone {} via their mediator HTTP {}",
+            "Sending forward-wrapped JWE to phone {} via HTTP {}",
             phone_did,
             http_url
         );
@@ -609,7 +611,7 @@ impl MediatorConnection {
             "id": format!("fwd-{}", uuid::Uuid::new_v4()),
             "body": { "next": target_did },
             "attachments": [{
-                "data": { "json": serde_json::Value::String(jwe.clone()) }
+                "data": { "json": serde_json::from_str::<serde_json::Value>(&jwe).unwrap_or_else(|_| serde_json::Value::String(jwe.clone())) }
             }]
         });
         let forward_str = serde_json::to_string(&forward_msg)?;
@@ -1106,15 +1108,18 @@ async fn handle_incoming_message(
             if let Some(resolved) = parse_did_document(phone_did, phone_doc) {
                 let mut agent_guard = agent.lock().await;
                 agent_guard.add_peer(resolved);
+                save_phone_did_doc(db, phone_doc);
                 tracing::info!("Registered phone peer from DID document: {}", phone_did);
             }
         }
 
-        // Store as pending (not yet fully paired — needs connection-confirm)
+        // Store as pending AND persist to DB immediately so the phone DID
+        // is available for payment flows even if connection-confirm is lost.
         {
             let mut guard = pending_phone.lock().await;
             *guard = Some(phone_did.to_string());
         }
+        save_paired_phone(db, phone_did);
 
         // Store the phone's mediator HTTP URL
         if let Some(ref http_url) = phone_http_url {
@@ -1353,6 +1358,7 @@ async fn process_inner_message(
             if let Some(resolved) = parse_did_document(&phone_did, phone_doc) {
                 let mut agent_guard = agent.lock().await;
                 agent_guard.add_peer(resolved);
+                save_phone_did_doc(db, phone_doc);
                 tracing::info!("Registered phone peer from DID document: {}", phone_did);
             }
         } else {
@@ -1362,11 +1368,13 @@ async fn process_inner_message(
             );
         }
 
-        // Store as pending (not yet fully paired — needs connection-confirm)
+        // Store as pending AND persist to DB immediately so the phone DID
+        // is available for payment flows even if connection-confirm is lost.
         {
             let mut guard = pending_phone.lock().await;
             *guard = Some(phone_did.clone());
         }
+        save_paired_phone(db, &phone_did);
 
         // Store the phone's mediator HTTP URL
         if let Some(ref http_url) = phone_http_url {

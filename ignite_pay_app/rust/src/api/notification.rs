@@ -20,8 +20,11 @@ pub struct DecryptedMessage {
     pub payment_id: Option<String>,
     /// DID of the merchant requesting payment.
     pub merchant_did: Option<String>,
-    /// Amount in lamports.
+    /// Amount in smallest token units (lamports for SOL, micro-units for USDC).
     pub amount: Option<u64>,
+    /// SPL Token mint address for the payment currency (e.g. USDC mint).
+    /// None means SOL.
+    pub token_mint: Option<String>,
     /// Human-readable description of the payment.
     pub description: Option<String>,
     /// IPFS CID for list sync notifications.

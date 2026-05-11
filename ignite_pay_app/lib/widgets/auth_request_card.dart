@@ -34,7 +34,16 @@ class AuthRequestCard extends StatelessWidget {
     this.onReject,
   });
 
-  String get _solAmount {
+  /// USDC mint address prefix
+  static const _usdcMintPrefix = '4zMMC9srt5';
+
+  bool get _isUsdc => request.tokenMint != null && request.tokenMint!.contains(_usdcMintPrefix);
+
+  String get _displayAmount {
+    if (_isUsdc) {
+      final usdc = request.amount / 1000000.0;
+      return '${usdc.toStringAsFixed(2)} USDC';
+    }
     final sol = request.amount / 1000000000.0;
     return '${sol.toStringAsFixed(2)} SOL';
   }
@@ -80,7 +89,7 @@ class AuthRequestCard extends StatelessWidget {
           const SizedBox(height: 16),
           _InfoRow(
             label: 'Amount',
-            value: _solAmount,
+            value: _displayAmount,
             valueColor: _kTextPrimary,
           ),
           const SizedBox(height: 8),

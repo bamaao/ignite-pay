@@ -88,7 +88,7 @@ class _VaultIdentityScreenState extends State<VaultIdentityScreen> {
     });
     try {
       final prefs = await SharedPreferences.getInstance();
-      _mediatorController.text = prefs.getString('mediator_ws_url') ?? 'wss://relay.ignite.did';
+      _mediatorController.text = prefs.getString('mediator_ws_url') ?? 'ws://192.168.0.101:8080/ws';
     } catch (e) {
       _error = e.toString();
     }

@@ -501,6 +501,7 @@ class _McpTile extends StatelessWidget {
     final short = did.length > 32 ? '${did.substring(0, 32)}...' : did;
     final dateStr = '${pairedAt.year}-${pairedAt.month.toString().padLeft(2, '0')}-${pairedAt.day.toString().padLeft(2, '0')} '
         '${pairedAt.hour.toString().padLeft(2, '0')}:${pairedAt.minute.toString().padLeft(2, '0')}';
+    final svc = Provider.of<DidcommService>(context, listen: false);
 
     showDialog(
       context: context,
@@ -534,6 +535,43 @@ class _McpTile extends StatelessWidget {
           ],
         ),
         actions: [
+          TextButton(
+            onPressed: () async {
+              final confirmed = await showDialog<bool>(
+                context: ctx,
+                builder: (c) => AlertDialog(
+                  backgroundColor: kSurfaceDark,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  title: Text('Remove MCP Pairing',
+                      style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600, color: kTextPrimary)),
+                  content: Text('Remove this MCP pairing? You can re-scan the QR code to pair again.',
+                      style: GoogleFonts.inter(fontSize: 13, color: kTextSecondary)),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(c).pop(false),
+                      child: Text('Cancel',
+                          style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: kNeonCyan)),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.of(c).pop(true),
+                      child: Text('Remove',
+                          style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: Colors.red)),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed == true) {
+                await svc.removePairedMcp(did);
+                if (!ctx.mounted) return;
+                Navigator.of(ctx).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('MCP pairing removed', style: GoogleFonts.inter())),
+                );
+              }
+            },
+            child: Text('Remove',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: Colors.red)),
+          ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
             child: Text('Close',
