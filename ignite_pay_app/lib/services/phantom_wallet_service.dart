@@ -14,7 +14,6 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -26,9 +25,9 @@ import 'package:ignite_pay_app/src/rust/api/phantom_crypto.dart' as crypto;
 // Phantom deep link constants
 // ---------------------------------------------------------------------------
 
-const _kPhantomConnectBase = 'https://phantom.app/ul/v1/connect';
-const _kPhantomSignAndSendBase = 'https://phantom.app/ul/v1/signAndSendTransaction';
-const _kPhantomSignOnlyBase = 'https://phantom.app/ul/v1/signTransaction';
+const _kPhantomConnectBase = 'phantom://v1/connect';
+const _kPhantomSignAndSendBase = 'phantom://v1/signAndSendTransaction';
+const _kPhantomSignOnlyBase = 'phantom://v1/signTransaction';
 const _kAppUrl = 'https://ignitepay.app';
 const _kCluster = 'devnet';
 const _kRedirectScheme = 'ignitepay';
@@ -84,7 +83,9 @@ class PhantomWalletService extends ChangeNotifier {
 
   // ── Deep link listener ────────────────────────────────────────────────
 
-  StreamSubscription<Uri>? _deepLinkSub;
+  // Deep link routing is handled centrally by main.dart's _handleDeepLink,
+  // which calls handleConnectCallback / handleSignCallback / handleSignOnlyCallback
+  // directly. No separate listener is needed here.
 
   // ── Public API ────────────────────────────────────────────────────────
 
@@ -133,20 +134,18 @@ class PhantomWalletService extends ChangeNotifier {
 
     final redirect = Uri.encodeFull('$_kRedirectScheme://$_kConnectPath');
     final url = Uri.parse(_kPhantomConnectBase).replace(queryParameters: {
-      'dapp_encryption_public_key': _dappPublicKeyB64,
+      'dapp_encryption_public_key': _b64ToB58(_dappPublicKeyB64!),
       'app_url': _kAppUrl,
       'cluster': _kCluster,
       'redirect_link': redirect,
     });
 
-    // Start listening for the deep link callback before opening Phantom.
+    // Set up completer — main.dart's deep link handler will call handleConnectCallback
     _connectCompleter = Completer<bool>();
-    _startDeepLinkListener();
 
     final launched = await _launchUrl(url);
     if (!launched) {
       AppLogService().error('Phantom', 'Could not launch Phantom connect URL');
-      _stopDeepLinkListener();
       return false;
     }
 
@@ -157,11 +156,9 @@ class PhantomWalletService extends ChangeNotifier {
       return result;
     } on TimeoutException {
       AppLogService().error('Phantom', 'Connect timed out');
-      _stopDeepLinkListener();
       return false;
     } catch (e) {
       AppLogService().error('Phantom', 'Connect failed: $e');
-      _stopDeepLinkListener();
       return false;
     }
   }
@@ -182,7 +179,6 @@ class PhantomWalletService extends ChangeNotifier {
     await prefs.remove(_kPrefsSession);
     await prefs.remove(_kPrefsSharedSecret);
 
-    _stopDeepLinkListener();
     notifyListeners();
     AppLogService().info('Phantom', 'Disconnected');
   }
@@ -216,12 +212,12 @@ class PhantomWalletService extends ChangeNotifier {
       return null;
     }
 
-    // 2. Build the sign deep link.
+    // 2. Build the sign deep link (Phantom expects base58-encoded fields).
     final redirect = Uri.encodeFull('$_kRedirectScheme://$_kSignPath');
     final url = Uri.parse(_kPhantomSignAndSendBase).replace(queryParameters: {
-      'dapp_encryption_public_key': _dappPublicKeyB64,
-      'nonce': nonceB64,
-      'payload': payloadB64,
+      'dapp_encryption_public_key': _b64ToB58(_dappPublicKeyB64!),
+      'nonce': _b64ToB58(nonceB64),
+      'payload': _b64ToB58(payloadB64),
       'session': _sessionToken,
       'redirect_link': redirect,
       'cluster': _kCluster,
@@ -229,12 +225,10 @@ class PhantomWalletService extends ChangeNotifier {
 
     // 3. Launch Phantom and wait for callback.
     _signCompleter = Completer<String?>();
-    _startDeepLinkListener();
 
     final launched = await _launchUrl(url);
     if (!launched) {
       AppLogService().error('Phantom', 'Could not launch Phantom sign URL');
-      _stopDeepLinkListener();
       return null;
     }
 
@@ -244,11 +238,9 @@ class PhantomWalletService extends ChangeNotifier {
       return result;
     } on TimeoutException {
       AppLogService().error('Phantom', 'Sign timed out');
-      _stopDeepLinkListener();
       return null;
     } catch (e) {
       AppLogService().error('Phantom', 'Sign failed: $e');
-      _stopDeepLinkListener();
       return null;
     }
   }
@@ -282,12 +274,12 @@ class PhantomWalletService extends ChangeNotifier {
       return null;
     }
 
-    // 2. Build the sign-only deep link.
+    // 2. Build the sign-only deep link (Phantom expects base58-encoded fields).
     final redirect = Uri.encodeFull('$_kRedirectScheme://$_kSignOnlyPath');
     final url = Uri.parse(_kPhantomSignOnlyBase).replace(queryParameters: {
-      'dapp_encryption_public_key': _dappPublicKeyB64,
-      'nonce': nonceB64,
-      'payload': payloadB64,
+      'dapp_encryption_public_key': _b64ToB58(_dappPublicKeyB64!),
+      'nonce': _b64ToB58(nonceB64),
+      'payload': _b64ToB58(payloadB64),
       'session': _sessionToken,
       'redirect_link': redirect,
       'cluster': _kCluster,
@@ -295,12 +287,10 @@ class PhantomWalletService extends ChangeNotifier {
 
     // 3. Launch Phantom and wait for callback.
     _signOnlyCompleter = Completer<String?>();
-    _startDeepLinkListener();
 
     final launched = await _launchUrl(url);
     if (!launched) {
       AppLogService().error('Phantom', 'Could not launch Phantom signTransaction URL');
-      _stopDeepLinkListener();
       return null;
     }
 
@@ -310,11 +300,9 @@ class PhantomWalletService extends ChangeNotifier {
       return result;
     } on TimeoutException {
       AppLogService().error('Phantom', 'SignTransaction timed out');
-      _stopDeepLinkListener();
       return null;
     } catch (e) {
       AppLogService().error('Phantom', 'SignTransaction failed: $e');
-      _stopDeepLinkListener();
       return null;
     }
   }
@@ -337,17 +325,22 @@ class PhantomWalletService extends ChangeNotifier {
     }
 
     final phantomEncPubKey = uri.queryParameters['phantom_encryption_public_key'];
-    final dataB64 = uri.queryParameters['data'];
-    final nonceB64 = uri.queryParameters['nonce'];
+    final dataB58 = uri.queryParameters['data'];
+    final nonceB58 = uri.queryParameters['nonce'];
 
-    if (phantomEncPubKey == null || dataB64 == null || nonceB64 == null) {
+    if (phantomEncPubKey == null || dataB58 == null || nonceB58 == null) {
       AppLogService().error('Phantom', 'Connect callback missing parameters');
       _completeConnect(false);
       return;
     }
 
+    // Phantom returns base58-encoded values; convert to base64url for Rust crypto.
+    final phantomEncPubKeyB64 = _b58ToB64(phantomEncPubKey);
+    final dataB64 = _b58ToB64(dataB58);
+    final nonceB64 = _b58ToB64(nonceB58);
+
     // Compute shared secret.
-    _computeSharedSecret(phantomEncPubKey).then((_) async {
+    _computeSharedSecret(phantomEncPubKeyB64).then((_) async {
       if (_sharedSecretB64 == null) {
         _completeConnect(false);
         return;
@@ -405,15 +398,19 @@ class PhantomWalletService extends ChangeNotifier {
       return;
     }
 
-    final dataB64 = uri.queryParameters['data'];
-    final nonceB64 = uri.queryParameters['nonce'];
+    final dataB58 = uri.queryParameters['data'];
+    final nonceB58 = uri.queryParameters['nonce'];
     final signatureB58 = uri.queryParameters['signature'];
 
-    if (dataB64 == null || nonceB64 == null) {
+    if (dataB58 == null || nonceB58 == null) {
       AppLogService().error('Phantom', 'Sign callback missing data/nonce');
       _completeSign(null);
       return;
     }
+
+    // Phantom returns base58-encoded values; convert to base64url for Rust crypto.
+    final dataB64 = _b58ToB64(dataB58);
+    final nonceB64 = _b58ToB64(nonceB58);
 
     // Decrypt the response data.
     () async {
@@ -461,14 +458,18 @@ class PhantomWalletService extends ChangeNotifier {
       return;
     }
 
-    final dataB64 = uri.queryParameters['data'];
-    final nonceB64 = uri.queryParameters['nonce'];
+    final dataB58 = uri.queryParameters['data'];
+    final nonceB58 = uri.queryParameters['nonce'];
 
-    if (dataB64 == null || nonceB64 == null) {
+    if (dataB58 == null || nonceB58 == null) {
       AppLogService().error('Phantom', 'SignOnly callback missing data/nonce');
       _completeSignOnly(null);
       return;
     }
+
+    // Phantom returns base58-encoded values; convert to base64url for Rust crypto.
+    final dataB64 = _b58ToB64(dataB58);
+    final nonceB64 = _b58ToB64(nonceB58);
 
     // Decrypt the response data.
     () async {
@@ -500,7 +501,7 @@ class PhantomWalletService extends ChangeNotifier {
 
   // ── Internal helpers ──────────────────────────────────────────────────
 
-  Future<void> _computeSharedSecret(String phantomEncPubKeyB64) async {
+  Future<void> _computeSharedSecret(String phantomEncPubKeyB64 /* already base64url */) async {
     if (_dappSecretKeyB64 == null) {
       AppLogService().error('Phantom', 'No dApp secret key for shared secret');
       return;
@@ -517,7 +518,6 @@ class PhantomWalletService extends ChangeNotifier {
   }
 
   void _completeConnect(bool success) {
-    _stopDeepLinkListener();
     notifyListeners();
     if (_connectCompleter != null && !_connectCompleter!.isCompleted) {
       _connectCompleter!.complete(success);
@@ -525,14 +525,12 @@ class PhantomWalletService extends ChangeNotifier {
   }
 
   void _completeSign(String? signature) {
-    _stopDeepLinkListener();
     if (_signCompleter != null && !_signCompleter!.isCompleted) {
       _signCompleter!.complete(signature);
     }
   }
 
   void _completeSignOnly(String? signedTx) {
-    _stopDeepLinkListener();
     if (_signOnlyCompleter != null && !_signOnlyCompleter!.isCompleted) {
       _signOnlyCompleter!.complete(signedTx);
     }
@@ -557,40 +555,9 @@ class PhantomWalletService extends ChangeNotifier {
     }
   }
 
-  void _startDeepLinkListener() {
-    _stopDeepLinkListener();
-    try {
-      final appLinks = AppLinks();
-      _deepLinkSub = appLinks.uriLinkStream.listen(_onDeepLink);
-    } catch (e) {
-      AppLogService().error('Phantom', 'Deep link listener failed: $e');
-    }
-  }
-
-  void _stopDeepLinkListener() {
-    _deepLinkSub?.cancel();
-    _deepLinkSub = null;
-  }
-
-  void _onDeepLink(Uri uri) {
-    if (uri.scheme != _kRedirectScheme) return;
-
-    final path = '${uri.host}${uri.path}';
-    if (path == _kConnectPath) {
-      handleConnectCallback(uri);
-    } else if (path == _kSignOnlyPath) {
-      handleSignOnlyCallback(uri);
-    } else if (path == _kSignPath) {
-      handleSignCallback(uri);
-    }
-  }
-
   Future<bool> _launchUrl(Uri url) async {
     try {
-      if (await canLaunchUrl(url)) {
-        return launchUrl(url, mode: LaunchMode.externalApplication);
-      }
-      return false;
+      return launchUrl(url, mode: LaunchMode.externalApplication);
     } catch (e) {
       AppLogService().error('Phantom', 'Launch URL failed: $e');
       return false;
@@ -619,9 +586,95 @@ class PhantomWalletService extends ChangeNotifier {
     return Uint8List.fromList(List.generate(n, (_) => rng.nextInt(256)));
   }
 
-  @override
-  void dispose() {
-    _stopDeepLinkListener();
-    super.dispose();
+  // ── Base58 helpers (Bitcoin alphabet, used by Phantom/Solana) ─────────
+
+  static const _b58Alphabet =
+      '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+  /// Encode bytes to base58 (Bitcoin alphabet).
+  static String _b58Encode(List<int> input) {
+    final bytes = Uint8List.fromList(input);
+    // Count leading zeros.
+    int zeros = 0;
+    while (zeros < bytes.length && bytes[zeros] == 0) {
+      zeros++;
+    }
+    // Allocate enough space: log(256)/log(58) ≈ 1.37.
+    final encoded = List.filled(((bytes.length - zeros) * 138 / 100 + 1).floor() + zeros, 0);
+    int encodedLen = 0;
+    for (int i = zeros; i < bytes.length; i++) {
+      int carry = bytes[i];
+      int j = 0;
+      for (int k = encodedLen - 1; k >= 0; k--, j++) {
+        carry += encoded[k] * 256;
+        encoded[k] = carry % 58;
+        carry ~/= 58;
+      }
+      while (carry > 0) {
+        encodedLen++;
+        // Shift right if needed.
+        if (encodedLen > encoded.length) break;
+        encoded[encoded.length - encodedLen] = carry % 58;
+        carry ~/= 58;
+      }
+    }
+    // Build result with leading '1's for each leading zero byte.
+    final sb = StringBuffer();
+    for (int i = 0; i < zeros; i++) {
+      sb.write('1');
+    }
+    // Find the start position in encoded array.
+    int start = encoded.length - encodedLen;
+    for (int i = start; i < encoded.length; i++) {
+      sb.write(_b58Alphabet[encoded[i]]);
+    }
+    return sb.toString();
+  }
+
+  /// Decode a base58 string to bytes.
+  static Uint8List _b58Decode(String input) {
+    // Count leading '1's.
+    int zeros = 0;
+    while (zeros < input.length && input[zeros] == '1') {
+      zeros++;
+    }
+    final bytes = List.filled(((input.length - zeros) * 733 / 1000 + 1).floor() + zeros, 0);
+    int bytesLen = 0;
+    for (int i = zeros; i < input.length; i++) {
+      int carry = _b58Alphabet.indexOf(input[i]);
+      if (carry < 0) {
+        throw FormatException('Invalid base58 character: ${input[i]}');
+      }
+      for (int j = 0; j < bytesLen; j++) {
+        carry += bytes[bytes.length - 1 - j] * 58;
+        bytes[bytes.length - 1 - j] = carry & 0xFF;
+        carry >>= 8;
+      }
+      while (carry > 0) {
+        bytesLen++;
+        if (bytesLen > bytes.length) break;
+        bytes[bytes.length - bytesLen] = carry & 0xFF;
+        carry >>= 8;
+      }
+    }
+    final result = BytesBuilder();
+    for (int i = 0; i < zeros; i++) {
+      result.addByte(0);
+    }
+    int start = bytes.length - bytesLen;
+    for (int i = start; i < bytes.length; i++) {
+      result.addByte(bytes[i]);
+    }
+    return result.toBytes();
+  }
+
+  /// Convert a base64url-encoded string to base58.
+  static String _b64ToB58(String b64) {
+    return _b58Encode(_b64Decode(b64));
+  }
+
+  /// Convert a base58-encoded string to base64url (no padding).
+  static String _b58ToB64(String b58) {
+    return _b64Encode(_b58Decode(b58));
   }
 }

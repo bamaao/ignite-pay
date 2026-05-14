@@ -9,13 +9,13 @@
 // distribution of the code under the BSL, whichever comes first, the code
 // automatically becomes available under the Apache License 2.0.
 
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/src/rust/frb_generated.dart';
+import 'package:ignite_pay_app/src/rust/api/session.dart' as session;
 import 'package:ignite_pay_app/challenge_screen.dart';
 import 'package:ignite_pay_app/policy_screen.dart';
 import 'package:ignite_pay_app/vault_screen.dart';
@@ -29,6 +29,7 @@ import 'package:ignite_pay_app/services/didcomm_service.dart';
 import 'package:ignite_pay_app/services/channel_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
 import 'package:ignite_pay_app/services/direct_payment_service.dart';
+import 'package:ignite_pay_app/services/phantom_wallet_service.dart';
 import 'package:ignite_pay_app/cctp_transfer_screen.dart';
 import 'package:ignite_pay_app/onboarding_screen.dart';
 import 'package:provider/provider.dart';
@@ -463,6 +464,22 @@ class _MainNavigatorState extends State<_MainNavigator> {
   void _handleDeepLink(Uri uri) {
     if (uri.scheme != 'ignitepay') return;
 
+    final path = '${uri.host}${uri.path}';
+
+    // Route Phantom encrypted deep link callbacks to PhantomWalletService
+    if (path == 'phantom/connect') {
+      PhantomWalletService().handleConnectCallback(uri);
+      return;
+    }
+    if (path == 'phantom/sign') {
+      PhantomWalletService().handleSignCallback(uri);
+      return;
+    }
+    if (path == 'phantom/signonly') {
+      PhantomWalletService().handleSignOnlyCallback(uri);
+      return;
+    }
+
     switch (uri.host) {
       case 'onchain':
         // Existing session key registration callback
@@ -677,33 +694,9 @@ class IgnitePayDashboard extends StatelessWidget {
                             const SizedBox(height: 20),
                             const _QuickNavRow(),
                             const SizedBox(height: 20),
-                            Consumer<SessionKeyService>(
-                              builder: (context, skSvc, _) {
-                                final active = skSvc.activeSessionKey;
-                                if (active != null && active.spendingLimit > BigInt.zero) {
-                                  final limitVal = (active.spendingLimit / BigInt.from(1000000)).toDouble();
-                                  final spent = 0.0;
-                                  return TrustScoreGauge(
-                                    spent: spent,
-                                    limit: limitVal > 0 ? limitVal : 1.0,
-                                    spentLabel: '${spent.toStringAsFixed(2)} USDC',
-                                    limitLabel: '${limitVal.toStringAsFixed(2)} USDC',
-                                  );
-                                }
-                                return const TrustScoreGauge(
-                                  spent: 0,
-                                  limit: 1.0,
-                                  spentLabel: '--',
-                                  limitLabel: 'No limit set',
-                                );
-                              },
-                            ),
-                            const SizedBox(height: 24),
-                            Consumer<DidcommService>(
-                              builder: (context, svc, _) {
-                                return ActivityFeed(messages: svc.messages);
-                              },
-                            ),
+                            const _SessionKeyBalanceCard(),
+                            const SizedBox(height: 20),
+                            const _RecentPaymentsPreview(),
                             const SizedBox(height: 24),
                             const _AuthAction(),
                           ],
@@ -1016,6 +1009,590 @@ class _QuickNavCard extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
+// Session Key Balance Card
+// ---------------------------------------------------------------------------
+class _SessionKeyBalanceCard extends StatefulWidget {
+  const _SessionKeyBalanceCard();
+
+  @override
+  State<_SessionKeyBalanceCard> createState() => _SessionKeyBalanceCardState();
+}
+
+class _SessionKeyBalanceCardState extends State<_SessionKeyBalanceCard> {
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    final svc = SessionKeyService();
+    if (svc.activeSessionKey != null) {
+      await svc.refreshBalances();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<SessionKeyService>(
+      builder: (context, svc, _) {
+        final active = svc.activeSessionKey;
+
+        if (active == null) {
+          return GestureDetector(
+            onTap: () => _openRecords(context),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: _kSurfaceDark.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: _kGlassBorder),
+              ),
+              child: Column(
+                children: [
+                  Icon(LucideIcons.wallet, size: 28, color: _kTextSecondary.withValues(alpha: 0.4)),
+                  const SizedBox(height: 10),
+                  Text(
+                    'No active session key',
+                    style: GoogleFonts.inter(fontSize: 14, color: _kTextSecondary),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Authorize a payment to create one',
+                    style: GoogleFonts.inter(fontSize: 11, color: _kTextSecondary.withValues(alpha: 0.6)),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        final solBalance = svc.solBalance;
+        final usdcBalance = svc.usdcBalance;
+        final loading = svc.balanceLoading;
+
+        return GestureDetector(
+          onTap: () => _openRecords(context),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: _kSurfaceMid.withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _kGlassBorder),
+              gradient: LinearGradient(
+                colors: [
+                  _kSurfaceMid.withValues(alpha: 0.7),
+                  _kSurfaceDark.withValues(alpha: 0.5),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(LucideIcons.wallet, size: 16, color: _kNeonCyan.withValues(alpha: 0.8)),
+                    const SizedBox(width: 8),
+                    Text(
+                      'SESSION KEY BALANCE',
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: _kTextSecondary,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const Spacer(),
+                    if (loading)
+                      SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: _kNeonCyan.withValues(alpha: 0.7),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _BalanceItem(
+                        label: 'SOL',
+                        value: (solBalance.toInt() / 1000000000.0).toStringAsFixed(4),
+                        icon: LucideIcons.coins,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: _BalanceItem(
+                        label: 'USDC',
+                        value: (usdcBalance.toInt() / 1000000.0).toStringAsFixed(2),
+                        icon: LucideIcons.dollarSign,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Icon(
+                      LucideIcons.keyRound,
+                      size: 12,
+                      color: _kTextSecondary.withValues(alpha: 0.5),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        active.ephemeralPubkey.length > 20
+                            ? '${active.ephemeralPubkey.substring(0, 8)}...${active.ephemeralPubkey.substring(active.ephemeralPubkey.length - 6)}'
+                            : active.ephemeralPubkey,
+                        style: GoogleFonts.jetBrainsMono(
+                          fontSize: 11,
+                          color: _kTextSecondary.withValues(alpha: 0.6),
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Icon(
+                      LucideIcons.chevronRight,
+                      size: 14,
+                      color: _kTextSecondary.withValues(alpha: 0.4),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _openRecords(BuildContext context) {
+    Navigator.of(context).push<dynamic>(
+      MaterialPageRoute(builder: (_) => const _PaymentRecordsScreen()),
+    );
+  }
+}
+
+class _BalanceItem extends StatelessWidget {
+  final String label;
+  final String value;
+  final IconData icon;
+
+  const _BalanceItem({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: _kSurfaceDark.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _kGlassBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 14, color: _kNeonCyan.withValues(alpha: 0.7)),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: _kTextSecondary,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: GoogleFonts.jetBrainsMono(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: _kTextPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Recent Payments Preview
+// ---------------------------------------------------------------------------
+class _RecentPaymentsPreview extends StatefulWidget {
+  const _RecentPaymentsPreview();
+
+  @override
+  State<_RecentPaymentsPreview> createState() => _RecentPaymentsPreviewState();
+}
+
+class _RecentPaymentsPreviewState extends State<_RecentPaymentsPreview> {
+  List<session.PaymentRecord> _records = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRecords();
+  }
+
+  Future<void> _loadRecords() async {
+    final svc = SessionKeyService();
+    final records = await svc.loadPaymentRecords();
+    if (mounted) {
+      setState(() {
+        _records = records.take(3).toList();
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(LucideIcons.receipt, size: 16, color: _kNeonCyan.withValues(alpha: 0.8)),
+            const SizedBox(width: 8),
+            Text(
+              'RECENT PAYMENTS',
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: _kTextSecondary,
+                letterSpacing: 1.2,
+              ),
+            ),
+            const Spacer(),
+            if (_records.isNotEmpty)
+              GestureDetector(
+                onTap: () {
+                  Navigator.of(context).push<dynamic>(
+                    MaterialPageRoute(builder: (_) => const _PaymentRecordsScreen()),
+                  );
+                },
+                child: Text(
+                  'View all',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: _kNeonCyan,
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_loading)
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2, color: _kNeonCyan),
+              ),
+            ),
+          )
+        else if (_records.isEmpty)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Column(
+                children: [
+                  Icon(LucideIcons.inbox, size: 32, color: _kTextSecondary.withValues(alpha: 0.4)),
+                  const SizedBox(height: 8),
+                  Text(
+                    'No payment records yet',
+                    style: GoogleFonts.inter(fontSize: 13, color: _kTextSecondary),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          ..._records.map((rec) {
+            final isUsdc = rec.tokenMint != null &&
+                (rec.tokenMint == 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' ||
+                    rec.tokenMint == '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
+            final divisor = isUsdc ? 1000000.0 : 1000000000.0;
+            final symbol = isUsdc ? 'USDC' : 'SOL';
+            final amountStr = (rec.amount.toInt() / divisor).toStringAsFixed(isUsdc ? 2 : 4);
+            final merchant = rec.merchantDid.length > 24
+                ? '${rec.merchantDid.substring(0, 16)}...${rec.merchantDid.substring(rec.merchantDid.length - 6)}'
+                : rec.merchantDid;
+            final time = rec.timestamp > 0
+                ? DateTime.fromMillisecondsSinceEpoch(rec.timestamp * 1000)
+                : null;
+            final timeStr = time != null
+                ? '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}'
+                : '--';
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: _kSurfaceDark.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: _kGlassBorder),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: (rec.authorized ? _kSuccess : _kIntercepted).withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        rec.authorized ? LucideIcons.checkCircle2 : LucideIcons.xCircle,
+                        size: 18,
+                        color: rec.authorized ? _kSuccess : _kIntercepted,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            merchant,
+                            style: GoogleFonts.inter(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: _kTextPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            timeStr,
+                            style: GoogleFonts.inter(fontSize: 11, color: _kTextSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          '$amountStr $symbol',
+                          style: GoogleFonts.jetBrainsMono(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: _kTextPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        _StatusBadge(
+                          color: rec.authorized ? _kSuccess : _kIntercepted,
+                          label: rec.authorized ? 'Success' : 'Declined',
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Payment Records Screen (full-screen)
+// ---------------------------------------------------------------------------
+class _PaymentRecordsScreen extends StatefulWidget {
+  const _PaymentRecordsScreen();
+
+  @override
+  State<_PaymentRecordsScreen> createState() => _PaymentRecordsScreenState();
+}
+
+class _PaymentRecordsScreenState extends State<_PaymentRecordsScreen> {
+  List<session.PaymentRecord> _records = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRecords();
+  }
+
+  Future<void> _loadRecords() async {
+    final svc = SessionKeyService();
+    final records = await svc.loadPaymentRecords();
+    if (mounted) {
+      setState(() {
+        _records = records;
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _refresh() async {
+    setState(() => _loading = true);
+    await _loadRecords();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _kBackground,
+      appBar: AppBar(
+        backgroundColor: _kSurfaceDark,
+        title: Text(
+          'Payment Records',
+          style: GoogleFonts.inter(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: _kTextPrimary,
+          ),
+        ),
+        iconTheme: const IconThemeData(color: _kTextPrimary),
+        elevation: 0,
+      ),
+      body: _loading
+          ? const Center(
+              child: CircularProgressIndicator(color: _kNeonCyan),
+            )
+          : _records.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(LucideIcons.inbox, size: 48, color: _kTextSecondary.withValues(alpha: 0.4)),
+                      const SizedBox(height: 12),
+                      Text(
+                        'No payment records',
+                        style: GoogleFonts.inter(fontSize: 16, color: _kTextSecondary),
+                      ),
+                    ],
+                  ),
+                )
+              : RefreshIndicator(
+                  color: _kNeonCyan,
+                  onRefresh: _refresh,
+                  child: ListView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                    itemCount: _records.length,
+                    itemBuilder: (context, index) {
+                      final rec = _records[index];
+                      final isUsdc = rec.tokenMint != null &&
+                          (rec.tokenMint == 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' ||
+                              rec.tokenMint == '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
+                      final divisor = isUsdc ? 1000000.0 : 1000000000.0;
+                      final symbol = isUsdc ? 'USDC' : 'SOL';
+                      final amountStr = (rec.amount.toInt() / divisor).toStringAsFixed(isUsdc ? 2 : 4);
+                      final merchant = rec.merchantDid.length > 24
+                          ? '${rec.merchantDid.substring(0, 16)}...${rec.merchantDid.substring(rec.merchantDid.length - 6)}'
+                          : rec.merchantDid;
+                      final time = rec.timestamp > 0
+                          ? DateTime.fromMillisecondsSinceEpoch(rec.timestamp * 1000)
+                          : null;
+                      final dateStr = time != null
+                          ? '${time.month}/${time.day} ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}'
+                          : '--';
+
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: _kSurfaceDark.withValues(alpha: 0.5),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: _kGlassBorder),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: (rec.authorized ? _kSuccess : _kIntercepted)
+                                      .withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(
+                                  rec.authorized ? LucideIcons.checkCircle2 : LucideIcons.xCircle,
+                                  size: 18,
+                                  color: rec.authorized ? _kSuccess : _kIntercepted,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      merchant,
+                                      style: GoogleFonts.inter(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: _kTextPrimary,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      rec.description.isNotEmpty ? rec.description : dateStr,
+                                      style: GoogleFonts.inter(fontSize: 11, color: _kTextSecondary),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    '$amountStr $symbol',
+                                    style: GoogleFonts.jetBrainsMono(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: _kTextPrimary,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  _StatusBadge(
+                                    color: rec.authorized ? _kSuccess : _kIntercepted,
+                                    label: rec.authorized ? 'Success' : 'Declined',
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // DID Identity Card (Glassmorphism)
 // ---------------------------------------------------------------------------
 class DIDCard extends StatefulWidget {
@@ -1201,387 +1778,6 @@ class _ConnectionDotState extends State<_ConnectionDot>
           ),
         );
       },
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Trust Score / Daily Allowance Gauge
-// ---------------------------------------------------------------------------
-class TrustScoreGauge extends StatelessWidget {
-  final double spent;
-  final double limit;
-  final String spentLabel;
-  final String limitLabel;
-
-  const TrustScoreGauge({
-    super.key,
-    required this.spent,
-    required this.limit,
-    required this.spentLabel,
-    required this.limitLabel,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final safeLimit = limit > 0 ? limit : 1.0;
-    final remaining = (safeLimit - spent).clamp(0.0, safeLimit);
-    final pct = spent / safeLimit;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: _kSurfaceDark.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _kGlassBorder),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Icon(LucideIcons.gauge, size: 16, color: _kNeonCyan.withValues(alpha: 0.8)),
-              const SizedBox(width: 8),
-              Text(
-                'DAILY ALLOWANCE',
-                style: GoogleFonts.inter(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: _kTextSecondary,
-                  letterSpacing: 1.2,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          SizedBox(
-            width: 180,
-            height: 180,
-            child: CustomPaint(
-              painter: _RadialGaugePainter(progress: pct),
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '${(remaining * 100).toStringAsFixed(0)}%',
-                      style: GoogleFonts.inter(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w700,
-                        color: _kTextPrimary,
-                      ),
-                    ),
-                    Text(
-                      'Remaining',
-                      style: GoogleFonts.inter(
-                        fontSize: 12,
-                        color: _kTextSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _GaugeLabel(value: spentLabel, label: 'Spent', color: _kNeonCyan),
-              const SizedBox(width: 32),
-              _GaugeLabel(value: limitLabel, label: 'Limit', color: _kTextSecondary),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _GaugeLabel extends StatelessWidget {
-  final String value;
-  final String label;
-  final Color color;
-
-  const _GaugeLabel({
-    required this.value,
-    required this.label,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: GoogleFonts.jetBrainsMono(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: color,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          label,
-          style: GoogleFonts.inter(
-            fontSize: 11,
-            color: _kTextSecondary,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Radial Gauge Painter
-// ---------------------------------------------------------------------------
-class _RadialGaugePainter extends CustomPainter {
-  final double progress;
-
-  _RadialGaugePainter({required this.progress});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = (size.shortestSide / 2) - 14;
-    const strokeWidth = 10.0;
-
-    // Background track
-    final bgPaint = Paint()
-      ..color = _kSurfaceMid
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round;
-    canvas.drawCircle(center, radius, bgPaint);
-
-    // Progress arc
-    if (progress > 0) {
-      final sweepAngle = 2 * pi * progress;
-      final rect = Rect.fromCircle(center: center, radius: radius);
-      final progressPaint = Paint()
-        ..shader = SweepGradient(
-          startAngle: -pi / 2,
-          endAngle: -pi / 2 + sweepAngle,
-          colors: const [_kNeonCyan, _kNeonCyanDim],
-          stops: const [0.0, 1.0],
-        ).createShader(rect)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth
-        ..strokeCap = StrokeCap.round;
-      canvas.drawArc(rect, -pi / 2, sweepAngle, false, progressPaint);
-    }
-
-    // Glow at the end of the progress arc
-    if (progress > 0 && progress < 1) {
-      final endAngle = -pi / 2 + 2 * pi * progress;
-      final glowOffset = Offset(
-        center.dx + radius * cos(endAngle),
-        center.dy + radius * sin(endAngle),
-      );
-      final glowPaint = Paint()
-        ..color = _kNeonCyan.withValues(alpha: 0.5)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
-      canvas.drawCircle(glowOffset, 6, glowPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _RadialGaugePainter old) => old.progress != progress;
-}
-
-// ---------------------------------------------------------------------------
-// Activity Feed
-// ---------------------------------------------------------------------------
-class ActivityFeed extends StatelessWidget {
-  final List<DecryptedMsg> messages;
-  const ActivityFeed({super.key, required this.messages});
-
-  @override
-  Widget build(BuildContext context) {
-    // Filter to payment-related messages
-    final paymentMsgs = messages
-        .where((m) => m.msgType.contains('payment'))
-        .toList()
-        .reversed
-        .take(5)
-        .toList();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(LucideIcons.activity, size: 16, color: _kNeonCyan.withValues(alpha: 0.8)),
-            const SizedBox(width: 8),
-            Text(
-              'RECENT ACTIVITY',
-              style: GoogleFonts.inter(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: _kTextSecondary,
-                letterSpacing: 1.2,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        if (paymentMsgs.isEmpty)
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 20),
-              child: Column(
-                children: [
-                  Icon(LucideIcons.inbox, size: 32, color: _kTextSecondary.withValues(alpha: 0.4)),
-                  const SizedBox(height: 8),
-                  Text(
-                    'No recent activity',
-                    style: GoogleFonts.inter(
-                      fontSize: 13,
-                      color: _kTextSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          )
-        else
-          ...paymentMsgs.map((msg) {
-            final status = msg.msgType.contains('auth-request')
-                ? _ActivityStatus.pending
-                : _ActivityStatus.success;
-            final icon = status == _ActivityStatus.pending
-                ? LucideIcons.creditCard
-                : LucideIcons.checkCircle2;
-            final amount = msg.amount != null
-                ? '${(msg.amount! / 1e9).toStringAsFixed(4)} SOL'
-                : '--';
-            final merchant = msg.merchantDid != null && msg.merchantDid!.isNotEmpty
-                ? (msg.merchantDid!.length > 24
-                    ? '${msg.merchantDid!.substring(0, 16)}...${msg.merchantDid!.substring(msg.merchantDid!.length - 6)}'
-                    : msg.merchantDid!)
-                : 'Unknown';
-            return _ActivityTile(
-              item: _ActivityItem(
-                merchant: merchant,
-                amount: amount,
-                time: msg.msgType.contains('auth-request') ? 'Pending' : 'Processed',
-                status: status,
-                icon: icon,
-              ),
-            );
-          }),
-      ],
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Activity Model
-// ---------------------------------------------------------------------------
-enum _ActivityStatus { success, pending, intercepted }
-
-class _ActivityItem {
-  final String merchant;
-  final String amount;
-  final String time;
-  final _ActivityStatus status;
-  final IconData icon;
-
-  const _ActivityItem({
-    required this.merchant,
-    required this.amount,
-    required this.time,
-    required this.status,
-    required this.icon,
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Activity Tile
-// ---------------------------------------------------------------------------
-class _ActivityTile extends StatelessWidget {
-  final _ActivityItem item;
-
-  const _ActivityTile({required this.item});
-
-  Color get _statusColor => switch (item.status) {
-        _ActivityStatus.success => _kSuccess,
-        _ActivityStatus.pending => _kPending,
-        _ActivityStatus.intercepted => _kIntercepted,
-      };
-
-  String get _statusLabel => switch (item.status) {
-        _ActivityStatus.success => 'Success',
-        _ActivityStatus.pending => 'Pending',
-        _ActivityStatus.intercepted => 'Intercepted',
-      };
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: _kSurfaceDark.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: _kGlassBorder),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: _statusColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(item.icon, size: 18, color: _statusColor),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.merchant,
-                    style: GoogleFonts.inter(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: _kTextPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    item.time,
-                    style: GoogleFonts.inter(
-                      fontSize: 11,
-                      color: _kTextSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  item.amount,
-                  style: GoogleFonts.jetBrainsMono(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: _kTextPrimary,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                _StatusBadge(color: _statusColor, label: _statusLabel),
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

@@ -37,6 +37,17 @@ class SessionKeyService extends ChangeNotifier {
   session.SessionKeyEntry? _activeSessionKey;
   session.UnsignedRegisterTx? _pendingUnsignedTx;
 
+  // Balance tracking
+  BigInt _solBalance = BigInt.zero;
+  BigInt _usdcBalance = BigInt.zero;
+  bool _balanceLoading = false;
+  session.SessionOnChainInfo? _onChainInfo;
+
+  BigInt get solBalance => _solBalance;
+  BigInt get usdcBalance => _usdcBalance;
+  bool get balanceLoading => _balanceLoading;
+  session.SessionOnChainInfo? get onChainInfo => _onChainInfo;
+
   bool get isRegistering => _isRegistering;
   String get rpcUrl => _rpcUrl;
   List<session.SessionKeyEntry> get sessionKeys => List.unmodifiable(_sessionKeys);
@@ -198,6 +209,100 @@ class SessionKeyService extends ChangeNotifier {
       sessionPubkey: sessionPubkey,
     );
     await loadAllKeys();
+  }
+
+  /// Refresh SOL and USDC balances for the active session key.
+  Future<void> refreshBalances() async {
+    if (_storagePath.isEmpty || _activeSessionKey == null) return;
+    _balanceLoading = true;
+    notifyListeners();
+    try {
+      final pubkey = _activeSessionKey!.ephemeralPubkey;
+      final sol = await rust.getSolBalance(
+        rpcUrl: _rpcUrl,
+        pubkeyB58: pubkey,
+      );
+      _solBalance = sol;
+      // USDC devnet mint
+      try {
+        final usdc = await rust.getTokenBalance(
+          rpcUrl: _rpcUrl,
+          ownerPubkeyB58: pubkey,
+          tokenMintB58: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+        );
+        _usdcBalance = usdc;
+      } catch (_) {
+        _usdcBalance = BigInt.zero;
+      }
+    } catch (e) {
+      debugPrint('Failed to refresh balances: $e');
+    } finally {
+      _balanceLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Check if the session key PDA exists on-chain.
+  Future<session.SessionOnChainInfo?> checkOnChainExists() async {
+    if (_storagePath.isEmpty || _activeSessionKey == null) return null;
+    try {
+      final ownerPubkey = await rust.getOwnerPubkey(storagePath: _storagePath);
+      final info = await rust.getSessionAccountInfo(
+        rpcUrl: _rpcUrl,
+        ownerB58: ownerPubkey,
+        ephemeralB58: _activeSessionKey!.ephemeralPubkey,
+      );
+      _onChainInfo = info;
+      notifyListeners();
+      return info;
+    } catch (e) {
+      debugPrint('Failed to check on-chain PDA: $e');
+      return null;
+    }
+  }
+
+  /// Save a payment authorization record.
+  Future<void> savePaymentRecord({
+    required String paymentId,
+    required String merchantDid,
+    required BigInt amount,
+    String? tokenMint,
+    String description = '',
+    required bool authorized,
+    String? sessionKeyPubkey,
+    String? txSignature,
+  }) async {
+    if (_storagePath.isEmpty) return;
+    try {
+      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      await rust.savePaymentRecord(
+        storagePath: _storagePath,
+        record: session.PaymentRecord(
+          paymentId: paymentId,
+          merchantDid: merchantDid,
+          amount: amount,
+          tokenMint: tokenMint,
+          description: description,
+          authorized: authorized,
+          timestamp: now,
+          sessionKeyPubkey: sessionKeyPubkey,
+          txSignature: txSignature,
+        ),
+      );
+    } catch (e) {
+      debugPrint('Failed to save payment record: $e');
+    }
+  }
+
+  /// Load all payment records from sled, newest-first.
+  Future<List<session.PaymentRecord>> loadPaymentRecords() async {
+    if (_storagePath.isEmpty) return [];
+    try {
+      return await rust.listPaymentRecords(storagePath: _storagePath);
+    } catch (e) {
+      debugPrint('Failed to load payment records: $e');
+      return [];
+    }
   }
 
   void _setRegistering(bool value) {

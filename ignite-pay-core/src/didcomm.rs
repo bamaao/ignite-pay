@@ -1245,6 +1245,7 @@ mod tests {
             "Test",
             None,
             &methods,
+            None,
         );
         let methods_arr = msg.body["available_payment_methods"].as_array().unwrap();
         assert_eq!(methods_arr.len(), 2);
@@ -1276,6 +1277,7 @@ mod tests {
             "Test",
             Some(&sk),
             &methods,
+            None,
         );
         assert!(msg.body.get("new_session_key").is_some());
         assert_eq!(msg.body["available_payment_methods"].as_array().unwrap().len(), 1);
