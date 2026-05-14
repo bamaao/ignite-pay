@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `build_raw_transaction`, `build_register_ix_data`, `compact_u64_encode`, `derive_ata`, `derive_session_pda_simple`, `devnet_airdrop`, `get_recent_blockhash`, `get_session_program_id_bytes`, `is_on_curve`, `send_transaction`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Create a session key for payment authorization.
 /// This generates an ephemeral Ed25519 keypair locally and stores it in sled.
@@ -163,19 +163,16 @@ Future<UnsignedRegisterTx> buildUnsignedRegisterTx({
 );
 
 /// Build an unsigned register-session-key transaction for an external wallet (e.g. Phantom).
-/// The owner is the wallet's public key (placeholder signature), and the ephemeral key
-/// (provided by MCP) is pre-signed locally. The transaction has 2 signature slots:
-///   slot 0: owner (Phantom wallet) — placeholder (64 zero bytes)
-///   slot 1: ephemeral (MCP key) — pre-signed
+/// Only the owner (Phantom wallet) needs to sign — the ephemeral pubkey is just an account
+/// parameter, NOT a signer. The secret key stays on MCP and never reaches the app.
 ///
-/// After Phantom signs via `signTransaction`, call `complete_register_with_signature`
-/// to fill in the owner signature and broadcast.
+/// Transaction layout: 1 signature slot (owner placeholder).
+/// After Phantom signs via `signTransaction`, call `finalize_phantom_session_key` to persist.
 Future<UnsignedRegisterTx> buildRegisterTxForPhantom({
   required String storagePath,
   required String rpcUrl,
   required String ownerPubkeyB58,
   required String ephemeralPubkeyB58,
-  required String ephemeralSecretKeyB58,
   required String targetProgram,
   required List<String> scopes,
   required BigInt spendingLimit,
@@ -188,7 +185,6 @@ Future<UnsignedRegisterTx> buildRegisterTxForPhantom({
   rpcUrl: rpcUrl,
   ownerPubkeyB58: ownerPubkeyB58,
   ephemeralPubkeyB58: ephemeralPubkeyB58,
-  ephemeralSecretKeyB58: ephemeralSecretKeyB58,
   targetProgram: targetProgram,
   scopes: scopes,
   spendingLimit: spendingLimit,
@@ -356,6 +352,72 @@ Future<String> buildUnsignedSponsoredSplTransferTx({
   relayerPubkeyB58: relayerPubkeyB58,
 );
 
+/// Get SOL balance (in lamports) for a base58-encoded pubkey via JSON-RPC.
+Future<BigInt> getSolBalance({
+  required String rpcUrl,
+  required String pubkeyB58,
+}) => RustLib.instance.api.crateApiSessionGetSolBalance(
+  rpcUrl: rpcUrl,
+  pubkeyB58: pubkeyB58,
+);
+
+/// Get SPL token balance for an owner + mint pair via JSON-RPC.
+/// Derives the ATA locally, returns 0 if the ATA doesn't exist.
+Future<BigInt> getTokenBalance({
+  required String rpcUrl,
+  required String ownerPubkeyB58,
+  required String tokenMintB58,
+}) => RustLib.instance.api.crateApiSessionGetTokenBalance(
+  rpcUrl: rpcUrl,
+  ownerPubkeyB58: ownerPubkeyB58,
+  tokenMintB58: tokenMintB58,
+);
+
+/// Check if a session key PDA exists on-chain and parse its account data.
+Future<SessionOnChainInfo> getSessionAccountInfo({
+  required String rpcUrl,
+  required String ownerB58,
+  required String ephemeralB58,
+}) => RustLib.instance.api.crateApiSessionGetSessionAccountInfo(
+  rpcUrl: rpcUrl,
+  ownerB58: ownerB58,
+  ephemeralB58: ephemeralB58,
+);
+
+/// Derive the owner's Solana pubkey from the DID stored in sled.
+/// Reuses the pattern: get_did() → sha256(did) → SigningKey → verifying_key → bs58.
+Future<String> getOwnerPubkey({required String storagePath}) => RustLib
+    .instance
+    .api
+    .crateApiSessionGetOwnerPubkey(storagePath: storagePath);
+
+/// Save a payment authorization record to sled.
+/// Key format: `"payrec:{timestamp}:{payment_id}"`.
+Future<void> savePaymentRecord({
+  required String storagePath,
+  required PaymentRecord record,
+}) => RustLib.instance.api.crateApiSessionSavePaymentRecord(
+  storagePath: storagePath,
+  record: record,
+);
+
+/// List all payment records from sled, newest-first.
+Future<List<PaymentRecord>> listPaymentRecords({required String storagePath}) =>
+    RustLib.instance.api.crateApiSessionListPaymentRecords(
+      storagePath: storagePath,
+    );
+
+/// Get recent transaction signatures for a pubkey via JSON-RPC getSignaturesForAddress.
+Future<List<TxHistoryEntry>> getTransactionHistory({
+  required String rpcUrl,
+  required String pubkeyB58,
+  required int limit,
+}) => RustLib.instance.api.crateApiSessionGetTransactionHistory(
+  rpcUrl: rpcUrl,
+  pubkeyB58: pubkeyB58,
+  limit: limit,
+);
+
 /// Fetch the relayer's fee-payer public key from GET /info.
 Future<String> fetchRelayerPubkey({required String relayerUrl}) => RustLib
     .instance
@@ -430,6 +492,58 @@ class MerchantPolicy {
           dailyTxCountLimit == other.dailyTxCountLimit &&
           perTxLimit == other.perTxLimit &&
           durationSecs == other.durationSecs;
+}
+
+/// A persisted payment authorization record.
+class PaymentRecord {
+  final String paymentId;
+  final String merchantDid;
+  final BigInt amount;
+  final String? tokenMint;
+  final String description;
+  final bool authorized;
+  final PlatformInt64 timestamp;
+  final String? sessionKeyPubkey;
+  final String? txSignature;
+
+  const PaymentRecord({
+    required this.paymentId,
+    required this.merchantDid,
+    required this.amount,
+    this.tokenMint,
+    required this.description,
+    required this.authorized,
+    required this.timestamp,
+    this.sessionKeyPubkey,
+    this.txSignature,
+  });
+
+  @override
+  int get hashCode =>
+      paymentId.hashCode ^
+      merchantDid.hashCode ^
+      amount.hashCode ^
+      tokenMint.hashCode ^
+      description.hashCode ^
+      authorized.hashCode ^
+      timestamp.hashCode ^
+      sessionKeyPubkey.hashCode ^
+      txSignature.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PaymentRecord &&
+          runtimeType == other.runtimeType &&
+          paymentId == other.paymentId &&
+          merchantDid == other.merchantDid &&
+          amount == other.amount &&
+          tokenMint == other.tokenMint &&
+          description == other.description &&
+          authorized == other.authorized &&
+          timestamp == other.timestamp &&
+          sessionKeyPubkey == other.sessionKeyPubkey &&
+          txSignature == other.txSignature;
 }
 
 /// A session key entry returned for listing / query.
@@ -550,6 +664,67 @@ class SessionKeyInfo {
           scopes == other.scopes &&
           txSignature == other.txSignature &&
           sessionPda == other.sessionPda;
+}
+
+/// On-chain session key account info parsed from the PDA data.
+class SessionOnChainInfo {
+  final bool exists;
+  final BigInt spendingLimit;
+  final BigInt currentSpent;
+  final bool revoked;
+  final PlatformInt64 expiresAt;
+
+  const SessionOnChainInfo({
+    required this.exists,
+    required this.spendingLimit,
+    required this.currentSpent,
+    required this.revoked,
+    required this.expiresAt,
+  });
+
+  @override
+  int get hashCode =>
+      exists.hashCode ^
+      spendingLimit.hashCode ^
+      currentSpent.hashCode ^
+      revoked.hashCode ^
+      expiresAt.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SessionOnChainInfo &&
+          runtimeType == other.runtimeType &&
+          exists == other.exists &&
+          spendingLimit == other.spendingLimit &&
+          currentSpent == other.currentSpent &&
+          revoked == other.revoked &&
+          expiresAt == other.expiresAt;
+}
+
+/// A transaction history entry from getSignaturesForAddress.
+class TxHistoryEntry {
+  final String signature;
+  final BigInt slot;
+  final PlatformInt64? blockTime;
+
+  const TxHistoryEntry({
+    required this.signature,
+    required this.slot,
+    this.blockTime,
+  });
+
+  @override
+  int get hashCode => signature.hashCode ^ slot.hashCode ^ blockTime.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TxHistoryEntry &&
+          runtimeType == other.runtimeType &&
+          signature == other.signature &&
+          slot == other.slot &&
+          blockTime == other.blockTime;
 }
 
 /// An unsigned register transaction ready for external wallet signing.

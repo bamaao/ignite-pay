@@ -629,6 +629,67 @@ Future<String> buildUnsignedSponsoredSplTransferTx({
   relayerPubkeyB58: relayerPubkeyB58,
 );
 
+/// Get SOL balance (lamports) for a pubkey.
+Future<BigInt> getSolBalance({
+  required String rpcUrl,
+  required String pubkeyB58,
+}) => RustLib.instance.api.crateApiSimpleGetSolBalance(
+  rpcUrl: rpcUrl,
+  pubkeyB58: pubkeyB58,
+);
+
+/// Get SPL token balance for an owner + mint pair.
+Future<BigInt> getTokenBalance({
+  required String rpcUrl,
+  required String ownerPubkeyB58,
+  required String tokenMintB58,
+}) => RustLib.instance.api.crateApiSimpleGetTokenBalance(
+  rpcUrl: rpcUrl,
+  ownerPubkeyB58: ownerPubkeyB58,
+  tokenMintB58: tokenMintB58,
+);
+
+/// Check if a session key PDA exists on-chain.
+Future<SessionOnChainInfo> getSessionAccountInfo({
+  required String rpcUrl,
+  required String ownerB58,
+  required String ephemeralB58,
+}) => RustLib.instance.api.crateApiSimpleGetSessionAccountInfo(
+  rpcUrl: rpcUrl,
+  ownerB58: ownerB58,
+  ephemeralB58: ephemeralB58,
+);
+
+/// Derive the owner's Solana pubkey from the DID stored in sled.
+Future<String> getOwnerPubkey({required String storagePath}) =>
+    RustLib.instance.api.crateApiSimpleGetOwnerPubkey(storagePath: storagePath);
+
+/// Save a payment authorization record to sled.
+Future<void> savePaymentRecord({
+  required String storagePath,
+  required PaymentRecord record,
+}) => RustLib.instance.api.crateApiSimpleSavePaymentRecord(
+  storagePath: storagePath,
+  record: record,
+);
+
+/// List all payment records from sled, newest-first.
+Future<List<PaymentRecord>> listPaymentRecords({required String storagePath}) =>
+    RustLib.instance.api.crateApiSimpleListPaymentRecords(
+      storagePath: storagePath,
+    );
+
+/// Get recent transaction signatures for a pubkey.
+Future<List<TxHistoryEntry>> getTransactionHistory({
+  required String rpcUrl,
+  required String pubkeyB58,
+  required int limit,
+}) => RustLib.instance.api.crateApiSimpleGetTransactionHistory(
+  rpcUrl: rpcUrl,
+  pubkeyB58: pubkeyB58,
+  limit: limit,
+);
+
 /// Query CCTP forwarding fees from Circle Iris API.
 Future<CctpFeeQuote> cctpGetFees({
   required String irisApiUrl,

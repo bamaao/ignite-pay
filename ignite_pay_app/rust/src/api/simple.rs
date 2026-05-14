@@ -17,7 +17,10 @@ use tokio::sync::Mutex;
 
 use crate::api::identity::IdentityManager;
 use crate::api::notification::{DecryptedMessage, DidcommMessage};
-use crate::api::session::{MerchantPolicy, SessionKeyEntry, SessionKeyInfo, UnsignedRegisterTx};
+use crate::api::session::{
+    MerchantPolicy, PaymentRecord, SessionKeyEntry, SessionKeyInfo, SessionOnChainInfo,
+    TxHistoryEntry, UnsignedRegisterTx,
+};
 use crate::api::ws_client::WsClient;
 
 // ── Global state ────────────────────────────────────────────────────────
@@ -1384,6 +1387,55 @@ pub async fn build_unsigned_sponsored_spl_transfer_tx(
         relayer_pubkey_b58,
     )
     .await
+}
+
+// ── Balance, On-Chain Check, Payment Records ─────────────────────────
+
+/// Get SOL balance (lamports) for a pubkey.
+pub async fn get_sol_balance(rpc_url: String, pubkey_b58: String) -> Result<u64> {
+    crate::api::session::get_sol_balance(rpc_url, pubkey_b58).await
+}
+
+/// Get SPL token balance for an owner + mint pair.
+pub async fn get_token_balance(
+    rpc_url: String,
+    owner_pubkey_b58: String,
+    token_mint_b58: String,
+) -> Result<u64> {
+    crate::api::session::get_token_balance(rpc_url, owner_pubkey_b58, token_mint_b58).await
+}
+
+/// Check if a session key PDA exists on-chain.
+pub async fn get_session_account_info(
+    rpc_url: String,
+    owner_b58: String,
+    ephemeral_b58: String,
+) -> Result<SessionOnChainInfo> {
+    crate::api::session::get_session_account_info(rpc_url, owner_b58, ephemeral_b58).await
+}
+
+/// Derive the owner's Solana pubkey from the DID stored in sled.
+pub fn get_owner_pubkey(storage_path: String) -> Result<String> {
+    crate::api::session::get_owner_pubkey(storage_path)
+}
+
+/// Save a payment authorization record to sled.
+pub fn save_payment_record(storage_path: String, record: PaymentRecord) -> Result<()> {
+    crate::api::session::save_payment_record(storage_path, record)
+}
+
+/// List all payment records from sled, newest-first.
+pub fn list_payment_records(storage_path: String) -> Result<Vec<PaymentRecord>> {
+    crate::api::session::list_payment_records(storage_path)
+}
+
+/// Get recent transaction signatures for a pubkey.
+pub async fn get_transaction_history(
+    rpc_url: String,
+    pubkey_b58: String,
+    limit: u32,
+) -> Result<Vec<TxHistoryEntry>> {
+    crate::api::session::get_transaction_history(rpc_url, pubkey_b58, limit).await
 }
 
 // ── CCTP Forwarding ─────────────────────────────────────────────────────────

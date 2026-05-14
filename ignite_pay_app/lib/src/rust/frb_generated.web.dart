@@ -46,6 +46,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MerchantPolicy dco_decode_box_autoadd_merchant_policy(dynamic raw);
 
   @protected
+  PaymentRecord dco_decode_box_autoadd_payment_record(dynamic raw);
+
+  @protected
   SessionKeyEntry dco_decode_box_autoadd_session_key_entry(dynamic raw);
 
   @protected
@@ -97,10 +100,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<HubInfo> dco_decode_list_hub_info(dynamic raw);
 
   @protected
+  List<PaymentRecord> dco_decode_list_payment_record(dynamic raw);
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
   List<SessionKeyEntry> dco_decode_list_session_key_entry(dynamic raw);
+
+  @protected
+  List<TxHistoryEntry> dco_decode_list_tx_history_entry(dynamic raw);
 
   @protected
   MbVoucherResult dco_decode_mb_voucher_result(dynamic raw);
@@ -142,6 +151,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PaymentQrData dco_decode_payment_qr_data(dynamic raw);
 
   @protected
+  PaymentRecord dco_decode_payment_record(dynamic raw);
+
+  @protected
   PaymentResult dco_decode_payment_result(dynamic raw);
 
   @protected
@@ -152,6 +164,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SessionKeyInfo dco_decode_session_key_info(dynamic raw);
+
+  @protected
+  SessionOnChainInfo dco_decode_session_on_chain_info(dynamic raw);
+
+  @protected
+  TxHistoryEntry dco_decode_tx_history_entry(dynamic raw);
 
   @protected
   int dco_decode_u_16(dynamic raw);
@@ -188,6 +206,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   MerchantPolicy sse_decode_box_autoadd_merchant_policy(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  PaymentRecord sse_decode_box_autoadd_payment_record(
     SseDeserializer deserializer,
   );
 
@@ -251,10 +274,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<HubInfo> sse_decode_list_hub_info(SseDeserializer deserializer);
 
   @protected
+  List<PaymentRecord> sse_decode_list_payment_record(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
   List<SessionKeyEntry> sse_decode_list_session_key_entry(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<TxHistoryEntry> sse_decode_list_tx_history_entry(
     SseDeserializer deserializer,
   );
 
@@ -308,6 +341,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PaymentQrData sse_decode_payment_qr_data(SseDeserializer deserializer);
 
   @protected
+  PaymentRecord sse_decode_payment_record(SseDeserializer deserializer);
+
+  @protected
   PaymentResult sse_decode_payment_result(SseDeserializer deserializer);
 
   @protected
@@ -318,6 +354,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SessionKeyInfo sse_decode_session_key_info(SseDeserializer deserializer);
+
+  @protected
+  SessionOnChainInfo sse_decode_session_on_chain_info(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  TxHistoryEntry sse_decode_tx_history_entry(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
@@ -366,6 +410,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_merchant_policy(
     MerchantPolicy self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_payment_record(
+    PaymentRecord self,
     SseSerializer serializer,
   );
 
@@ -445,6 +495,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_hub_info(List<HubInfo> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_payment_record(
+    List<PaymentRecord> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
     SseSerializer serializer,
@@ -453,6 +509,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_session_key_entry(
     List<SessionKeyEntry> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_tx_history_entry(
+    List<TxHistoryEntry> self,
     SseSerializer serializer,
   );
 
@@ -520,6 +582,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_payment_qr_data(PaymentQrData self, SseSerializer serializer);
 
   @protected
+  void sse_encode_payment_record(PaymentRecord self, SseSerializer serializer);
+
+  @protected
   void sse_encode_payment_result(PaymentResult self, SseSerializer serializer);
 
   @protected
@@ -537,6 +602,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_session_key_info(
     SessionKeyInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_session_on_chain_info(
+    SessionOnChainInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_tx_history_entry(
+    TxHistoryEntry self,
     SseSerializer serializer,
   );
 

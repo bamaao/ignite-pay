@@ -819,7 +819,6 @@ class _MockRustLibApi extends RustLibApi {
     required String rpcUrl,
     required String ownerPubkeyB58,
     required String ephemeralPubkeyB58,
-    required String ephemeralSecretKeyB58,
     required String targetProgram,
     required List<String> scopes,
     required BigInt spendingLimit,
@@ -863,6 +862,108 @@ class _MockRustLibApi extends RustLibApi {
     required String mcpDid,
     required String mcpDidDocJson,
   }) async {}
+
+  // --- Balance, on-chain check, payment record mocks ---
+
+  @override
+  Future<BigInt> crateApiSessionGetSolBalance({
+    required String rpcUrl,
+    required String pubkeyB58,
+  }) async => BigInt.zero;
+
+  @override
+  Future<BigInt> crateApiSimpleGetSolBalance({
+    required String rpcUrl,
+    required String pubkeyB58,
+  }) async => BigInt.zero;
+
+  @override
+  Future<BigInt> crateApiSessionGetTokenBalance({
+    required String rpcUrl,
+    required String ownerPubkeyB58,
+    required String tokenMintB58,
+  }) async => BigInt.zero;
+
+  @override
+  Future<BigInt> crateApiSimpleGetTokenBalance({
+    required String rpcUrl,
+    required String ownerPubkeyB58,
+    required String tokenMintB58,
+  }) async => BigInt.zero;
+
+  @override
+  Future<SessionOnChainInfo> crateApiSessionGetSessionAccountInfo({
+    required String rpcUrl,
+    required String ownerB58,
+    required String ephemeralB58,
+  }) async =>
+      SessionOnChainInfo(
+        exists: false,
+        spendingLimit: BigInt.zero,
+        currentSpent: BigInt.zero,
+        revoked: false,
+        expiresAt: 0,
+      );
+
+  @override
+  Future<SessionOnChainInfo> crateApiSimpleGetSessionAccountInfo({
+    required String rpcUrl,
+    required String ownerB58,
+    required String ephemeralB58,
+  }) async =>
+      SessionOnChainInfo(
+        exists: false,
+        spendingLimit: BigInt.zero,
+        currentSpent: BigInt.zero,
+        revoked: false,
+        expiresAt: 0,
+      );
+
+  @override
+  Future<String> crateApiSessionGetOwnerPubkey({
+    required String storagePath,
+  }) async => 'mockOwnerPubkey1111111111111111111111111111111';
+
+  @override
+  Future<String> crateApiSimpleGetOwnerPubkey({
+    required String storagePath,
+  }) async => 'mockOwnerPubkey1111111111111111111111111111111';
+
+  @override
+  Future<void> crateApiSessionSavePaymentRecord({
+    required String storagePath,
+    required PaymentRecord record,
+  }) async {}
+
+  @override
+  Future<void> crateApiSimpleSavePaymentRecord({
+    required String storagePath,
+    required PaymentRecord record,
+  }) async {}
+
+  @override
+  Future<List<PaymentRecord>> crateApiSessionListPaymentRecords({
+    required String storagePath,
+  }) async => [];
+
+  @override
+  Future<List<PaymentRecord>> crateApiSimpleListPaymentRecords({
+    required String storagePath,
+  }) async => [];
+
+  @override
+  Future<List<TxHistoryEntry>> crateApiSessionGetTransactionHistory({
+    required String rpcUrl,
+    required String pubkeyB58,
+    required int limit,
+  }) async => [];
+
+  @override
+  Future<List<TxHistoryEntry>> crateApiSimpleGetTransactionHistory({
+    required String rpcUrl,
+    required String pubkeyB58,
+    required int limit,
+  }) async => [];
 }
 
 void main() {

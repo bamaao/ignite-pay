@@ -95,6 +95,16 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   String _perTxLimit = ''; // SOL string, default = amount
   String _durationHours = '24';
 
+  // Funding fields — visible only when creating a new session key
+  String _solFundingAmount = '0.01'; // SOL
+  String _usdcFundingAmount = '1.0'; // USDC
+
+  // On-chain PDA existence check
+  bool _pdaExistsOnChain = false;
+
+  /// Whether this is a first-time session key creation (PDA not found on-chain).
+  bool get _isNewSessionKey => !_pdaExistsOnChain;
+
   String get _merchantDid => widget.request?.merchantDid ?? 'did:solana:shopx merchants';
   int get _amount => widget.request?.amount ?? 500000000;
   String get _paymentId => widget.request?.paymentId ?? '';
@@ -162,14 +172,37 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
       // No saved policy — keep defaults
     }
 
+    // Check on-chain PDA existence
+    if (existing != null) {
+      final onChainInfo = await svc.checkOnChainExists();
+      if (mounted) {
+        setState(() {
+          _pdaExistsOnChain = onChainInfo?.exists ?? false;
+        });
+      }
+    }
+
     if (mounted) {
       setState(() {
         _checkingExistingKey = false;
       });
-      if (existing != null) {
+      if (existing != null && _pdaExistsOnChain) {
         setState(() {
           _authResult = 'Using existing session key';
         });
+      } else {
+        // New session key — initialize funding defaults from MCP suggestions
+        final req = widget.request;
+        if (req != null) {
+          setState(() {
+            if (req.newSessionKeySuggestedSolFunding != null && req.newSessionKeySuggestedSolFunding! > 0) {
+              _solFundingAmount = (req.newSessionKeySuggestedSolFunding! / 1000000000.0).toStringAsFixed(4);
+            }
+            if (req.newSessionKeySuggestedTokenFunding != null && req.newSessionKeySuggestedTokenFunding! > 0) {
+              _usdcFundingAmount = (req.newSessionKeySuggestedTokenFunding! / 1000000.0).toStringAsFixed(2);
+            }
+          });
+        }
       }
     }
   }
@@ -205,14 +238,13 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
             ? 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
             : '11111111111111111111111111111111';
 
-        // 2. Build register tx with Phantom as owner, ephemeral pre-signed
+        // 2. Build register tx with Phantom as owner, ephemeral pubkey from MCP
         setState(() => _authResult = 'Building register transaction...');
         final unsignedRegister = await session.buildRegisterTxForPhantom(
           storagePath: dir.path,
           rpcUrl: svc.rpcUrl,
           ownerPubkeyB58: phantom.walletPublicKey!,
           ephemeralPubkeyB58: req.newSessionKeyPubkey!,
-          ephemeralSecretKeyB58: req.newSessionKeySecretKey!,
           targetProgram: targetProgram,
           scopes: req.newSessionKeyScopes ?? ['sol:transfer', 'spl:transfer'],
           spendingLimit: BigInt.from(req.newSessionKeySpendingLimit ?? 0),
@@ -242,37 +274,10 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
           sessionPda: unsignedRegister.sessionPda,
         );
 
-        // 6. Transfer SOL to session key via Phantom signAndSendTransaction
-        final solFunding = req.newSessionKeySuggestedSolFunding ?? 0;
-        if (solFunding > 0) {
-          setState(() => _authResult = 'Open Phantom to send SOL...');
-          final txB58 = await session.buildUnsignedTransferTx(
-            rpcUrl: svc.rpcUrl,
-            walletPubkeyB58: phantom.walletPublicKey!,
-            merchantDid: info.ephemeralPubkey,
-            amountLamports: BigInt.from(solFunding),
-          );
-          final sig = await phantom.signAndSendTransaction(txB58);
-          if (sig == null) throw 'Phantom rejected SOL transfer';
-        }
+        // 6. Fund the new session key via Phantom wallet (user-customizable amounts)
+        await _fundSessionKeyViaPhantom(phantom, info.ephemeralPubkey, svc.rpcUrl);
 
-        // 7. Transfer USDC to session key via Phantom signAndSendTransaction
-        final usdcFunding = req.newSessionKeySuggestedTokenFunding ?? 0;
-        final tokenMint = req.newSessionKeyTokenMint;
-        if (usdcFunding > 0 && tokenMint != null && tokenMint.isNotEmpty) {
-          setState(() => _authResult = 'Open Phantom to send USDC...');
-          final txB58 = await session.buildUnsignedSplTransferTx(
-            rpcUrl: svc.rpcUrl,
-            walletPubkeyB58: phantom.walletPublicKey!,
-            merchantWalletB58: info.ephemeralPubkey,
-            amount: BigInt.from(usdcFunding),
-            tokenMintB58: tokenMint,
-          );
-          final sig = await phantom.signAndSendTransaction(txB58);
-          if (sig == null) throw 'Phantom rejected USDC transfer';
-        }
-
-        // 8. Send auth response with the registered session key info
+        // 7. Send auth response with the registered session key info
         await _sendAuthResponseWithExternalKey(info);
         setState(() => _authResult = 'Authorized with Phantom-funded session key');
         await Future.delayed(const Duration(milliseconds: 1200));
@@ -307,29 +312,48 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
       return;
     }
 
-    // Default: no new session key from MCP and no existing key — create one
+    // No MCP session key provided and no existing key — MCP should always provide
+    // an ephemeral keypair when a new session key is needed. Show error.
     setState(() {
-      _isAuthorizing = true;
-      _authResult = 'Registering session key on-chain...';
+      _authResult = 'Error: MCP server did not provide a session key';
     });
+  }
 
-    final dailyLimitLamports = (_parseSol(_dailySpendingLimit) * 1000000000).round();
-    final durationSecs = (int.tryParse(_durationHours) ?? 24) * 3600;
-
-    try {
-      await svc.createWithBuiltInKey(
-        spendingLimit: dailyLimitLamports,
-        durationSecs: durationSecs,
+  /// Fund a session key via Phantom wallet using the user's custom SOL/USDC amounts.
+  Future<void> _fundSessionKeyViaPhantom(
+    PhantomWalletService phantom,
+    String ephemeralPubkey,
+    String rpcUrl,
+  ) async {
+    final solAmount = _parseSol(_solFundingAmount);
+    if (solAmount > 0) {
+      setState(() => _authResult = 'Open Phantom to send SOL...');
+      final solLamports = (solAmount * 1000000000).round();
+      final txB58 = await session.buildUnsignedTransferTx(
+        rpcUrl: rpcUrl,
+        walletPubkeyB58: phantom.walletPublicKey!,
+        merchantDid: ephemeralPubkey,
+        amountLamports: BigInt.from(solLamports),
       );
-      await _sendAuthResponse();
-      setState(() => _authResult = 'Session key registered & authorized');
-      await Future.delayed(const Duration(milliseconds: 1200));
-      if (mounted) Navigator.of(context).pop('authorized');
-    } catch (e) {
-      setState(() {
-        _authResult = 'Error: $e';
-        _isAuthorizing = false;
-      });
+      final sig = await phantom.signAndSendTransaction(txB58);
+      if (sig == null) throw 'Phantom rejected SOL transfer';
+    }
+
+    final usdcAmount = double.tryParse(_usdcFundingAmount) ?? 0.0;
+    final tokenMint = widget.request?.newSessionKeyTokenMint
+        ?? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'; // devnet USDC
+    if (usdcAmount > 0) {
+      setState(() => _authResult = 'Open Phantom to send USDC...');
+      final usdcRaw = (usdcAmount * 1000000).round(); // USDC has 6 decimals
+      final txB58 = await session.buildUnsignedSplTransferTx(
+        rpcUrl: rpcUrl,
+        walletPubkeyB58: phantom.walletPublicKey!,
+        merchantWalletB58: ephemeralPubkey,
+        amount: BigInt.from(usdcRaw),
+        tokenMintB58: tokenMint,
+      );
+      final sig = await phantom.signAndSendTransaction(txB58);
+      if (sig == null) throw 'Phantom rejected USDC transfer';
     }
   }
 
@@ -377,6 +401,18 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
           : null,
       dailyTxCountLimit: dailyTxCount,
       perTxLimit: perTxLimitLamports,
+    );
+
+    // Save payment record
+    final svc = SessionKeyService();
+    await svc.savePaymentRecord(
+      paymentId: _paymentId,
+      merchantDid: _merchantDid,
+      amount: BigInt.from(_amount),
+      tokenMint: widget.request?.tokenMint,
+      description: _description,
+      authorized: true,
+      sessionKeyPubkey: svc.activeSessionKey?.ephemeralPubkey,
     );
   }
 
@@ -434,6 +470,19 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
     );
 
     DidcommService().clearPendingAuth();
+
+    // Save payment record
+    final svc = SessionKeyService();
+    await svc.savePaymentRecord(
+      paymentId: _paymentId,
+      merchantDid: _merchantDid,
+      amount: BigInt.from(_amount),
+      tokenMint: widget.request?.tokenMint ?? info.sessionPda,
+      description: _description,
+      authorized: true,
+      sessionKeyPubkey: info.ephemeralPubkey,
+      txSignature: info.txSignature,
+    );
   }
 
   /// Parse a SOL string to a double, returning 0 on failure.
@@ -611,6 +660,16 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
                       onDurationHoursChanged: (v) => setState(() => _durationHours = v),
                     ),
                     const SizedBox(height: 16),
+                    // Show funding section only when creating a new session key
+                    if (_isNewSessionKey && !_checkingExistingKey) ...[
+                      _FundingCard(
+                        solFundingAmount: _solFundingAmount,
+                        onSolFundingAmountChanged: (v) => setState(() => _solFundingAmount = v),
+                        usdcFundingAmount: _usdcFundingAmount,
+                        onUsdcFundingAmountChanged: (v) => setState(() => _usdcFundingAmount = v),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
                     _ListActionSelector(
                       selected: _listAction,
                       onChanged: (v) => setState(() => _listAction = v),
@@ -1003,6 +1062,77 @@ class _ResultBanner extends StatelessWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Funding Card (SOL + USDC amounts for new session key)
+// ---------------------------------------------------------------------------
+class _FundingCard extends StatelessWidget {
+  final String solFundingAmount;
+  final ValueChanged<String> onSolFundingAmountChanged;
+  final String usdcFundingAmount;
+  final ValueChanged<String> onUsdcFundingAmountChanged;
+
+  const _FundingCard({
+    required this.solFundingAmount,
+    required this.onSolFundingAmountChanged,
+    required this.usdcFundingAmount,
+    required this.onUsdcFundingAmountChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _kSurfaceDark.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFAB9FF2).withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(LucideIcons.wallet, size: 14, color: Color(0xFFAB9FF2)),
+              const SizedBox(width: 6),
+              Text(
+                'SESSION KEY FUNDING',
+                style: GoogleFonts.inter(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFFAB9FF2),
+                  letterSpacing: 1.0,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Fund via Phantom wallet (first-time setup)',
+            style: GoogleFonts.inter(fontSize: 11, color: _kTextSecondary),
+          ),
+          const SizedBox(height: 14),
+          _PolicyRow(
+            label: 'SOL Amount',
+            value: solFundingAmount,
+            onChanged: onSolFundingAmountChanged,
+            suffix: 'SOL',
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          ),
+          const SizedBox(height: 10),
+          _PolicyRow(
+            label: 'USDC Amount',
+            value: usdcFundingAmount,
+            onChanged: onUsdcFundingAmountChanged,
+            suffix: 'USDC',
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
           ),
         ],
       ),
