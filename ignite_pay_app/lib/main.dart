@@ -685,7 +685,9 @@ class IgnitePayDashboard extends StatelessWidget {
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     return SingleChildScrollView(
-                      child: ConstrainedBox(
+                      child: ColoredBox(
+                        color: _kBackground,
+                        child: ConstrainedBox(
                         constraints: BoxConstraints(minHeight: constraints.maxHeight),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -701,6 +703,7 @@ class IgnitePayDashboard extends StatelessWidget {
                             const _AuthAction(),
                           ],
                         ),
+                      ),
                       ),
                     );
                   },
@@ -1078,7 +1081,6 @@ class _SessionKeyBalanceCardState extends State<_SessionKeyBalanceCard> {
             width: double.infinity,
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: _kSurfaceMid.withValues(alpha: 0.6),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: _kGlassBorder),
               gradient: LinearGradient(
@@ -1093,12 +1095,13 @@ class _SessionKeyBalanceCardState extends State<_SessionKeyBalanceCard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Header row
                 Row(
                   children: [
                     Icon(LucideIcons.wallet, size: 16, color: _kNeonCyan.withValues(alpha: 0.8)),
                     const SizedBox(width: 8),
                     Text(
-                      'SESSION KEY BALANCE',
+                      'SESSION KEY',
                       style: GoogleFonts.inter(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
@@ -1119,6 +1122,7 @@ class _SessionKeyBalanceCardState extends State<_SessionKeyBalanceCard> {
                   ],
                 ),
                 const SizedBox(height: 16),
+                // Balances
                 Row(
                   children: [
                     Expanded(
@@ -1138,31 +1142,107 @@ class _SessionKeyBalanceCardState extends State<_SessionKeyBalanceCard> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 14),
+                // Divider
+                Container(height: 1, color: _kGlassBorder),
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Icon(
-                      LucideIcons.keyRound,
-                      size: 12,
-                      color: _kTextSecondary.withValues(alpha: 0.5),
+                // Ephemeral pubkey (full)
+                _InfoRow(
+                  icon: LucideIcons.keyRound,
+                  label: 'Pubkey',
+                  value: active.ephemeralPubkey,
+                  mono: true,
+                ),
+                const SizedBox(height: 8),
+                // Session PDA
+                if (active.sessionPda != null) ...[
+                  _InfoRow(
+                    icon: LucideIcons.link,
+                    label: 'PDA',
+                    value: active.sessionPda!,
+                    mono: true,
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                // Spending limit
+                _InfoRow(
+                  icon: LucideIcons.shield,
+                  label: 'Daily Limit',
+                  value: active.spendingLimit > BigInt.zero
+                      ? '${(active.spendingLimit.toInt() / 1000000000.0).toStringAsFixed(2)} SOL'
+                      : 'Unlimited',
+                ),
+                const SizedBox(height: 8),
+                // Per-tx limit
+                if (active.perTxLimit > BigInt.zero) ...[
+                  _InfoRow(
+                    icon: LucideIcons.arrowRightLeft,
+                    label: 'Per-Tx Limit',
+                    value: '${(active.perTxLimit.toInt() / 1000000000.0).toStringAsFixed(4)} SOL',
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                // Daily tx count
+                if (active.dailyTxCountLimit > 0) ...[
+                  _InfoRow(
+                    icon: LucideIcons.repeat,
+                    label: 'Daily Tx Limit',
+                    value: '${active.dailyTxCountLimit}',
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                // Expiry
+                _InfoRow(
+                  icon: LucideIcons.clock,
+                  label: 'Expires',
+                  value: active.expiresAt > 0
+                      ? DateTime.fromMillisecondsSinceEpoch(active.expiresAt * 1000)
+                          .toLocal()
+                          .toString()
+                          .substring(0, 19)
+                      : 'Unknown',
+                ),
+                const SizedBox(height: 8),
+                // Status
+                _InfoRow(
+                  icon: LucideIcons.circleDot,
+                  label: 'Status',
+                  value: active.status.toUpperCase(),
+                  valueColor: active.status == 'active' ? _kSuccess : _kIntercepted,
+                ),
+                const SizedBox(height: 8),
+                // On-chain info
+                if (svc.onChainInfo != null) ...[
+                  _InfoRow(
+                    icon: LucideIcons.activity,
+                    label: 'Spent',
+                    value: '${(svc.onChainInfo!.currentSpent.toInt() / 1000000000.0).toStringAsFixed(4)} SOL',
+                  ),
+                  const SizedBox(height: 8),
+                  if (svc.onChainInfo!.revoked)
+                    _InfoRow(
+                      icon: LucideIcons.ban,
+                      label: 'Revoked',
+                      value: 'YES',
+                      valueColor: _kIntercepted,
                     ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        active.ephemeralPubkey.length > 20
-                            ? '${active.ephemeralPubkey.substring(0, 8)}...${active.ephemeralPubkey.substring(active.ephemeralPubkey.length - 6)}'
-                            : active.ephemeralPubkey,
-                        style: GoogleFonts.jetBrainsMono(
-                          fontSize: 11,
-                          color: _kTextSecondary.withValues(alpha: 0.6),
-                        ),
-                        overflow: TextOverflow.ellipsis,
+                ],
+                const SizedBox(height: 4),
+                // Tap hint
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Text(
+                      'View payments',
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        color: _kNeonCyan.withValues(alpha: 0.7),
                       ),
                     ),
                     Icon(
                       LucideIcons.chevronRight,
                       size: 14,
-                      color: _kTextSecondary.withValues(alpha: 0.4),
+                      color: _kNeonCyan.withValues(alpha: 0.7),
                     ),
                   ],
                 ),
@@ -1230,6 +1310,50 @@ class _BalanceItem extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final bool mono;
+  final Color? valueColor;
+
+  const _InfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.mono = false,
+    this.valueColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 12, color: _kTextSecondary.withValues(alpha: 0.6)),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 90,
+          child: Text(
+            label,
+            style: GoogleFonts.inter(fontSize: 11, color: _kTextSecondary),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: mono
+                ? GoogleFonts.jetBrainsMono(fontSize: 11, color: valueColor ?? _kTextPrimary)
+                : GoogleFonts.inter(fontSize: 11, color: valueColor ?? _kTextPrimary),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 2,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1338,76 +1462,110 @@ class _RecentPaymentsPreviewState extends State<_RecentPaymentsPreview> {
             final divisor = isUsdc ? 1000000.0 : 1000000000.0;
             final symbol = isUsdc ? 'USDC' : 'SOL';
             final amountStr = (rec.amount.toInt() / divisor).toStringAsFixed(isUsdc ? 2 : 4);
-            final merchant = rec.merchantDid.length > 24
-                ? '${rec.merchantDid.substring(0, 16)}...${rec.merchantDid.substring(rec.merchantDid.length - 6)}'
-                : rec.merchantDid;
             final time = rec.timestamp > 0
                 ? DateTime.fromMillisecondsSinceEpoch(rec.timestamp * 1000)
                 : null;
             final timeStr = time != null
-                ? '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}'
+                ? '${time.month}/${time.day} ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}'
                 : '--';
 
             return Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
                   color: _kSurfaceDark.withValues(alpha: 0.5),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: _kGlassBorder),
                 ),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: (rec.authorized ? _kSuccess : _kIntercepted).withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(
-                        rec.authorized ? LucideIcons.checkCircle2 : LucideIcons.xCircle,
-                        size: 18,
-                        color: rec.authorized ? _kSuccess : _kIntercepted,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            merchant,
-                            style: GoogleFonts.inter(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
+                    // Top row: status icon + amount
+                    Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: (rec.authorized ? _kSuccess : _kIntercepted).withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            rec.authorized ? LucideIcons.checkCircle2 : LucideIcons.xCircle,
+                            size: 16,
+                            color: rec.authorized ? _kSuccess : _kIntercepted,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            '$amountStr $symbol',
+                            style: GoogleFonts.jetBrainsMono(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
                               color: _kTextPrimary,
                             ),
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            timeStr,
-                            style: GoogleFonts.inter(fontSize: 11, color: _kTextSecondary),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          '$amountStr $symbol',
-                          style: GoogleFonts.jetBrainsMono(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: _kTextPrimary,
-                          ),
                         ),
-                        const SizedBox(height: 4),
                         _StatusBadge(
                           color: rec.authorized ? _kSuccess : _kIntercepted,
                           label: rec.authorized ? 'Success' : 'Declined',
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    // Merchant DID (full)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(LucideIcons.store, size: 12, color: _kTextSecondary.withValues(alpha: 0.6)),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            rec.merchantDid,
+                            style: GoogleFonts.jetBrainsMono(fontSize: 11, color: _kTextSecondary),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 2,
+                          ),
+                        ),
+                      ],
+                    ),
+                    // Description
+                    if (rec.description.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(LucideIcons.fileText, size: 12, color: _kTextSecondary.withValues(alpha: 0.6)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              rec.description,
+                              style: GoogleFonts.inter(fontSize: 12, color: _kTextPrimary),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    // Payment ID + time
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Icon(LucideIcons.clock, size: 12, color: _kTextSecondary.withValues(alpha: 0.6)),
+                        const SizedBox(width: 6),
+                        Text(
+                          timeStr,
+                          style: GoogleFonts.inter(fontSize: 11, color: _kTextSecondary),
+                        ),
+                        const Spacer(),
+                        Text(
+                          rec.paymentId.length > 16
+                              ? 'ID: ${rec.paymentId.substring(0, 8)}...${rec.paymentId.substring(rec.paymentId.length - 4)}'
+                              : 'ID: ${rec.paymentId}',
+                          style: GoogleFonts.jetBrainsMono(fontSize: 10, color: _kTextSecondary.withValues(alpha: 0.5)),
                         ),
                       ],
                     ),
