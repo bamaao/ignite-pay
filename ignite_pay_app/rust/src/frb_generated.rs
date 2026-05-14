@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1054346326;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -893857184;
 
 // Section: executor
 
@@ -1454,6 +1454,47 @@ fn wire__crate__api__simple__fetch_hub_list_impl(
         },
     )
 }
+fn wire__crate__api__simple__fetch_merchant_profile_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "fetch_merchant_profile",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_registry_url = <String>::sse_decode(&mut deserializer);
+            let api_merchant_did = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::fetch_merchant_profile(
+                            api_registry_url,
+                            api_merchant_did,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__session__fetch_relayer_pubkey_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2432,6 +2473,45 @@ fn wire__crate__api__simple__list_session_keys_impl(
         },
     )
 }
+fn wire__crate__api__simple__load_cached_merchant_profile_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "load_cached_merchant_profile",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_merchant_did = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::simple::load_cached_merchant_profile(
+                            api_storage_path,
+                            api_merchant_did,
+                        )?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__session__load_merchant_policy_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -3362,6 +3442,45 @@ fn wire__crate__api__simple__revoke_session_key_onchain_impl(
                         Ok(output_ok)
                     })()
                     .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__simple__save_cached_merchant_profile_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "save_cached_merchant_profile",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_profile = <crate::api::simple::MerchantProfile>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::simple::save_cached_merchant_profile(
+                            api_storage_path,
+                            api_profile,
+                        )?;
+                        Ok(output_ok)
+                    })(),
                 )
             }
         },
@@ -4457,6 +4576,22 @@ impl SseDecode for crate::api::session::MerchantPolicy {
     }
 }
 
+impl SseDecode for crate::api::simple::MerchantProfile {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_did = <String>::sse_decode(deserializer);
+        let mut var_verified = <bool>::sse_decode(deserializer);
+        let mut var_name = <Option<String>>::sse_decode(deserializer);
+        let mut var_category = <Option<String>>::sse_decode(deserializer);
+        return crate::api::simple::MerchantProfile {
+            did: var_did,
+            verified: var_verified,
+            name: var_name,
+            category: var_category,
+        };
+    }
+}
+
 impl SseDecode for crate::api::simple::OobInvitationData {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4514,6 +4649,19 @@ impl SseDecode for Option<crate::api::session::MerchantPolicy> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<crate::api::session::MerchantPolicy>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::simple::MerchantProfile> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::simple::MerchantProfile>::sse_decode(
                 deserializer,
             ));
         } else {
@@ -4947,203 +5095,218 @@ fn pde_ffi_dispatcher_primary_impl(
         ),
         32 => wire__crate__api__simple__fetch_hub_list_impl(port, ptr, rust_vec_len, data_len),
         33 => {
-            wire__crate__api__session__fetch_relayer_pubkey_impl(port, ptr, rust_vec_len, data_len)
+            wire__crate__api__simple__fetch_merchant_profile_impl(port, ptr, rust_vec_len, data_len)
         }
         34 => {
+            wire__crate__api__session__fetch_relayer_pubkey_impl(port, ptr, rust_vec_len, data_len)
+        }
+        35 => {
             wire__crate__api__simple__fetch_relayer_pubkey_impl(port, ptr, rust_vec_len, data_len)
         }
-        35 => wire__crate__api__session__finalize_phantom_session_key_impl(
+        36 => wire__crate__api__session__finalize_phantom_session_key_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        36 => wire__crate__api__session__find_active_session_key_impl(
+        37 => wire__crate__api__session__find_active_session_key_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        37 => wire__crate__api__simple__find_active_session_key_impl(
+        38 => wire__crate__api__simple__find_active_session_key_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        38 => wire__crate__api__session__fund_session_key_impl(port, ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__simple__fund_session_key_impl(port, ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__simple__get_channel_state_impl(port, ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__simple__get_did_impl(port, ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__session__get_owner_pubkey_impl(port, ptr, rust_vec_len, data_len),
-        43 => wire__crate__api__simple__get_owner_pubkey_impl(port, ptr, rust_vec_len, data_len),
-        44 => wire__crate__api__session__get_session_account_info_impl(
+        39 => wire__crate__api__session__fund_session_key_impl(port, ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__simple__fund_session_key_impl(port, ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__simple__get_channel_state_impl(port, ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__simple__get_did_impl(port, ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__session__get_owner_pubkey_impl(port, ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__simple__get_owner_pubkey_impl(port, ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__session__get_session_account_info_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        45 => wire__crate__api__simple__get_session_account_info_impl(
+        46 => wire__crate__api__simple__get_session_account_info_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        46 => wire__crate__api__session__get_sol_balance_impl(port, ptr, rust_vec_len, data_len),
-        47 => wire__crate__api__simple__get_sol_balance_impl(port, ptr, rust_vec_len, data_len),
-        48 => wire__crate__api__session__get_token_balance_impl(port, ptr, rust_vec_len, data_len),
-        49 => wire__crate__api__simple__get_token_balance_impl(port, ptr, rust_vec_len, data_len),
-        50 => wire__crate__api__session__get_transaction_history_impl(
+        47 => wire__crate__api__session__get_sol_balance_impl(port, ptr, rust_vec_len, data_len),
+        48 => wire__crate__api__simple__get_sol_balance_impl(port, ptr, rust_vec_len, data_len),
+        49 => wire__crate__api__session__get_token_balance_impl(port, ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__simple__get_token_balance_impl(port, ptr, rust_vec_len, data_len),
+        51 => wire__crate__api__session__get_transaction_history_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        51 => wire__crate__api__simple__get_transaction_history_impl(
+        52 => wire__crate__api__simple__get_transaction_history_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        52 => wire__crate__api__simple__initialize_identity_impl(port, ptr, rust_vec_len, data_len),
-        53 => wire__crate__api__simple__list_channels_impl(port, ptr, rust_vec_len, data_len),
-        54 => {
+        53 => wire__crate__api__simple__initialize_identity_impl(port, ptr, rust_vec_len, data_len),
+        54 => wire__crate__api__simple__list_channels_impl(port, ptr, rust_vec_len, data_len),
+        55 => {
             wire__crate__api__session__list_payment_records_impl(port, ptr, rust_vec_len, data_len)
         }
-        55 => {
+        56 => {
             wire__crate__api__simple__list_payment_records_impl(port, ptr, rust_vec_len, data_len)
         }
-        56 => wire__crate__api__session__list_session_keys_impl(port, ptr, rust_vec_len, data_len),
-        57 => wire__crate__api__simple__list_session_keys_impl(port, ptr, rust_vec_len, data_len),
-        58 => {
+        57 => wire__crate__api__session__list_session_keys_impl(port, ptr, rust_vec_len, data_len),
+        58 => wire__crate__api__simple__list_session_keys_impl(port, ptr, rust_vec_len, data_len),
+        59 => wire__crate__api__simple__load_cached_merchant_profile_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        60 => {
             wire__crate__api__session__load_merchant_policy_impl(port, ptr, rust_vec_len, data_len)
         }
-        59 => {
+        61 => {
             wire__crate__api__simple__load_merchant_policy_impl(port, ptr, rust_vec_len, data_len)
         }
-        60 => wire__crate__api__simple__mb_get_buyer_pubkey_impl(port, ptr, rust_vec_len, data_len),
-        61 => wire__crate__api__simple__mb_send_voucher_impl(port, ptr, rust_vec_len, data_len),
-        62 => wire__crate__api__simple__mb_sign_voucher_impl(port, ptr, rust_vec_len, data_len),
-        63 => wire__crate__api__simple__open_channel_impl(port, ptr, rust_vec_len, data_len),
-        64 => {
+        62 => wire__crate__api__simple__mb_get_buyer_pubkey_impl(port, ptr, rust_vec_len, data_len),
+        63 => wire__crate__api__simple__mb_send_voucher_impl(port, ptr, rust_vec_len, data_len),
+        64 => wire__crate__api__simple__mb_sign_voucher_impl(port, ptr, rust_vec_len, data_len),
+        65 => wire__crate__api__simple__open_channel_impl(port, ptr, rust_vec_len, data_len),
+        66 => {
             wire__crate__api__simple__parse_oob_invitation_impl(port, ptr, rust_vec_len, data_len)
         }
-        65 => wire__crate__api__simple__parse_payment_qr_impl(port, ptr, rust_vec_len, data_len),
-        66 => wire__crate__api__phantom_crypto__phantom_decrypt_impl(
+        67 => wire__crate__api__simple__parse_payment_qr_impl(port, ptr, rust_vec_len, data_len),
+        68 => wire__crate__api__phantom_crypto__phantom_decrypt_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        67 => wire__crate__api__phantom_crypto__phantom_encrypt_impl(
+        69 => wire__crate__api__phantom_crypto__phantom_encrypt_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        68 => wire__crate__api__phantom_crypto__phantom_generate_keypair_impl(
+        70 => wire__crate__api__phantom_crypto__phantom_generate_keypair_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        69 => wire__crate__api__phantom_crypto__phantom_shared_secret_impl(
+        71 => wire__crate__api__phantom_crypto__phantom_shared_secret_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        70 => wire__crate__api__simple__pull_messages_impl(port, ptr, rust_vec_len, data_len),
-        71 => wire__crate__api__session__register_and_fund_session_key_impl(
+        72 => wire__crate__api__simple__pull_messages_impl(port, ptr, rust_vec_len, data_len),
+        73 => wire__crate__api__session__register_and_fund_session_key_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        72 => wire__crate__api__simple__register_and_fund_session_key_impl(
+        74 => wire__crate__api__simple__register_and_fund_session_key_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        73 => {
+        75 => {
             wire__crate__api__simple__register_device_token_impl(port, ptr, rust_vec_len, data_len)
         }
-        74 => wire__crate__api__session__register_external_session_key_impl(
+        76 => wire__crate__api__session__register_external_session_key_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        75 => wire__crate__api__simple__register_external_session_key_impl(
+        77 => wire__crate__api__simple__register_external_session_key_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        76 => wire__crate__api__simple__register_mcp_peer_impl(port, ptr, rust_vec_len, data_len),
-        77 => wire__crate__api__session__revoke_session_key_onchain_impl(
+        78 => wire__crate__api__simple__register_mcp_peer_impl(port, ptr, rust_vec_len, data_len),
+        79 => wire__crate__api__session__revoke_session_key_onchain_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        78 => wire__crate__api__simple__revoke_session_key_onchain_impl(
+        80 => wire__crate__api__simple__revoke_session_key_onchain_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        79 => {
+        81 => wire__crate__api__simple__save_cached_merchant_profile_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        82 => {
             wire__crate__api__session__save_merchant_policy_impl(port, ptr, rust_vec_len, data_len)
         }
-        80 => {
+        83 => {
             wire__crate__api__simple__save_merchant_policy_impl(port, ptr, rust_vec_len, data_len)
         }
-        81 => {
+        84 => {
             wire__crate__api__session__save_payment_record_impl(port, ptr, rust_vec_len, data_len)
         }
-        82 => wire__crate__api__simple__save_payment_record_impl(port, ptr, rust_vec_len, data_len),
-        83 => wire__crate__api__simple__send_auth_response_impl(port, ptr, rust_vec_len, data_len),
-        84 => wire__crate__api__simple__send_connection_request_impl(
+        85 => wire__crate__api__simple__save_payment_record_impl(port, ptr, rust_vec_len, data_len),
+        86 => wire__crate__api__simple__send_auth_response_impl(port, ptr, rust_vec_len, data_len),
+        87 => wire__crate__api__simple__send_connection_request_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        85 => wire__crate__api__simple__send_create_channel_request_impl(
+        88 => wire__crate__api__simple__send_create_channel_request_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        86 => wire__crate__api__simple__send_mb_deposit_request_impl(
+        89 => wire__crate__api__simple__send_mb_deposit_request_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        87 => wire__crate__api__simple__send_qr_payment_request_impl(
+        90 => wire__crate__api__simple__send_qr_payment_request_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        88 => wire__crate__api__simple__send_session_fund_response_impl(
+        91 => wire__crate__api__simple__send_session_fund_response_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        89 => wire__crate__api__simple__send_session_renew_response_impl(
+        92 => wire__crate__api__simple__send_session_renew_response_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        90 => wire__crate__api__simple__settle_channel_impl(port, ptr, rust_vec_len, data_len),
-        91 => wire__crate__api__simple__sign_nonce_impl(port, ptr, rust_vec_len, data_len),
-        92 => wire__crate__api__simple__sign_payment_impl(port, ptr, rust_vec_len, data_len),
-        93 => {
+        93 => wire__crate__api__simple__settle_channel_impl(port, ptr, rust_vec_len, data_len),
+        94 => wire__crate__api__simple__sign_nonce_impl(port, ptr, rust_vec_len, data_len),
+        95 => wire__crate__api__simple__sign_payment_impl(port, ptr, rust_vec_len, data_len),
+        96 => {
             wire__crate__api__simple__verify_did_signature_impl(port, ptr, rust_vec_len, data_len)
         }
         _ => unreachable!(),
@@ -5472,6 +5635,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::session::MerchantPolicy>
     for crate::api::session::MerchantPolicy
 {
     fn into_into_dart(self) -> crate::api::session::MerchantPolicy {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::simple::MerchantProfile {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.did.into_into_dart().into_dart(),
+            self.verified.into_into_dart().into_dart(),
+            self.name.into_into_dart().into_dart(),
+            self.category.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::simple::MerchantProfile
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::MerchantProfile>
+    for crate::api::simple::MerchantProfile
+{
+    fn into_into_dart(self) -> crate::api::simple::MerchantProfile {
         self
     }
 }
@@ -6009,6 +6195,16 @@ impl SseEncode for crate::api::session::MerchantPolicy {
     }
 }
 
+impl SseEncode for crate::api::simple::MerchantProfile {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.did, serializer);
+        <bool>::sse_encode(self.verified, serializer);
+        <Option<String>>::sse_encode(self.name, serializer);
+        <Option<String>>::sse_encode(self.category, serializer);
+    }
+}
+
 impl SseEncode for crate::api::simple::OobInvitationData {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -6054,6 +6250,16 @@ impl SseEncode for Option<crate::api::session::MerchantPolicy> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::session::MerchantPolicy>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::simple::MerchantProfile> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::simple::MerchantProfile>::sse_encode(value, serializer);
         }
     }
 }

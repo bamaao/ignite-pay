@@ -28,6 +28,7 @@ pub fn build_router(state: RegistryState) -> Router {
         .route("/v1/merchants/verify/{did}", get(crate::handlers::verify::verify_merchant))
         .route("/v1/merchants/rotate-key", post(crate::handlers::rotate_key::rotate_key))
         .route("/v1/merchants/status/{did}", get(crate::handlers::status::merchant_status))
+        .route("/v1/merchants/profile/{did}", get(crate::handlers::profile::merchant_profile))
         .route("/v1/merchants/update-vc", post(crate::handlers::update_vc::update_vc))
         .route("/v1/merchants/confirm", post(crate::handlers::confirm::confirm_register))
         // VC issuance & revocation

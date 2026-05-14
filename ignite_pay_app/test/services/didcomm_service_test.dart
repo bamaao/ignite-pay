@@ -964,6 +964,31 @@ class _MockRustLibApi extends RustLibApi {
     required String pubkeyB58,
     required int limit,
   }) async => [];
+
+  @override
+  Future<MerchantProfile> crateApiSimpleFetchMerchantProfile({
+    required String registryUrl,
+    required String merchantDid,
+  }) async =>
+      MerchantProfile(
+        did: merchantDid,
+        verified: false,
+        name: null,
+        category: null,
+      );
+
+  @override
+  Future<void> crateApiSimpleSaveCachedMerchantProfile({
+    required String storagePath,
+    required MerchantProfile profile,
+  }) async {}
+
+  @override
+  Future<MerchantProfile?> crateApiSimpleLoadCachedMerchantProfile({
+    required String storagePath,
+    required String merchantDid,
+  }) async =>
+      null;
 }
 
 void main() {

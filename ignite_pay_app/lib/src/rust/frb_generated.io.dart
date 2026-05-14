@@ -44,6 +44,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MerchantPolicy dco_decode_box_autoadd_merchant_policy(dynamic raw);
 
   @protected
+  MerchantProfile dco_decode_box_autoadd_merchant_profile(dynamic raw);
+
+  @protected
   PaymentRecord dco_decode_box_autoadd_payment_record(dynamic raw);
 
   @protected
@@ -116,6 +119,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MerchantPolicy dco_decode_merchant_policy(dynamic raw);
 
   @protected
+  MerchantProfile dco_decode_merchant_profile(dynamic raw);
+
+  @protected
   OobInvitationData dco_decode_oob_invitation_data(dynamic raw);
 
   @protected
@@ -129,6 +135,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   MerchantPolicy? dco_decode_opt_box_autoadd_merchant_policy(dynamic raw);
+
+  @protected
+  MerchantProfile? dco_decode_opt_box_autoadd_merchant_profile(dynamic raw);
 
   @protected
   SessionKeyEntry? dco_decode_opt_box_autoadd_session_key_entry(dynamic raw);
@@ -204,6 +213,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   MerchantPolicy sse_decode_box_autoadd_merchant_policy(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  MerchantProfile sse_decode_box_autoadd_merchant_profile(
     SseDeserializer deserializer,
   );
 
@@ -296,6 +310,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MerchantPolicy sse_decode_merchant_policy(SseDeserializer deserializer);
 
   @protected
+  MerchantProfile sse_decode_merchant_profile(SseDeserializer deserializer);
+
+  @protected
   OobInvitationData sse_decode_oob_invitation_data(
     SseDeserializer deserializer,
   );
@@ -313,6 +330,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   MerchantPolicy? sse_decode_opt_box_autoadd_merchant_policy(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  MerchantProfile? sse_decode_opt_box_autoadd_merchant_profile(
     SseDeserializer deserializer,
   );
 
@@ -408,6 +430,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_merchant_policy(
     MerchantPolicy self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_merchant_profile(
+    MerchantProfile self,
     SseSerializer serializer,
   );
 
@@ -529,6 +557,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_merchant_profile(
+    MerchantProfile self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_oob_invitation_data(
     OobInvitationData self,
     SseSerializer serializer,
@@ -552,6 +586,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_merchant_policy(
     MerchantPolicy? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_merchant_profile(
+    MerchantProfile? self,
     SseSerializer serializer,
   );
 

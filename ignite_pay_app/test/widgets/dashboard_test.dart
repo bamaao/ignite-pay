@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ignite_pay_app/main.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
+import 'package:ignite_pay_app/services/session_key_service.dart';
 import 'package:provider/provider.dart';
 
 void main() {
@@ -30,8 +31,13 @@ void main() {
     DidcommService.resetInstance();
 
     await tester.pumpWidget(
-      ChangeNotifierProvider(
-        create: (_) => DidcommService(),
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider(create: (_) => DidcommService()),
+          ChangeNotifierProvider<SessionKeyService>.value(
+            value: SessionKeyService(),
+          ),
+        ],
         child: const MaterialApp(home: IgnitePayDashboard()),
       ),
     );

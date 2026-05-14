@@ -13,6 +13,7 @@ pub mod confirm;
 pub mod fees;
 pub mod issue_vc;
 pub mod nonce;
+pub mod profile;
 pub mod proof;
 pub mod resolve;
 pub mod register;

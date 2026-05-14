@@ -15,7 +15,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/src/rust/frb_generated.dart';
+import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
 import 'package:ignite_pay_app/src/rust/api/session.dart' as session;
+import 'package:path_provider/path_provider.dart';
 import 'package:ignite_pay_app/challenge_screen.dart';
 import 'package:ignite_pay_app/policy_screen.dart';
 import 'package:ignite_pay_app/vault_screen.dart';
@@ -1370,6 +1372,7 @@ class _RecentPaymentsPreview extends StatefulWidget {
 
 class _RecentPaymentsPreviewState extends State<_RecentPaymentsPreview> {
   List<session.PaymentRecord> _records = [];
+  Map<String, rust.MerchantProfile> _profileCache = {};
   bool _loading = true;
 
   @override
@@ -1381,9 +1384,45 @@ class _RecentPaymentsPreviewState extends State<_RecentPaymentsPreview> {
   Future<void> _loadRecords() async {
     final svc = SessionKeyService();
     final records = await svc.loadPaymentRecords();
+    final topRecords = records.take(3).toList();
+
+    // Resolve merchant profiles for unique DIDs
+    final profileCache = <String, rust.MerchantProfile>{};
+    final uniqueDids = topRecords.map((r) => r.merchantDid).toSet();
+    if (uniqueDids.isNotEmpty) {
+      try {
+        final dir = await getApplicationSupportDirectory();
+        final prefs = await SharedPreferences.getInstance();
+        final registryUrl = prefs.getString('hub_registry_url') ?? '';
+        for (final did in uniqueDids) {
+          if (did.isEmpty) continue;
+          var profile = await rust.loadCachedMerchantProfile(
+            storagePath: dir.path,
+            merchantDid: did,
+          );
+          if (profile == null && registryUrl.isNotEmpty) {
+            profile = await rust.fetchMerchantProfile(
+              registryUrl: registryUrl,
+              merchantDid: did,
+            );
+            await rust.saveCachedMerchantProfile(
+              storagePath: dir.path,
+              profile: profile,
+            );
+          }
+          if (profile != null) {
+            profileCache[did] = profile;
+          }
+        }
+      } catch (e) {
+        debugPrint('Failed to resolve merchant profiles: $e');
+      }
+    }
+
     if (mounted) {
       setState(() {
-        _records = records.take(3).toList();
+        _records = topRecords;
+        _profileCache = profileCache;
         _loading = false;
       });
     }
@@ -1515,22 +1554,52 @@ class _RecentPaymentsPreviewState extends State<_RecentPaymentsPreview> {
                       ],
                     ),
                     const SizedBox(height: 10),
-                    // Merchant DID (full)
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(LucideIcons.store, size: 12, color: _kTextSecondary.withValues(alpha: 0.6)),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            rec.merchantDid,
-                            style: GoogleFonts.jetBrainsMono(fontSize: 11, color: _kTextSecondary),
-                            overflow: TextOverflow.ellipsis,
-                            maxLines: 2,
+                    // Merchant info
+                    Builder(builder: (context) {
+                      final profile = _profileCache[rec.merchantDid];
+                      if (profile != null && profile.name != null) {
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(LucideIcons.store, size: 12, color: _kTextSecondary.withValues(alpha: 0.6)),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    profile.name!,
+                                    style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500, color: _kTextPrimary),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  Text(
+                                    rec.merchantDid,
+                                    style: GoogleFonts.jetBrainsMono(fontSize: 10, color: _kTextSecondary.withValues(alpha: 0.6)),
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(LucideIcons.store, size: 12, color: _kTextSecondary.withValues(alpha: 0.6)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              rec.merchantDid,
+                              style: GoogleFonts.jetBrainsMono(fontSize: 11, color: _kTextSecondary),
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 2,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
+                        ],
+                      );
+                    }),
                     // Description
                     if (rec.description.isNotEmpty) ...[
                       const SizedBox(height: 6),
@@ -1591,6 +1660,7 @@ class _PaymentRecordsScreen extends StatefulWidget {
 
 class _PaymentRecordsScreenState extends State<_PaymentRecordsScreen> {
   List<session.PaymentRecord> _records = [];
+  Map<String, rust.MerchantProfile> _profileCache = {};
   bool _loading = true;
 
   @override
@@ -1602,9 +1672,44 @@ class _PaymentRecordsScreenState extends State<_PaymentRecordsScreen> {
   Future<void> _loadRecords() async {
     final svc = SessionKeyService();
     final records = await svc.loadPaymentRecords();
+
+    // Resolve merchant profiles for unique DIDs
+    final profileCache = <String, rust.MerchantProfile>{};
+    final uniqueDids = records.map((r) => r.merchantDid).toSet();
+    if (uniqueDids.isNotEmpty) {
+      try {
+        final dir = await getApplicationSupportDirectory();
+        final prefs = await SharedPreferences.getInstance();
+        final registryUrl = prefs.getString('hub_registry_url') ?? '';
+        for (final did in uniqueDids) {
+          if (did.isEmpty) continue;
+          var profile = await rust.loadCachedMerchantProfile(
+            storagePath: dir.path,
+            merchantDid: did,
+          );
+          if (profile == null && registryUrl.isNotEmpty) {
+            profile = await rust.fetchMerchantProfile(
+              registryUrl: registryUrl,
+              merchantDid: did,
+            );
+            await rust.saveCachedMerchantProfile(
+              storagePath: dir.path,
+              profile: profile,
+            );
+          }
+          if (profile != null) {
+            profileCache[did] = profile;
+          }
+        }
+      } catch (e) {
+        debugPrint('Failed to resolve merchant profiles: $e');
+      }
+    }
+
     if (mounted) {
       setState(() {
         _records = records;
+        _profileCache = profileCache;
         _loading = false;
       });
     }
@@ -1664,9 +1769,10 @@ class _PaymentRecordsScreenState extends State<_PaymentRecordsScreen> {
                       final divisor = isUsdc ? 1000000.0 : 1000000000.0;
                       final symbol = isUsdc ? 'USDC' : 'SOL';
                       final amountStr = (rec.amount.toInt() / divisor).toStringAsFixed(isUsdc ? 2 : 4);
-                      final merchant = rec.merchantDid.length > 24
+                      final profile = _profileCache[rec.merchantDid];
+                      final merchantDisplayName = profile?.name ?? (rec.merchantDid.length > 24
                           ? '${rec.merchantDid.substring(0, 16)}...${rec.merchantDid.substring(rec.merchantDid.length - 6)}'
-                          : rec.merchantDid;
+                          : rec.merchantDid);
                       final time = rec.timestamp > 0
                           ? DateTime.fromMillisecondsSinceEpoch(rec.timestamp * 1000)
                           : null;
@@ -1705,7 +1811,7 @@ class _PaymentRecordsScreenState extends State<_PaymentRecordsScreen> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      merchant,
+                                      merchantDisplayName,
                                       style: GoogleFonts.inter(
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,

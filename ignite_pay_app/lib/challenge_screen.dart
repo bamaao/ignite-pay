@@ -24,6 +24,9 @@ import 'package:ignite_pay_app/src/rust/api/session.dart' as session;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+// Re-export MerchantProfile from generated bindings for convenience.
+typedef MerchantProfile = rust.MerchantProfile;
+
 // ---------------------------------------------------------------------------
 // Challenge Theme
 // ---------------------------------------------------------------------------
@@ -772,22 +775,82 @@ class _ChallengeHeader extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // Merchant Profile Card
 // ---------------------------------------------------------------------------
-class _MerchantCard extends StatelessWidget {
+class _MerchantCard extends StatefulWidget {
   final String? merchantDid;
   const _MerchantCard({this.merchantDid});
 
+  @override
+  State<_MerchantCard> createState() => _MerchantCardState();
+}
+
+class _MerchantCardState extends State<_MerchantCard> {
+  rust.MerchantProfile? _profile;
+  bool _loading = true;
+
+  String get _merchantDid => widget.merchantDid ?? '';
+
   String get _displayDid {
-    if (merchantDid != null && merchantDid!.isNotEmpty) {
-      if (merchantDid!.length > 24) {
-        return '${merchantDid!.substring(0, 16)}...${merchantDid!.substring(merchantDid!.length - 6)}';
+    if (_merchantDid.isNotEmpty) {
+      if (_merchantDid.length > 24) {
+        return '${_merchantDid.substring(0, 16)}...${_merchantDid.substring(_merchantDid.length - 6)}';
       }
-      return merchantDid!;
+      return _merchantDid;
     }
     return 'did:solana:7kPx...mN3q';
   }
 
   @override
+  void initState() {
+    super.initState();
+    _resolveProfile();
+  }
+
+  Future<void> _resolveProfile() async {
+    if (_merchantDid.isEmpty) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
+
+    try {
+      final dir = await getApplicationSupportDirectory();
+      // Try cache first
+      var profile = await rust.loadCachedMerchantProfile(
+        storagePath: dir.path,
+        merchantDid: _merchantDid,
+      );
+      // If not cached, fetch from registry
+      if (profile == null) {
+        final prefs = await SharedPreferences.getInstance();
+        final registryUrl = prefs.getString('hub_registry_url') ?? '';
+        if (registryUrl.isNotEmpty) {
+          profile = await rust.fetchMerchantProfile(
+            registryUrl: registryUrl,
+            merchantDid: _merchantDid,
+          );
+          await rust.saveCachedMerchantProfile(
+            storagePath: dir.path,
+            profile: profile,
+          );
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _profile = profile;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to resolve merchant profile: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final displayName = _profile?.name ?? 'Merchant';
+    final isVerified = _profile?.verified ?? false;
+    final category = _profile?.category;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
@@ -823,41 +886,78 @@ class _MerchantCard extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Text(
-                      'Merchant',
-                      style: GoogleFonts.inter(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: _kTextPrimary,
+                    Flexible(
+                      child: Text(
+                        displayName,
+                        style: GoogleFonts.inter(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: _kTextPrimary,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     const SizedBox(width: 8),
-                    // Verified badge
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: _kSuccess.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: _kSuccess.withValues(alpha: 0.3)),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(LucideIcons.badgeCheck, size: 11, color: _kSuccess),
-                          const SizedBox(width: 3),
-                          Text(
-                            'Verified',
-                            style: GoogleFonts.inter(
-                              fontSize: 9,
-                              fontWeight: FontWeight.w600,
-                              color: _kSuccess,
+                    if (isVerified)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: _kSuccess.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: _kSuccess.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(LucideIcons.badgeCheck, size: 11, color: _kSuccess),
+                            const SizedBox(width: 3),
+                            Text(
+                              'Verified',
+                              style: GoogleFonts.inter(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w600,
+                                color: _kSuccess,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
+                      )
+                    else if (!_loading)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: _kAmber.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: _kAmber.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(LucideIcons.alertTriangle, size: 11, color: _kAmber),
+                            const SizedBox(width: 3),
+                            Text(
+                              'Unverified',
+                              style: GoogleFonts.inter(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w600,
+                                color: _kAmber,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
                   ],
                 ),
+                if (category != null && category.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    category,
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      color: _kTextSecondary.withValues(alpha: 0.8),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 4),
                 Text(
                   _displayDid,

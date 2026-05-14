@@ -746,6 +746,34 @@ Future<CctpTransferStatus> cctpPollStatus({
   burnTxHash: burnTxHash,
 );
 
+/// Fetch a merchant profile from the DID Registry.
+/// On network error or 404, returns an unverified profile with name=None.
+Future<MerchantProfile> fetchMerchantProfile({
+  required String registryUrl,
+  required String merchantDid,
+}) => RustLib.instance.api.crateApiSimpleFetchMerchantProfile(
+  registryUrl: registryUrl,
+  merchantDid: merchantDid,
+);
+
+/// Cache a merchant profile in sled under `merchant_profile:{did}`.
+Future<void> saveCachedMerchantProfile({
+  required String storagePath,
+  required MerchantProfile profile,
+}) => RustLib.instance.api.crateApiSimpleSaveCachedMerchantProfile(
+  storagePath: storagePath,
+  profile: profile,
+);
+
+/// Load a cached merchant profile from sled. Returns `None` if not cached.
+Future<MerchantProfile?> loadCachedMerchantProfile({
+  required String storagePath,
+  required String merchantDid,
+}) => RustLib.instance.api.crateApiSimpleLoadCachedMerchantProfile(
+  storagePath: storagePath,
+  merchantDid: merchantDid,
+);
+
 /// Auth grant returned from payment signing.
 class AuthGrant {
   final String merchantDid;
@@ -857,6 +885,35 @@ class HubInfo {
           avgLatencyMs == other.avgLatencyMs &&
           activeChannels == other.activeChannels &&
           supportedTokens == other.supportedTokens;
+}
+
+/// Merchant profile resolved from the DID Registry.
+class MerchantProfile {
+  final String did;
+  final bool verified;
+  final String? name;
+  final String? category;
+
+  const MerchantProfile({
+    required this.did,
+    required this.verified,
+    this.name,
+    this.category,
+  });
+
+  @override
+  int get hashCode =>
+      did.hashCode ^ verified.hashCode ^ name.hashCode ^ category.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is MerchantProfile &&
+          runtimeType == other.runtimeType &&
+          did == other.did &&
+          verified == other.verified &&
+          name == other.name &&
+          category == other.category;
 }
 
 /// Parsed OOB invitation data.

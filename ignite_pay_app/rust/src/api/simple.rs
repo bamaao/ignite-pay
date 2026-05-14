@@ -1488,3 +1488,92 @@ pub async fn cctp_poll_status(
 ) -> Result<crate::api::cctp_transfer::CctpTransferStatus> {
     crate::api::cctp_transfer::cctp_poll_status(iris_api_url, src_domain, burn_tx_hash).await
 }
+
+// ── Merchant Profile Resolution ──────────────────────────────────────────
+
+/// Merchant profile resolved from the DID Registry.
+pub struct MerchantProfile {
+    pub did: String,
+    pub verified: bool,
+    pub name: Option<String>,
+    pub category: Option<String>,
+}
+
+/// Fetch a merchant profile from the DID Registry.
+/// On network error or 404, returns an unverified profile with name=None.
+pub async fn fetch_merchant_profile(
+    registry_url: String,
+    merchant_did: String,
+) -> Result<MerchantProfile> {
+    let client = reqwest::Client::new();
+    let url = format!("{}/v1/merchants/profile/{}", registry_url, merchant_did);
+
+    let resp = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("Failed to fetch merchant profile: {}", e);
+            return Ok(MerchantProfile {
+                did: merchant_did,
+                verified: false,
+                name: None,
+                category: None,
+            });
+        }
+    };
+
+    if !resp.status().is_success() {
+        tracing::warn!("Merchant profile not found: {}", resp.status());
+        return Ok(MerchantProfile {
+            did: merchant_did,
+            verified: false,
+            name: None,
+            category: None,
+        });
+    }
+
+    let body: serde_json::Value = resp.json().await?;
+    Ok(MerchantProfile {
+        did: body["did"].as_str().unwrap_or(&merchant_did).to_string(),
+        verified: body["verified"].as_bool().unwrap_or(false),
+        name: body["name"].as_str().map(String::from),
+        category: body["category"].as_str().map(String::from),
+    })
+}
+
+/// Cache a merchant profile in sled under `merchant_profile:{did}`.
+pub fn save_cached_merchant_profile(
+    storage_path: String,
+    profile: MerchantProfile,
+) -> Result<()> {
+    let db = sled::open(&storage_path)?;
+    let key = format!("merchant_profile:{}", profile.did);
+    let value = serde_json::json!({
+        "did": profile.did,
+        "verified": profile.verified,
+        "name": profile.name,
+        "category": profile.category,
+    });
+    db.insert(key.as_bytes(), serde_json::to_vec(&value)?)?;
+    Ok(())
+}
+
+/// Load a cached merchant profile from sled. Returns `None` if not cached.
+pub fn load_cached_merchant_profile(
+    storage_path: String,
+    merchant_did: String,
+) -> Result<Option<MerchantProfile>> {
+    let db = sled::open(&storage_path)?;
+    let key = format!("merchant_profile:{}", merchant_did);
+    match db.get(key.as_bytes())? {
+        Some(value) => {
+            let v: serde_json::Value = serde_json::from_slice(&value)?;
+            Ok(Some(MerchantProfile {
+                did: v["did"].as_str().unwrap_or(&merchant_did).to_string(),
+                verified: v["verified"].as_bool().unwrap_or(false),
+                name: v["name"].as_str().map(String::from),
+                category: v["category"].as_str().map(String::from),
+            }))
+        }
+        None => Ok(None),
+    }
+}
