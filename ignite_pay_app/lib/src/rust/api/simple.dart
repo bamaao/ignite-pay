@@ -660,6 +660,21 @@ Future<SessionOnChainInfo> getSessionAccountInfo({
   ephemeralB58: ephemeralB58,
 );
 
+/// Finalize an already-registered session key by persisting it to local storage.
+Future<SessionKeyInfo> finalizeExistingSessionKey({
+  required String storagePath,
+  required String ownerPubkeyB58,
+  required String ephemeralPubkey,
+  required SessionOnChainInfo onChainInfo,
+  required List<String> scopes,
+}) => RustLib.instance.api.crateApiSimpleFinalizeExistingSessionKey(
+  storagePath: storagePath,
+  ownerPubkeyB58: ownerPubkeyB58,
+  ephemeralPubkey: ephemeralPubkey,
+  onChainInfo: onChainInfo,
+  scopes: scopes,
+);
+
 /// Derive the owner's Solana pubkey from the DID stored in sled.
 Future<String> getOwnerPubkey({required String storagePath}) =>
     RustLib.instance.api.crateApiSimpleGetOwnerPubkey(storagePath: storagePath);

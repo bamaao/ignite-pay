@@ -235,13 +235,49 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
           if (!connected) throw 'Failed to connect to Phantom wallet';
         }
 
+        // 2. Check if this session key is already registered on-chain
+        setState(() => _authResult = 'Checking session key status...');
+        final onChainInfo = await rust.getSessionAccountInfo(
+          rpcUrl: svc.rpcUrl,
+          ownerB58: phantom.walletPublicKey!,
+          ephemeralB58: req.newSessionKeyPubkey!,
+        );
+        AppLogService().info('Auth', 'onChain check: exists=${onChainInfo.exists}, revoked=${onChainInfo.revoked}, expiresAt=${onChainInfo.expiresAt}');
+
+        if (onChainInfo.exists && !onChainInfo.revoked) {
+          // ── Already-registered path: skip registration, finalize locally ──
+          final scopes = req.newSessionKeyScopes ?? ['sol:transfer', 'spl:transfer'];
+          final info = await rust.finalizeExistingSessionKey(
+            storagePath: dir.path,
+            ownerPubkeyB58: phantom.walletPublicKey!,
+            ephemeralPubkey: req.newSessionKeyPubkey!,
+            onChainInfo: onChainInfo,
+            scopes: scopes,
+          );
+
+          // Check balances and top-up if needed
+          final needsFund = await _needsFunding(svc.rpcUrl, info.ephemeralPubkey);
+          if (needsFund) {
+            await _fundSessionKeyViaPhantom(phantom, info.ephemeralPubkey, svc.rpcUrl);
+          }
+
+          // Send auth response
+          await _sendAuthResponseWithExternalKey(info);
+          setState(() => _authResult = 'Authorized with existing session key');
+          await Future.delayed(const Duration(milliseconds: 1200));
+          if (mounted) Navigator.of(context).pop('authorized');
+          return;
+        }
+
+        // ── Not-registered path: register on-chain via Phantom ──
+
         // Determine target program from scopes
         final isSpl = (req.newSessionKeyScopes ?? []).any((s) => s.contains('spl'));
         final targetProgram = isSpl
             ? 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
             : '11111111111111111111111111111111';
 
-        // 2. Build register tx with Phantom as owner, ephemeral pubkey from MCP
+        // 3. Build register tx with Phantom as owner, ephemeral pubkey from MCP
         setState(() => _authResult = 'Building register transaction...');
         final unsignedRegister = await session.buildRegisterTxForPhantom(
           storagePath: dir.path,
@@ -257,19 +293,19 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
           tokenMint: req.newSessionKeyTokenMint,
         );
 
-        // 3. Phantom signTransaction (signs but does not broadcast)
+        // 4. Phantom signTransaction (signs but does not broadcast)
         setState(() => _authResult = 'Open Phantom to sign register tx...');
         final signedRegisterTx = await phantom.signTransaction(unsignedRegister.unsignedTxB58);
         if (signedRegisterTx == null) throw 'Phantom rejected register transaction';
 
-        // 4. Broadcast the fully signed register tx
+        // 5. Broadcast the fully signed register tx
         setState(() => _authResult = 'Broadcasting register transaction...');
         final registerSig = await session.broadcastSignedTx(
           rpcUrl: svc.rpcUrl,
           signedTxB58: signedRegisterTx,
         );
 
-        // 5. Finalize: move pending key to permanent storage
+        // 6. Finalize: move pending key to permanent storage
         final info = await session.finalizePhantomSessionKey(
           storagePath: dir.path,
           ephemeralPubkey: unsignedRegister.ephemeralPubkey,
@@ -277,10 +313,10 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
           sessionPda: unsignedRegister.sessionPda,
         );
 
-        // 6. Fund the new session key via Phantom wallet (user-customizable amounts)
+        // 7. Fund the new session key via Phantom wallet (user-customizable amounts)
         await _fundSessionKeyViaPhantom(phantom, info.ephemeralPubkey, svc.rpcUrl);
 
-        // 7. Send auth response with the registered session key info
+        // 8. Send auth response with the registered session key info
         await _sendAuthResponseWithExternalKey(info);
         setState(() => _authResult = 'Authorized with Phantom-funded session key');
         await Future.delayed(const Duration(milliseconds: 1200));
@@ -491,6 +527,29 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   /// Parse a SOL string to a double, returning 0 on failure.
   double _parseSol(String value) {
     return double.tryParse(value) ?? 0.0;
+  }
+
+  /// Check whether a session key needs SOL or USDC funding.
+  /// Returns true if either balance is below the user-specified funding amounts.
+  Future<bool> _needsFunding(String rpcUrl, String ephemeralPubkey) async {
+    final solBalance = await rust.getSolBalance(
+      rpcUrl: rpcUrl,
+      pubkeyB58: ephemeralPubkey,
+    );
+    final solThreshold = BigInt.from((_parseSol(_solFundingAmount) * 1000000000).round());
+    if (solBalance < solThreshold) return true;
+
+    final tokenMint = widget.request?.newSessionKeyTokenMint
+        ?? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'; // devnet USDC
+    final usdcBalance = await rust.getTokenBalance(
+      rpcUrl: rpcUrl,
+      ownerPubkeyB58: ephemeralPubkey,
+      tokenMintB58: tokenMint,
+    );
+    final usdcThreshold = BigInt.from(((double.tryParse(_usdcFundingAmount) ?? 0.0) * 1000000).round());
+    if (usdcBalance < usdcThreshold) return true;
+
+    return false;
   }
 
   /// Poll for session key registration completion after deep link callback.

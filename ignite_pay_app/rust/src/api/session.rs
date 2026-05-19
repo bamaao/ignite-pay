@@ -1303,6 +1303,57 @@ pub fn finalize_phantom_session_key(
     })
 }
 
+/// Finalize an already-registered session key by creating a `SessionKeyInfo` from
+/// on-chain data and persisting it to local sled storage (so it becomes the active key).
+/// The ephemeral secret key is set to all-zeros because MCP holds the real key.
+pub fn finalize_existing_session_key(
+    storage_path: String,
+    owner_pubkey_b58: String,
+    ephemeral_pubkey: String,
+    on_chain_info: SessionOnChainInfo,
+    scopes: Vec<String>,
+) -> Result<SessionKeyInfo> {
+    // Decode owner and ephemeral pubkeys to derive session PDA
+    let owner_bytes = bs58::decode(&owner_pubkey_b58).into_vec()?;
+    if owner_bytes.len() != 32 {
+        return Err(anyhow::anyhow!("Invalid owner pubkey length"));
+    }
+    let owner_arr: [u8; 32] = owner_bytes.try_into().unwrap();
+
+    let ephemeral_bytes = bs58::decode(&ephemeral_pubkey).into_vec()?;
+    if ephemeral_bytes.len() != 32 {
+        return Err(anyhow::anyhow!("Invalid ephemeral pubkey length"));
+    }
+    let ephemeral_arr: [u8; 32] = ephemeral_bytes.try_into().unwrap();
+
+    let session_pda = derive_session_pda_simple(&owner_arr, &ephemeral_arr);
+    let session_pda_b58 = bs58::encode(&session_pda).into_string();
+
+    // Zero secret key — MCP holds the real key
+    let zero_secret_64 = [0u8; 64];
+
+    // Store permanently in sled, same layout as finalize_phantom_session_key
+    let db = sled::open(&storage_path)?;
+    let perm_key = format!("session:{}", ephemeral_pubkey);
+    let mut perm_value = Vec::new();
+    perm_value.extend_from_slice(&zero_secret_64);
+    perm_value.extend_from_slice(&on_chain_info.expires_at.to_le_bytes());
+    perm_value.extend_from_slice(&on_chain_info.spending_limit.to_le_bytes());
+    perm_value.extend_from_slice(&0u64.to_le_bytes()); // per_tx_limit: unknown, default 0
+    perm_value.extend_from_slice(&0u32.to_le_bytes()); // daily_tx_count_limit: unknown, default 0
+    db.insert(perm_key.as_bytes(), perm_value)?;
+
+    Ok(SessionKeyInfo {
+        ephemeral_pubkey,
+        ephemeral_secret_key: bs58::encode(&zero_secret_64).into_string(),
+        expires_at: on_chain_info.expires_at,
+        spending_limit: on_chain_info.spending_limit,
+        scopes,
+        tx_signature: None, // no new tx — key was already registered
+        session_pda: Some(session_pda_b58),
+    })
+}
+
 /// Complete session key registration after receiving the owner signature from an external wallet.
 /// Reconstructs the signed transaction, submits it, and moves the key from pending to permanent storage.
 pub async fn complete_register_with_signature(

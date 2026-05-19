@@ -56,6 +56,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SessionKeyInfo dco_decode_box_autoadd_session_key_info(dynamic raw);
 
   @protected
+  SessionOnChainInfo dco_decode_box_autoadd_session_on_chain_info(dynamic raw);
+
+  @protected
   int dco_decode_box_autoadd_u_32(dynamic raw);
 
   @protected
@@ -233,6 +236,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SessionKeyInfo sse_decode_box_autoadd_session_key_info(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SessionOnChainInfo sse_decode_box_autoadd_session_on_chain_info(
     SseDeserializer deserializer,
   );
 
@@ -454,6 +462,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_session_key_info(
     SessionKeyInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_session_on_chain_info(
+    SessionOnChainInfo self,
     SseSerializer serializer,
   );
 

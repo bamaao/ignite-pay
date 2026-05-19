@@ -1414,6 +1414,23 @@ pub async fn get_session_account_info(
     crate::api::session::get_session_account_info(rpc_url, owner_b58, ephemeral_b58).await
 }
 
+/// Finalize an already-registered session key by persisting it to local storage.
+pub fn finalize_existing_session_key(
+    storage_path: String,
+    owner_pubkey_b58: String,
+    ephemeral_pubkey: String,
+    on_chain_info: SessionOnChainInfo,
+    scopes: Vec<String>,
+) -> Result<SessionKeyInfo> {
+    crate::api::session::finalize_existing_session_key(
+        storage_path,
+        owner_pubkey_b58,
+        ephemeral_pubkey,
+        on_chain_info,
+        scopes,
+    )
+}
+
 /// Derive the owner's Solana pubkey from the DID stored in sled.
 pub fn get_owner_pubkey(storage_path: String) -> Result<String> {
     crate::api::session::get_owner_pubkey(storage_path)

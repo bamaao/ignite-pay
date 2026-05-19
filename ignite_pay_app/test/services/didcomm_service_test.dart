@@ -857,6 +857,42 @@ class _MockRustLibApi extends RustLibApi {
       );
 
   @override
+  Future<SessionKeyInfo> crateApiSessionFinalizeExistingSessionKey({
+    required String storagePath,
+    required String ownerPubkeyB58,
+    required String ephemeralPubkey,
+    required SessionOnChainInfo onChainInfo,
+    required List<String> scopes,
+  }) async =>
+      SessionKeyInfo(
+        ephemeralPubkey: ephemeralPubkey,
+        ephemeralSecretKey: 'mockSecretKey',
+        expiresAt: onChainInfo.expiresAt,
+        spendingLimit: onChainInfo.spendingLimit,
+        scopes: scopes,
+        txSignature: null,
+        sessionPda: 'mockSessionPda1111111111111111111111111111111',
+      );
+
+  @override
+  Future<SessionKeyInfo> crateApiSimpleFinalizeExistingSessionKey({
+    required String storagePath,
+    required String ownerPubkeyB58,
+    required String ephemeralPubkey,
+    required SessionOnChainInfo onChainInfo,
+    required List<String> scopes,
+  }) async =>
+      SessionKeyInfo(
+        ephemeralPubkey: ephemeralPubkey,
+        ephemeralSecretKey: 'mockSecretKey',
+        expiresAt: onChainInfo.expiresAt,
+        spendingLimit: onChainInfo.spendingLimit,
+        scopes: scopes,
+        txSignature: null,
+        sessionPda: 'mockSessionPda1111111111111111111111111111111',
+      );
+
+  @override
   Future<void> crateApiSimpleRegisterMcpPeer({
     required String storagePath,
     required String mcpDid,

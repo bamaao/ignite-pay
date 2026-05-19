@@ -218,6 +218,23 @@ Future<SessionKeyInfo> finalizePhantomSessionKey({
   sessionPda: sessionPda,
 );
 
+/// Finalize an already-registered session key by creating a `SessionKeyInfo` from
+/// on-chain data and persisting it to local sled storage (so it becomes the active key).
+/// The ephemeral secret key is set to all-zeros because MCP holds the real key.
+Future<SessionKeyInfo> finalizeExistingSessionKey({
+  required String storagePath,
+  required String ownerPubkeyB58,
+  required String ephemeralPubkey,
+  required SessionOnChainInfo onChainInfo,
+  required List<String> scopes,
+}) => RustLib.instance.api.crateApiSessionFinalizeExistingSessionKey(
+  storagePath: storagePath,
+  ownerPubkeyB58: ownerPubkeyB58,
+  ephemeralPubkey: ephemeralPubkey,
+  onChainInfo: onChainInfo,
+  scopes: scopes,
+);
+
 /// Complete session key registration after receiving the owner signature from an external wallet.
 /// Reconstructs the signed transaction, submits it, and moves the key from pending to permanent storage.
 Future<SessionKeyInfo> completeRegisterWithSignature({
