@@ -146,6 +146,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
       if (hasDid) {
         // Load existing identity
+        if (!mounted) return;
         final svc = context.read<DidcommService>();
         await svc.initialize().timeout(const Duration(seconds: 15));
         // Auto-reconnect mediator if URL was previously saved
@@ -509,8 +510,8 @@ class _MainNavigatorState extends State<_MainNavigator> {
         if (signature != null) {
           debugPrint('Deep link callback: signature=$signature');
           final svc = SessionKeyService();
-          svc.completeRegistration(signature).then((session_info) {
-            debugPrint('Session key registered: ${session_info.ephemeralPubkey}');
+          svc.completeRegistration(signature).then((sessionInfo) {
+            debugPrint('Session key registered: ${sessionInfo.ephemeralPubkey}');
           }).catchError((e) {
             debugPrint('Deep link registration failed: $e');
           });

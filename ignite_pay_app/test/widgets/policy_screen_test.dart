@@ -57,7 +57,7 @@ void _fontSafeTestWidgets(String description, WidgetTesterCallback body) {
 }
 
 void main() {
-  Future<void> _pumpPolicy(WidgetTester tester) async {
+  Future<void> pumpPolicy(WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
     PathProviderPlatform.instance = FakePathProviderPlatform();
     tester.view.physicalSize = const Size(800, 1600);
@@ -74,18 +74,18 @@ void main() {
 
   group('PolicyArchitectScreen', () {
     _fontSafeTestWidgets('renders Policy Architect header', (tester) async {
-      await _pumpPolicy(tester);
+      await pumpPolicy(tester);
       expect(find.text('Policy Architect'), findsOneWidget);
       expect(find.text('Spending rules & whitelists'), findsOneWidget);
     });
 
     _fontSafeTestWidgets('renders empty state when no policies', (tester) async {
-      await _pumpPolicy(tester);
+      await pumpPolicy(tester);
       expect(find.text('No merchant policies yet'), findsOneWidget);
     });
 
     _fontSafeTestWidgets('renders empty state subtitle', (tester) async {
-      await _pumpPolicy(tester);
+      await pumpPolicy(tester);
       expect(
           find.textContaining('Policies will appear here'), findsOneWidget);
     });

@@ -151,7 +151,7 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
                   return ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     itemCount: notifications.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 6),
+                    separatorBuilder: (_, _) => const SizedBox(height: 6),
                     itemBuilder: (context, index) {
                       final msg = notifications[notifications.length - 1 - index];
                       final id = msg.rawBody.hashCode.toString();

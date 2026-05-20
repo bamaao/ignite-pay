@@ -92,7 +92,7 @@ void main() {
         dio.interceptors.add(mock);
       });
 
-      MediatorApi _createApi() {
+      MediatorApi createApi() {
         return _TestableMediatorApi(dio);
       }
 
@@ -100,7 +100,7 @@ void main() {
         mock.responses['POST /v1/auth/token'] = {
           'token': 'jwt_test_token_123',
         };
-        final api = _createApi();
+        final api = createApi();
 
         final token = await api.authenticate('did:test:123', 'sig_hex');
         expect(token, 'jwt_test_token_123');
@@ -113,7 +113,7 @@ void main() {
             {'msg_id': 'm2', 'jwe_envelope': 'enc2', 'created_at': 200},
           ],
         };
-        final api = _createApi();
+        final api = createApi();
 
         final msgs = await api.pullMessages('tok123');
         expect(msgs.length, 2);
@@ -127,7 +127,7 @@ void main() {
         mock.responses['GET /v1/sync/list'] = {
           'messages': <Map<String, dynamic>>[],
         };
-        final api = _createApi();
+        final api = createApi();
 
         final msgs = await api.pullMessages(
           'tok',
@@ -143,7 +143,7 @@ void main() {
           'jwe_envelope': 'envelope_data',
           'created_at': 300,
         };
-        final api = _createApi();
+        final api = createApi();
 
         final msg = await api.getMessage('tok', 'abc');
         expect(msg.msgId, 'abc');
@@ -153,21 +153,21 @@ void main() {
 
       test('submitCommand completes without error', () async {
         mock.responses['POST /v1/agents/agent1/command'] = {'ok': true};
-        final api = _createApi();
+        final api = createApi();
 
         await api.submitCommand('tok', 'agent1', 'jwe_payload');
       });
 
       test('registerDeviceToken completes without error', () async {
         mock.responses['POST /v1/devices/register-token'] = {'ok': true};
-        final api = _createApi();
+        final api = createApi();
 
         await api.registerDeviceToken('tok', 'fcm_token_xyz');
       });
 
       test('registerWebSocketChannel completes without error', () async {
         mock.responses['POST /v1/devices/register-token'] = {'ok': true};
-        final api = _createApi();
+        final api = createApi();
 
         await api.registerWebSocketChannel('tok');
       });
@@ -175,7 +175,7 @@ void main() {
       test('authenticate throws on server error', () async {
         mock.shouldFail = true;
         mock.errorCode = 500;
-        final api = _createApi();
+        final api = createApi();
 
         expect(
           () => api.authenticate('did:test', 'sig'),
@@ -186,7 +186,7 @@ void main() {
       test('pullMessages throws on auth error', () async {
         mock.shouldFail = true;
         mock.errorCode = 401;
-        final api = _createApi();
+        final api = createApi();
 
         expect(
           () => api.pullMessages('bad_token'),

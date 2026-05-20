@@ -16,7 +16,7 @@ import 'package:ignite_pay_app/widgets/message_list.dart';
 
 void main() {
   group('MessageList', () {
-    Widget _buildList({
+    Widget buildList({
       required List<DecryptedMsg> messages,
       ValueChanged<DecryptedMsg>? onMessageTap,
     }) {
@@ -31,7 +31,7 @@ void main() {
     }
 
     testWidgets('shows empty state when no messages', (tester) async {
-      await tester.pumpWidget(_buildList(messages: []));
+      await tester.pumpWidget(buildList(messages: []));
       expect(find.text('No messages yet'), findsOneWidget);
     });
 
@@ -42,13 +42,13 @@ void main() {
         DecryptedMsg(msgType: 'test', rawBody: '{}'),
       ];
 
-      await tester.pumpWidget(_buildList(messages: msgs));
+      await tester.pumpWidget(buildList(messages: msgs));
       expect(find.text('3'), findsOneWidget);
     });
 
     testWidgets('shows "MESSAGES" header when messages exist', (tester) async {
       final msgs = [DecryptedMsg(msgType: 'test', rawBody: '{}')];
-      await tester.pumpWidget(_buildList(messages: msgs));
+      await tester.pumpWidget(buildList(messages: msgs));
       expect(find.text('MESSAGES'), findsOneWidget);
     });
 
@@ -62,7 +62,7 @@ void main() {
         ),
       ];
 
-      await tester.pumpWidget(_buildList(messages: msgs));
+      await tester.pumpWidget(buildList(messages: msgs));
       expect(find.text('Payment Request'), findsOneWidget);
     });
 
@@ -71,7 +71,7 @@ void main() {
         DecryptedMsg(msgType: 'list-sync-notification/v1', rawBody: '{}'),
       ];
 
-      await tester.pumpWidget(_buildList(messages: msgs));
+      await tester.pumpWidget(buildList(messages: msgs));
       expect(find.text('List Sync'), findsOneWidget);
     });
 
@@ -80,7 +80,7 @@ void main() {
         DecryptedMsg(msgType: 'unknown-type', rawBody: '{}'),
       ];
 
-      await tester.pumpWidget(_buildList(messages: msgs));
+      await tester.pumpWidget(buildList(messages: msgs));
       expect(find.text('Message'), findsOneWidget);
     });
 
@@ -93,7 +93,7 @@ void main() {
         ),
       ];
 
-      await tester.pumpWidget(_buildList(messages: msgs));
+      await tester.pumpWidget(buildList(messages: msgs));
 
       // First 12 chars: "pay_abcdefgh" + "..."
       expect(find.textContaining('Payment: pay_abcdefgh'), findsOneWidget);
@@ -105,7 +105,7 @@ void main() {
         DecryptedMsg(msgType: 'some/namespace/action', rawBody: '{}'),
       ];
 
-      await tester.pumpWidget(_buildList(messages: msgs));
+      await tester.pumpWidget(buildList(messages: msgs));
       expect(find.text('action'), findsOneWidget);
     });
 
@@ -114,7 +114,7 @@ void main() {
       final msg = DecryptedMsg(msgType: 'test', rawBody: '{}');
       final msgs = [msg];
 
-      await tester.pumpWidget(_buildList(
+      await tester.pumpWidget(buildList(
         messages: msgs,
         onMessageTap: (m) => tappedMsg = m,
       ));
@@ -137,7 +137,7 @@ void main() {
         DecryptedMsg(msgType: 'unknown', rawBody: '{}'),
       ];
 
-      await tester.pumpWidget(_buildList(messages: msgs));
+      await tester.pumpWidget(buildList(messages: msgs));
       expect(find.text('Payment Request'), findsOneWidget);
       expect(find.text('List Sync'), findsOneWidget);
       expect(find.text('Message'), findsOneWidget);
@@ -152,7 +152,7 @@ void main() {
         ),
       ];
 
-      await tester.pumpWidget(_buildList(messages: msgs));
+      await tester.pumpWidget(buildList(messages: msgs));
       expect(find.textContaining('Payment: short'), findsOneWidget);
     });
   });

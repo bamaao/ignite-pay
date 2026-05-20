@@ -146,8 +146,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 await prefs.remove('temp_qr_data');
                 await prefs.remove('temp_auth_response');
               } catch (_) {}
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     backgroundColor: kSuccess,
                     behavior: SnackBarBehavior.floating,
@@ -158,7 +158,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
                   ),
                 );
-              }
             },
             child: Text('Clear',
                 style: GoogleFonts.inter(color: kDanger)),

@@ -651,7 +651,7 @@ class _MockRustLibApi extends RustLibApi {
     required String spender,
     required BigInt amount,
   }) async =>
-      '0x095ea7b3' + '0' * 64 + amount.toRadixString(16).padLeft(64, '0');
+      '0x095ea7b3${'0' * 64}${amount.toRadixString(16).padLeft(64, '0')}';
 
   @override
   Future<String> crateApiSimpleCctpBuildDepositForBurnCalldata({
@@ -663,7 +663,7 @@ class _MockRustLibApi extends RustLibApi {
     required int maxFee,
     required int minFinalityThreshold,
   }) async =>
-      '0xf93a5932' + '0' * 512;
+      '0xf93a5932${'0' * 512}';
 
   @override
   Future<String> crateApiSimpleCctpDeriveSolanaUsdcAta({

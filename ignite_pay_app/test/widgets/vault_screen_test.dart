@@ -16,7 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   // Use a tall viewport to avoid overflow from the vault screen's scroll content
-  Future<void> _pumpVault(WidgetTester tester) async {
+  Future<void> pumpVault(WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
     tester.view.physicalSize = const Size(800, 1600);
     tester.view.devicePixelRatio = 1.0;
@@ -33,54 +33,54 @@ void main() {
 
   group('VaultIdentityScreen', () {
     testWidgets('renders Vault & Identity header', (tester) async {
-      await _pumpVault(tester);
+      await pumpVault(tester);
       expect(find.text('Vault & Identity'), findsOneWidget);
       expect(find.text('Key management & credentials'), findsOneWidget);
     });
 
     testWidgets('renders DECENTRALIZED IDENTITY label', (tester) async {
-      await _pumpVault(tester);
+      await pumpVault(tester);
       expect(find.text('DECENTRALIZED IDENTITY'), findsOneWidget);
     });
 
     testWidgets('renders key metadata chips', (tester) async {
-      await _pumpVault(tester);
+      await pumpVault(tester);
       expect(find.text('Ed25519'), findsOneWidget);
       expect(find.text('Mainnet'), findsOneWidget);
       expect(find.text('Active'), findsOneWidget);
     });
 
     testWidgets('renders VAULT section label', (tester) async {
-      await _pumpVault(tester);
+      await pumpVault(tester);
       expect(find.text('VAULT'), findsOneWidget);
     });
 
     testWidgets('renders Secret Phrase tile', (tester) async {
-      await _pumpVault(tester);
+      await pumpVault(tester);
       expect(find.text('Back up Secret Phrase'), findsOneWidget);
       expect(find.text('12-word recovery phrase'), findsOneWidget);
     });
 
     testWidgets('renders Mediator Endpoint tile', (tester) async {
-      await _pumpVault(tester);
+      await pumpVault(tester);
       expect(find.text('Mediator Endpoint'), findsOneWidget);
       expect(find.text('WebSocket relay for DIDComm'), findsOneWidget);
     });
 
     testWidgets('renders Audit Log tile', (tester) async {
-      await _pumpVault(tester);
+      await pumpVault(tester);
       expect(find.text('Signature Audit Logs'), findsOneWidget);
       expect(find.text('3 events this week'), findsOneWidget);
     });
 
     testWidgets('renders Danger Zone tile', (tester) async {
-      await _pumpVault(tester);
+      await pumpVault(tester);
       expect(find.text('Erase Key Material'), findsOneWidget);
       expect(find.text('Permanently delete local keys'), findsOneWidget);
     });
 
     testWidgets('tapping secret phrase reveals words', (tester) async {
-      await _pumpVault(tester);
+      await pumpVault(tester);
 
       expect(find.text('NEVER SHARE THESE WORDS'), findsNothing);
       expect(find.text('orbit'), findsNothing);
@@ -95,7 +95,7 @@ void main() {
     });
 
     testWidgets('tapping secret phrase again hides words', (tester) async {
-      await _pumpVault(tester);
+      await pumpVault(tester);
 
       await tester.tap(find.text('Back up Secret Phrase'));
       await tester.pump(const Duration(milliseconds: 100));
@@ -108,13 +108,13 @@ void main() {
     });
 
     testWidgets('shows HW Protected badge', (tester) async {
-      await _pumpVault(tester);
+      await pumpVault(tester);
       expect(find.text('HW Protected'), findsOneWidget);
     });
 
     testWidgets('shows default DID placeholder when not initialized',
         (tester) async {
-      await _pumpVault(tester);
+      await pumpVault(tester);
       expect(find.textContaining('did:ignite:zInitializing'), findsOneWidget);
     });
   });
@@ -149,8 +149,8 @@ void main() {
   });
 
   group('Audit Logs', () {
-    Future<void> _openAuditLogs(WidgetTester tester) async {
-      await _pumpVault(tester);
+    Future<void> openAuditLogs(WidgetTester tester) async {
+      await pumpVault(tester);
 
       // Scroll to make the audit log tile visible, then tap it
       final auditTile = find.text('Signature Audit Logs');
@@ -164,12 +164,12 @@ void main() {
     }
 
     testWidgets('navigates to audit logs page', (tester) async {
-      await _openAuditLogs(tester);
+      await openAuditLogs(tester);
       expect(find.text('CRYPTOGRAPHIC PROOF OF AUTHORIZATION'), findsOneWidget);
     });
 
     testWidgets('renders audit log entries', (tester) async {
-      await _openAuditLogs(tester);
+      await openAuditLogs(tester);
       // 3 hardcoded entries: ShopX, DeFi, System
       expect(find.text('ShopX Marketplace'), findsOneWidget);
       expect(find.text('DeFi Staking'), findsOneWidget);
@@ -177,7 +177,7 @@ void main() {
     });
 
     testWidgets('renders audit log entry details', (tester) async {
-      await _openAuditLogs(tester);
+      await openAuditLogs(tester);
       expect(find.textContaining('sign_payment'), findsWidgets);
       expect(find.textContaining('key_derive'), findsOneWidget);
       expect(find.textContaining('0.12 SOL'), findsOneWidget);
@@ -185,7 +185,7 @@ void main() {
     });
 
     testWidgets('renders audit log status badges', (tester) async {
-      await _openAuditLogs(tester);
+      await openAuditLogs(tester);
       expect(find.text('CONFIRMED'), findsWidgets);
       expect(find.text('PENDING'), findsOneWidget);
     });

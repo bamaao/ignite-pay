@@ -17,7 +17,7 @@ import 'package:ignite_pay_app/services/didcomm_service.dart';
 void main() {
   group('showX402Challenge', () {
     // Use a large viewport to avoid overflow in the challenge overlay
-    Future<void> _setupChallenge(WidgetTester tester, {AuthRequest? request}) async {
+    Future<void> setupChallenge(WidgetTester tester, {AuthRequest? request}) async {
       tester.view.physicalSize = const Size(800, 1200);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(() {
@@ -43,14 +43,14 @@ void main() {
     }
 
     testWidgets('opens challenge overlay and renders content', (tester) async {
-      await _setupChallenge(tester);
+      await setupChallenge(tester);
       expect(find.text('X402 Challenge'), findsOneWidget);
       expect(find.text('PAYMENT REQUEST'), findsOneWidget);
       expect(find.text('SOL'), findsWidgets); // SOL appears in amount + policy inputs
     });
 
     testWidgets('renders default values with no request', (tester) async {
-      await _setupChallenge(tester);
+      await setupChallenge(tester);
       expect(find.textContaining('shopx'), findsOneWidget);
       expect(find.text('Payment for services'), findsOneWidget);
     });
@@ -63,7 +63,7 @@ void main() {
         description: 'Test purchase',
       );
 
-      await _setupChallenge(tester, request: request);
+      await setupChallenge(tester, request: request);
       expect(find.text('2'), findsOneWidget); // Amount as integer (2 SOL)
       expect(find.text('Test purchase'), findsOneWidget);
     });
@@ -102,7 +102,7 @@ void main() {
     });
 
     testWidgets('renders authorization policy card', (tester) async {
-      await _setupChallenge(tester);
+      await setupChallenge(tester);
       expect(find.text('AUTHORIZATION POLICY'), findsOneWidget);
       expect(find.text('Daily Limit'), findsOneWidget);
       expect(find.text('Daily Tx Count'), findsOneWidget);
@@ -111,17 +111,17 @@ void main() {
     });
 
     testWidgets('renders approve button', (tester) async {
-      await _setupChallenge(tester);
+      await setupChallenge(tester);
       expect(find.text('APPROVE'), findsOneWidget);
     });
 
     testWidgets('renders decline button', (tester) async {
-      await _setupChallenge(tester);
+      await setupChallenge(tester);
       expect(find.text('Decline & Block'), findsOneWidget);
     });
 
     testWidgets('renders list action selector', (tester) async {
-      await _setupChallenge(tester);
+      await setupChallenge(tester);
       expect(find.text('LIST ACTION'), findsOneWidget);
       expect(find.text('This time only'), findsOneWidget);
       expect(find.text('Whitelist'), findsOneWidget);
@@ -131,7 +131,7 @@ void main() {
     });
 
     testWidgets('shows label input when Whitelist selected', (tester) async {
-      await _setupChallenge(tester);
+      await setupChallenge(tester);
 
       expect(find.text('Label (e.g. "ShopX Marketplace")'), findsNothing);
 
@@ -144,7 +144,7 @@ void main() {
 
     testWidgets('shows only label input when Blacklist selected',
         (tester) async {
-      await _setupChallenge(tester);
+      await setupChallenge(tester);
 
       await tester.tap(find.text('Blacklist'));
       await tester.pump(const Duration(milliseconds: 100));

@@ -16,7 +16,7 @@ import 'package:ignite_pay_app/widgets/auth_request_card.dart';
 
 void main() {
   group('AuthRequestCard', () {
-    Widget _buildCard({
+    Widget buildCard({
       required AuthRequest request,
       VoidCallback? onApprove,
       VoidCallback? onReject,
@@ -40,7 +40,7 @@ void main() {
         description: 'Test',
       );
 
-      await tester.pumpWidget(_buildCard(request: request));
+      await tester.pumpWidget(buildCard(request: request));
       expect(find.text('AUTHORIZATION REQUIRED'), findsOneWidget);
     });
 
@@ -52,7 +52,7 @@ void main() {
         description: 'Test',
       );
 
-      await tester.pumpWidget(_buildCard(request: request));
+      await tester.pumpWidget(buildCard(request: request));
       expect(find.text('1.00 SOL'), findsOneWidget);
     });
 
@@ -64,7 +64,7 @@ void main() {
         description: '',
       );
 
-      await tester.pumpWidget(_buildCard(request: request));
+      await tester.pumpWidget(buildCard(request: request));
       expect(find.text('0.50 SOL'), findsOneWidget);
     });
 
@@ -76,7 +76,7 @@ void main() {
         description: '',
       );
 
-      await tester.pumpWidget(_buildCard(request: request));
+      await tester.pumpWidget(buildCard(request: request));
       expect(find.text('0.00 SOL'), findsOneWidget);
     });
 
@@ -89,7 +89,7 @@ void main() {
         description: '',
       );
 
-      await tester.pumpWidget(_buildCard(request: request));
+      await tester.pumpWidget(buildCard(request: request));
       expect(find.text(did), findsOneWidget);
     });
 
@@ -102,7 +102,7 @@ void main() {
         description: '',
       );
 
-      await tester.pumpWidget(_buildCard(request: request));
+      await tester.pumpWidget(buildCard(request: request));
       // Should show first 24 chars + "..."
       expect(find.text('${did.substring(0, 24)}...'), findsOneWidget);
     });
@@ -115,7 +115,7 @@ void main() {
         description: 'Payment for coffee',
       );
 
-      await tester.pumpWidget(_buildCard(request: request));
+      await tester.pumpWidget(buildCard(request: request));
       expect(find.text('Payment for coffee'), findsOneWidget);
       expect(find.text('Description'), findsOneWidget);
     });
@@ -128,7 +128,7 @@ void main() {
         description: '',
       );
 
-      await tester.pumpWidget(_buildCard(request: request));
+      await tester.pumpWidget(buildCard(request: request));
       expect(find.text('Description'), findsNothing);
     });
 
@@ -141,7 +141,7 @@ void main() {
         description: '',
       );
 
-      await tester.pumpWidget(_buildCard(
+      await tester.pumpWidget(buildCard(
         request: request,
         onApprove: () => approved = true,
       ));
@@ -159,7 +159,7 @@ void main() {
         description: '',
       );
 
-      await tester.pumpWidget(_buildCard(
+      await tester.pumpWidget(buildCard(
         request: request,
         onReject: () => rejected = true,
       ));
@@ -176,7 +176,7 @@ void main() {
         description: '',
       );
 
-      await tester.pumpWidget(_buildCard(request: request));
+      await tester.pumpWidget(buildCard(request: request));
       // Tapping should not throw
       await tester.tap(find.text('Approve'));
       await tester.tap(find.text('Decline'));

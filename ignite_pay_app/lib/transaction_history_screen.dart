@@ -134,7 +134,7 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
                     child: ListView.separated(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       itemCount: filtered.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 6),
+                      separatorBuilder: (_, _) => const SizedBox(height: 6),
                       itemBuilder: (context, index) {
                         final msg = filtered[filtered.length - 1 - index];
                         return _TxTile(msg: msg);

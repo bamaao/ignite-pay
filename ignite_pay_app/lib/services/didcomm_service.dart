@@ -731,7 +731,7 @@ class DidcommService extends ChangeNotifier {
         // Log rawBody in chunks to avoid truncation
         final rb = msg.rawBody;
         for (int i = 0; i < rb.length; i += 500) {
-          AppLogService().info('DIDComm', 'rawBody[${i}]: ${rb.substring(i, i + 500 > rb.length ? rb.length : i + 500)}');
+          AppLogService().info('DIDComm', 'rawBody[$i]: ${rb.substring(i, i + 500 > rb.length ? rb.length : i + 500)}');
         }
       }
 

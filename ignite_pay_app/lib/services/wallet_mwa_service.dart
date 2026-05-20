@@ -9,7 +9,6 @@
 // distribution of the code under the BSL, whichever comes first, the code
 // automatically becomes available under the Apache License 2.0.
 
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 
 /// Service for Mobile Wallet Adapter (MWA) integration.
