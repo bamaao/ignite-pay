@@ -2618,7 +2618,7 @@ impl IgnitePayMcpServer {
 struct ChannelAccount {
     buyer: Pubkey,
     merchant: Pubkey,
-    token_mint: Pubkey,
+    _token_mint: Pubkey,
     spending_cap: u64,
     settled_amount: u64,
     nonce: u64,
@@ -2629,7 +2629,7 @@ struct ChannelAccount {
 
 struct GlobalStateAccount {
     buyer: Pubkey,
-    token_mint: Pubkey,
+    _token_mint: Pubkey,
     total_deposited: u64,
     total_allocated: u64,
     _bump: u8,
@@ -2645,7 +2645,7 @@ fn deserialize_channel(data: &[u8]) -> anyhow::Result<ChannelAccount> {
     Ok(ChannelAccount {
         buyer: Pubkey::try_from(&d[0..32])?,
         merchant: Pubkey::try_from(&d[32..64])?,
-        token_mint: Pubkey::try_from(&d[64..96])?,
+        _token_mint: Pubkey::try_from(&d[64..96])?,
         spending_cap: u64::from_le_bytes(d[96..104].try_into()?),
         settled_amount: u64::from_le_bytes(d[104..112].try_into()?),
         nonce: u64::from_le_bytes(d[112..120].try_into()?),
@@ -2663,7 +2663,7 @@ fn deserialize_global_state(data: &[u8]) -> anyhow::Result<GlobalStateAccount> {
     let d = &data[8..];
     Ok(GlobalStateAccount {
         buyer: Pubkey::try_from(&d[0..32])?,
-        token_mint: Pubkey::try_from(&d[32..64])?,
+        _token_mint: Pubkey::try_from(&d[32..64])?,
         total_deposited: u64::from_le_bytes(d[64..72].try_into()?),
         total_allocated: u64::from_le_bytes(d[72..80].try_into()?),
         _bump: d[80],
@@ -2728,7 +2728,7 @@ async fn handle_pairing_qr(
             let tmp = std::env::temp_dir().join("ignite-pay-pairing-qr.svg");
             let tmp_str = tmp.to_string_lossy().to_string();
             match server.mediator.generate_invitation_qr_svg(&tmp_str) {
-                Ok(url) => {
+                Ok(_url) => {
                     match std::fs::read_to_string(tmp) {
                         Ok(svg) => (
                             axum::http::StatusCode::OK,
