@@ -1414,7 +1414,7 @@ class _RecentPaymentsPreviewState extends State<_RecentPaymentsPreview> {
       try {
         final dir = await getApplicationSupportDirectory();
         final prefs = await SharedPreferences.getInstance();
-        final registryUrl = prefs.getString('hub_registry_url') ?? '';
+        final registryUrl = prefs.getString('did_registry_url') ?? '';
         for (final did in uniqueDids) {
           if (did.isEmpty) continue;
           var profile = await rust.loadCachedMerchantProfile(
@@ -1701,7 +1701,7 @@ class _PaymentRecordsScreenState extends State<_PaymentRecordsScreen> {
       try {
         final dir = await getApplicationSupportDirectory();
         final prefs = await SharedPreferences.getInstance();
-        final registryUrl = prefs.getString('hub_registry_url') ?? '';
+        final registryUrl = prefs.getString('did_registry_url') ?? '';
         for (final did in uniqueDids) {
           if (did.isEmpty) continue;
           var profile = await rust.loadCachedMerchantProfile(

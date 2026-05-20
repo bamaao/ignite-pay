@@ -812,7 +812,7 @@ class _MerchantCardState extends State<_MerchantCard> {
       // If not cached, fetch from registry
       if (profile == null) {
         final prefs = await SharedPreferences.getInstance();
-        final registryUrl = prefs.getString('hub_registry_url') ?? '';
+        final registryUrl = prefs.getString('did_registry_url') ?? '';
         if (registryUrl.isNotEmpty) {
           profile = await rust.fetchMerchantProfile(
             registryUrl: registryUrl,

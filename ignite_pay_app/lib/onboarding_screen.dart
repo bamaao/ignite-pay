@@ -54,12 +54,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   // Step 2: Mediator config
   final _mediatorController = TextEditingController(
-    text: 'ws://192.168.0.101:8080/ws',
+    text: 'ws://192.168.0.100:8080/ws',
   );
 
-  // Step 2b: Hub registry URL
-  final _hubRegistryController = TextEditingController(
-    text: 'http://192.168.0.101:8081',
+  // Step 2b: DID registry URL
+  final _didRegistryController = TextEditingController(
+    text: 'http://192.168.0.100:8081',
   );
 
   // Step 2c: connecting state
@@ -71,7 +71,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   void dispose() {
     _mediatorController.dispose();
-    _hubRegistryController.dispose();
+    _didRegistryController.dispose();
     super.dispose();
   }
 
@@ -125,11 +125,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       return;
     }
 
-    // Save hub registry URL
-    final hubUrl = _hubRegistryController.text.trim();
-    if (hubUrl.isNotEmpty) {
+    // Save DID registry URL
+    final registryUrl = _didRegistryController.text.trim();
+    if (registryUrl.isNotEmpty) {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('hub_registry_url', hubUrl);
+      await prefs.setString('did_registry_url', registryUrl);
     }
 
     if (mounted) setState(() { _isConnecting = false; _complete = true; });
@@ -235,7 +235,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     2 => _MediatorConfigStep(
                         key: const ValueKey('mediator'),
                         controller: _mediatorController,
-                        hubRegistryController: _hubRegistryController,
+                        didRegistryController: _didRegistryController,
                         isConnecting: _isConnecting,
                         onConnect: _connectAndFinish,
                       ),
@@ -519,14 +519,14 @@ class _CreateIdentityStep extends StatelessWidget {
 // ---------------------------------------------------------------------------
 class _MediatorConfigStep extends StatelessWidget {
   final TextEditingController controller;
-  final TextEditingController hubRegistryController;
+  final TextEditingController didRegistryController;
   final bool isConnecting;
   final VoidCallback onConnect;
 
   const _MediatorConfigStep({
     super.key,
     required this.controller,
-    required this.hubRegistryController,
+    required this.didRegistryController,
     required this.isConnecting,
     required this.onConnect,
   });
@@ -591,9 +591,9 @@ class _MediatorConfigStep extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
-        // Hub Registry URL input
+        // DID Registry URL input
         Text(
-          'Hub Registry URL',
+          'DID Registry URL',
           style: GoogleFonts.inter(
             fontSize: 13,
             fontWeight: FontWeight.w600,
@@ -609,7 +609,7 @@ class _MediatorConfigStep extends StatelessWidget {
             border: Border.all(color: kBorder),
           ),
           child: TextField(
-            controller: hubRegistryController,
+            controller: didRegistryController,
             enabled: !isConnecting,
             style: GoogleFonts.jetBrainsMono(
               fontSize: 14,
