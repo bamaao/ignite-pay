@@ -24,7 +24,6 @@ declare_id!("Avu35SYnvcSpWeYQhC7w2XT6DCurhnYB5PdajTqet9o");
 #[program]
 pub mod ignite_pay_session_program {
     use super::*;
-    use anchor_lang::solana_program::system_instruction;
 
     // ─── Register Session Key ───
 
@@ -100,7 +99,6 @@ pub mod ignite_pay_session_program {
             constraint = session.ephemeral_signer == ephemeral_signer.key() @ SessionError::Unauthorized,
         )]
         pub session: Account<'info, SessionKeyAccount>,
-        #[account(mut)]
         pub ephemeral_signer: Signer<'info>,
         /// CHECK: Recipient of the SOL transfer
         #[account(mut)]
@@ -114,49 +112,56 @@ pub mod ignite_pay_session_program {
         amount: u64,
         scope: String,
     ) -> Result<()> {
-        let session = &mut ctx.accounts.session;
         let now = ctx.accounts.clock.unix_timestamp;
-        require!(now < session.expires_at, SessionError::SessionExpired);
-        require!(!session.revoked, SessionError::SessionRevoked);
-        require!(session.scopes.contains(&scope), SessionError::ScopeNotPermitted);
 
-        // Per-tx limit check
-        if session.per_tx_limit > 0 {
-            require!(amount <= session.per_tx_limit, SessionError::PerTxLimitExceeded);
+        // Validation phase (read-only)
+        {
+            let session = &ctx.accounts.session;
+            require!(now < session.expires_at, SessionError::SessionExpired);
+            require!(!session.revoked, SessionError::SessionRevoked);
+            require!(session.scopes.contains(&scope), SessionError::ScopeNotPermitted);
+            if session.per_tx_limit > 0 {
+                require!(amount <= session.per_tx_limit, SessionError::PerTxLimitExceeded);
+            }
         }
 
-        // Daily window reset
-        if now - session.last_daily_reset >= 86400 {
-            session.current_daily_count = 0;
-            session.last_daily_reset = now;
+        // Daily window reset + count check (mutable but brief)
+        {
+            let session = &mut ctx.accounts.session;
+            if now - session.last_daily_reset >= 86400 {
+                session.current_daily_count = 0;
+                session.last_daily_reset = now;
+            }
+            if session.daily_tx_count_limit > 0 {
+                require!(
+                    session.current_daily_count + 1 <= session.daily_tx_count_limit,
+                    SessionError::DailyTxCountExceeded
+                );
+            }
+            let new_spent = session.current_spent.checked_add(amount)
+                .ok_or(SessionError::ArithmeticOverflow)?;
+            require!(new_spent <= session.spending_limit, SessionError::SpendingLimitExceeded);
         }
 
-        // Daily tx count check
-        if session.daily_tx_count_limit > 0 {
-            require!(
-                session.current_daily_count + 1 <= session.daily_tx_count_limit,
-                SessionError::DailyTxCountExceeded
-            );
+        // Transfer SOL from PDA directly via lamport manipulation.
+        // Cannot use System Program transfer because the PDA account carries data
+        // (Anchor init creates it with serialized state), and System Program rejects
+        // transfers from accounts with data.
+        {
+            let session_info = ctx.accounts.session.to_account_info();
+            let recipient_info = ctx.accounts.recipient.to_account_info();
+            let session_lamports = session_info.lamports();
+            if session_lamports < amount {
+                return Err(SessionError::InsufficientVaultBalance.into());
+            }
+            **session_info.lamports.borrow_mut() = session_lamports - amount;
+            **recipient_info.lamports.borrow_mut() += amount;
         }
 
-        let new_spent = session.current_spent.checked_add(amount)
+        // Update spent amount
+        let session = &mut ctx.accounts.session;
+        session.current_spent = session.current_spent.checked_add(amount)
             .ok_or(SessionError::ArithmeticOverflow)?;
-        require!(new_spent <= session.spending_limit, SessionError::SpendingLimitExceeded);
-
-        let ix = system_instruction::transfer(
-            ctx.accounts.ephemeral_signer.key,
-            ctx.accounts.recipient.key,
-            amount,
-        );
-        anchor_lang::solana_program::program::invoke(
-            &ix,
-            &[
-                ctx.accounts.ephemeral_signer.to_account_info(),
-                ctx.accounts.recipient.to_account_info(),
-                ctx.accounts.system_program.to_account_info(),
-            ],
-        )?;
-        session.current_spent = new_spent;
         session.current_daily_count = session.current_daily_count.saturating_add(1);
         Ok(())
     }
@@ -171,12 +176,11 @@ pub mod ignite_pay_session_program {
             constraint = session.ephemeral_signer == ephemeral_signer.key() @ SessionError::Unauthorized,
         )]
         pub session: Account<'info, SessionKeyAccount>,
-        #[account(mut)]
         pub ephemeral_signer: Signer<'info>,
-        /// CHECK: Source Associated Token Account (ephemeral's ATA for the mint).
+        /// CHECK: Source ATA — session PDA's ATA for the mint.
         #[account(mut)]
         pub source_ata: UncheckedAccount<'info>,
-        /// CHECK: Destination Associated Token Account (recipient's ATA for the mint).
+        /// CHECK: Destination ATA (recipient's ATA for the mint).
         #[account(mut)]
         pub dest_ata: UncheckedAccount<'info>,
         /// CHECK: Token mint — validated against session.token_mint.
@@ -191,75 +195,140 @@ pub mod ignite_pay_session_program {
         amount: u64,
         scope: String,
     ) -> Result<()> {
-        let session = &mut ctx.accounts.session;
         let now = ctx.accounts.clock.unix_timestamp;
 
-        // Validate session not expired
-        require!(now < session.expires_at, SessionError::SessionExpired);
-
-        // Validate not revoked
-        require!(!session.revoked, SessionError::SessionRevoked);
-
-        // Validate scope is permitted
-        require!(
-            session.scopes.contains(&scope),
-            SessionError::ScopeNotPermitted
-        );
-
-        // Validate mint matches session
-        require!(
-            session.token_mint == ctx.accounts.token_mint.key(),
-            SessionError::InvalidMint
-        );
-
-        // Validate this is not a SOL-only session
-        require!(
-            session.token_mint != Pubkey::default(),
-            SessionError::SolSessionOnly
-        );
-
-        // Per-tx limit check
-        if session.per_tx_limit > 0 {
-            require!(amount <= session.per_tx_limit, SessionError::PerTxLimitExceeded);
-        }
-
-        // Daily window reset
-        if now - session.last_daily_reset >= 86400 {
-            session.current_daily_count = 0;
-            session.last_daily_reset = now;
-        }
-
-        // Daily tx count check
-        if session.daily_tx_count_limit > 0 {
+        // Validation phase (read-only)
+        {
+            let session = &ctx.accounts.session;
+            require!(now < session.expires_at, SessionError::SessionExpired);
+            require!(!session.revoked, SessionError::SessionRevoked);
+            require!(session.scopes.contains(&scope), SessionError::ScopeNotPermitted);
             require!(
-                session.current_daily_count + 1 <= session.daily_tx_count_limit,
-                SessionError::DailyTxCountExceeded
+                session.token_mint == ctx.accounts.token_mint.key(),
+                SessionError::InvalidMint
             );
+            require!(
+                session.token_mint != Pubkey::default(),
+                SessionError::SolSessionOnly
+            );
+            if session.per_tx_limit > 0 {
+                require!(amount <= session.per_tx_limit, SessionError::PerTxLimitExceeded);
+            }
         }
 
-        // Validate spending limit
-        let new_spent = session
-            .current_spent
-            .checked_add(amount)
-            .ok_or(SessionError::ArithmeticOverflow)?;
-        require!(
-            new_spent <= session.spending_limit,
-            SessionError::SpendingLimitExceeded
-        );
+        // Daily window reset + limit check (mutable but brief)
+        {
+            let session = &mut ctx.accounts.session;
+            if now - session.last_daily_reset >= 86400 {
+                session.current_daily_count = 0;
+                session.last_daily_reset = now;
+            }
+            if session.daily_tx_count_limit > 0 {
+                require!(
+                    session.current_daily_count + 1 <= session.daily_tx_count_limit,
+                    SessionError::DailyTxCountExceeded
+                );
+            }
+            let new_spent = session.current_spent.checked_add(amount)
+                .ok_or(SessionError::ArithmeticOverflow)?;
+            require!(new_spent <= session.spending_limit, SessionError::SpendingLimitExceeded);
+        }
 
-        // Execute SPL token transfer via CPI using anchor_spl
+        // Execute SPL token transfer via CPI using PDA as authority
+        let bump = ctx.accounts.session.bump;
+        let owner = ctx.accounts.session.owner;
+        let ephemeral = ctx.accounts.session.ephemeral_signer;
+        let seeds = &[b"session", owner.as_ref(), ephemeral.as_ref(), &[bump]];
+        let signer_seeds: &[&[&[u8]]] = &[seeds];
+
         let cpi_accounts = token::Transfer {
             from: ctx.accounts.source_ata.to_account_info(),
             to: ctx.accounts.dest_ata.to_account_info(),
-            authority: ctx.accounts.ephemeral_signer.to_account_info(),
+            authority: ctx.accounts.session.to_account_info(),
         };
         let cpi_program = ctx.accounts.token_program.key();
-        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
         token::transfer(cpi_ctx, amount)?;
 
         // Update spent amount
-        session.current_spent = new_spent;
+        let session = &mut ctx.accounts.session;
+        session.current_spent = session.current_spent.checked_add(amount)
+            .ok_or(SessionError::ArithmeticOverflow)?;
         session.current_daily_count = session.current_daily_count.saturating_add(1);
+
+        Ok(())
+    }
+
+    // ─── Withdraw Remaining SOL from PDA ───
+
+    #[derive(Accounts)]
+    pub struct WithdrawRemaining<'info> {
+        #[account(
+            mut,
+            constraint = session.owner == owner.key() @ SessionError::Unauthorized,
+        )]
+        pub session: Account<'info, SessionKeyAccount>,
+        #[account(mut)]
+        pub owner: Signer<'info>,
+        /// CHECK: Recipient of the SOL withdrawal
+        #[account(mut)]
+        pub recipient: SystemAccount<'info>,
+        pub system_program: Program<'info, System>,
+    }
+
+    pub fn withdraw_remaining(ctx: Context<WithdrawRemaining>) -> Result<()> {
+        let session_info = ctx.accounts.session.to_account_info();
+        let recipient_info = ctx.accounts.recipient.to_account_info();
+
+        let balance = session_info.lamports();
+        // Leave rent-exempt minimum to keep the account alive
+        let rent_exempt = Rent::get()?.minimum_balance(session_info.data_len());
+        let withdraw_amount = balance.saturating_sub(rent_exempt);
+        if withdraw_amount == 0 {
+            return Ok(());
+        }
+
+        **session_info.lamports.borrow_mut() = balance - withdraw_amount;
+        **recipient_info.lamports.borrow_mut() += withdraw_amount;
+        Ok(())
+    }
+
+    // ─── Withdraw Remaining SPL Tokens from PDA ATA ───
+
+    #[derive(Accounts)]
+    pub struct WithdrawSplRemaining<'info> {
+        #[account(
+            mut,
+            constraint = session.owner == owner.key() @ SessionError::Unauthorized,
+        )]
+        pub session: Account<'info, SessionKeyAccount>,
+        #[account(mut)]
+        pub owner: Signer<'info>,
+        /// CHECK: PDA's ATA (source)
+        #[account(mut)]
+        pub source_ata: UncheckedAccount<'info>,
+        /// CHECK: Owner's (or recipient's) ATA (destination)
+        #[account(mut)]
+        pub dest_ata: UncheckedAccount<'info>,
+        pub token_program: Program<'info, token::Token>,
+    }
+
+    pub fn withdraw_spl_remaining(ctx: Context<WithdrawSplRemaining>, amount: u64) -> Result<()> {
+        let session = &ctx.accounts.session;
+        let bump = session.bump;
+        let owner = session.owner;
+        let ephemeral = session.ephemeral_signer;
+        let seeds = &[b"session", owner.as_ref(), ephemeral.as_ref(), &[bump]];
+        let signer_seeds: &[&[&[u8]]] = &[seeds];
+
+        let cpi_accounts = token::Transfer {
+            from: ctx.accounts.source_ata.to_account_info(),
+            to: ctx.accounts.dest_ata.to_account_info(),
+            authority: ctx.accounts.session.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.key();
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+        token::transfer(cpi_ctx, amount)?;
 
         Ok(())
     }

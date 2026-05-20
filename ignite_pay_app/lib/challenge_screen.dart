@@ -253,12 +253,19 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
             ephemeralPubkey: req.newSessionKeyPubkey!,
             onChainInfo: onChainInfo,
             scopes: scopes,
+            realSecretKey: req.newSessionKeySecretKey,
           );
 
           // Check balances and top-up if needed
-          final needsFund = await _needsFunding(svc.rpcUrl, info.ephemeralPubkey);
+          final pdaAddress = info.sessionPda ?? info.ephemeralPubkey;
+          final needsFund = await _needsFunding(svc.rpcUrl, pdaAddress);
           if (needsFund) {
-            await _fundSessionKeyViaPhantom(phantom, info.ephemeralPubkey, svc.rpcUrl);
+            await _fundSessionKeyViaPhantom(
+              phantom,
+              info.ephemeralPubkey,
+              info.sessionPda ?? info.ephemeralPubkey,
+              svc.rpcUrl,
+            );
           }
 
           // Send auth response
@@ -311,10 +318,16 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
           ephemeralPubkey: unsignedRegister.ephemeralPubkey,
           txSignature: registerSig,
           sessionPda: unsignedRegister.sessionPda,
+          realSecretKey: req.newSessionKeySecretKey,
         );
 
         // 7. Fund the new session key via Phantom wallet (user-customizable amounts)
-        await _fundSessionKeyViaPhantom(phantom, info.ephemeralPubkey, svc.rpcUrl);
+        await _fundSessionKeyViaPhantom(
+          phantom,
+          info.ephemeralPubkey,
+          info.sessionPda ?? unsignedRegister.sessionPda,
+          svc.rpcUrl,
+        );
 
         // 8. Send auth response with the registered session key info
         await _sendAuthResponseWithExternalKey(info);
@@ -359,35 +372,51 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   }
 
   /// Fund a session key via Phantom wallet using the user's custom SOL/USDC amounts.
+  /// Sends SOL to the session PDA and USDC to the PDA's ATA.
+  /// Also sends a small amount of SOL to the ephemeral key for gas fees.
   Future<void> _fundSessionKeyViaPhantom(
     PhantomWalletService phantom,
     String ephemeralPubkey,
+    String sessionPda,
     String rpcUrl,
   ) async {
+    // 1. Send SOL to session PDA
     final solAmount = _parseSol(_solFundingAmount);
     if (solAmount > 0) {
-      setState(() => _authResult = 'Open Phantom to send SOL...');
+      setState(() => _authResult = 'Open Phantom to send SOL to PDA...');
       final solLamports = (solAmount * 1000000000).round();
       final txB58 = await session.buildUnsignedTransferTx(
         rpcUrl: rpcUrl,
         walletPubkeyB58: phantom.walletPublicKey!,
-        merchantDid: ephemeralPubkey,
+        merchantDid: sessionPda,
         amountLamports: BigInt.from(solLamports),
       );
       final sig = await phantom.signAndSendTransaction(txB58);
       if (sig == null) throw 'Phantom rejected SOL transfer';
     }
 
+    // 2. Send gas SOL to ephemeral key (0.01 SOL)
+    setState(() => _authResult = 'Open Phantom to send gas SOL...');
+    final gasTxB58 = await session.buildUnsignedTransferTx(
+      rpcUrl: rpcUrl,
+      walletPubkeyB58: phantom.walletPublicKey!,
+      merchantDid: ephemeralPubkey,
+      amountLamports: BigInt.from(10000000), // 0.01 SOL
+    );
+    final gasSig = await phantom.signAndSendTransaction(gasTxB58);
+    if (gasSig == null) throw 'Phantom rejected gas SOL transfer';
+
+    // 3. Send USDC to PDA's ATA
     final usdcAmount = double.tryParse(_usdcFundingAmount) ?? 0.0;
     final tokenMint = widget.request?.newSessionKeyTokenMint
         ?? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'; // devnet USDC
     if (usdcAmount > 0) {
-      setState(() => _authResult = 'Open Phantom to send USDC...');
+      setState(() => _authResult = 'Open Phantom to send USDC to PDA ATA...');
       final usdcRaw = (usdcAmount * 1000000).round(); // USDC has 6 decimals
       final txB58 = await session.buildUnsignedSplTransferTx(
         rpcUrl: rpcUrl,
         walletPubkeyB58: phantom.walletPublicKey!,
-        merchantWalletB58: ephemeralPubkey,
+        merchantWalletB58: sessionPda,
         amount: BigInt.from(usdcRaw),
         tokenMintB58: tokenMint,
       );

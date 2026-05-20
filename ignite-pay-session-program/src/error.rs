@@ -48,4 +48,7 @@ pub enum SessionError {
 
     #[msg("Daily transaction count limit exceeded")]
     DailyTxCountExceeded,
+
+    #[msg("Insufficient vault balance")]
+    InsufficientVaultBalance,
 }

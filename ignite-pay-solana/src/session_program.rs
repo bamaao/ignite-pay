@@ -115,7 +115,7 @@ pub fn build_execute_payment_ix(
         program_id: *program_id,
         accounts: vec![
             AccountMeta::new(*session_pda, false),
-            AccountMeta::new(*ephemeral_signer, true),
+            AccountMeta::new_readonly(*ephemeral_signer, true),
             AccountMeta::new(*recipient, false),
             AccountMeta::new_readonly(system_program::id(), false),
             AccountMeta::new_readonly(solana_sdk::sysvar::clock::id(), false),
@@ -150,7 +150,7 @@ pub fn build_execute_spl_payment_ix(
         program_id: *program_id,
         accounts: vec![
             AccountMeta::new(*session_pda, false),
-            AccountMeta::new(*ephemeral_signer, true),
+            AccountMeta::new_readonly(*ephemeral_signer, true),
             AccountMeta::new(*source_ata, false),
             AccountMeta::new(*dest_ata, false),
             AccountMeta::new_readonly(*token_mint, false),
@@ -195,6 +195,55 @@ pub fn build_close_session_ix(
             AccountMeta::new_readonly(solana_sdk::sysvar::clock::id(), false),
         ],
         data: sighash.to_vec(),
+    }
+}
+
+/// Build a `withdraw_remaining` instruction (SOL from PDA to owner).
+pub fn build_withdraw_remaining_ix(
+    program_id: &Pubkey,
+    session_pda: &Pubkey,
+    owner: &Pubkey,
+    recipient: &Pubkey,
+) -> Instruction {
+    let sighash = anchor_sighash("withdraw_remaining");
+
+    Instruction {
+        program_id: *program_id,
+        accounts: vec![
+            AccountMeta::new(*session_pda, false),
+            AccountMeta::new_readonly(*owner, true),
+            AccountMeta::new(*recipient, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ],
+        data: sighash.to_vec(),
+    }
+}
+
+/// Build a `withdraw_spl_remaining` instruction (SPL tokens from PDA ATA to owner ATA).
+pub fn build_withdraw_spl_remaining_ix(
+    program_id: &Pubkey,
+    session_pda: &Pubkey,
+    owner: &Pubkey,
+    source_ata: &Pubkey,
+    dest_ata: &Pubkey,
+    amount: u64,
+) -> Instruction {
+    let sighash = anchor_sighash("withdraw_spl_remaining");
+
+    let mut data = Vec::new();
+    data.extend_from_slice(&sighash);
+    data.extend_from_slice(&amount.to_le_bytes());
+
+    Instruction {
+        program_id: *program_id,
+        accounts: vec![
+            AccountMeta::new(*session_pda, false),
+            AccountMeta::new_readonly(*owner, true),
+            AccountMeta::new(*source_ata, false),
+            AccountMeta::new(*dest_ata, false),
+            AccountMeta::new_readonly(spl_token::id(), false),
+        ],
+        data,
     }
 }
 

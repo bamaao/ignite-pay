@@ -11,13 +11,11 @@
 
 use crate::error::{Result, SolanaError};
 use crate::session::{SessionKeypair, SessionManager};
-use crate::session_program::{self as session_prog, build_execute_payment_ix, build_execute_spl_payment_ix, derive_session_pda};
+use crate::session_program::{self as session_prog, build_execute_payment_ix, build_execute_spl_payment_ix, build_withdraw_remaining_ix, derive_session_pda};
 use crate::types::{PayMode, PaymentResult, SplPaymentParams};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signer;
-#[allow(deprecated)]
-use solana_sdk::system_instruction;
 use solana_sdk::transaction::Transaction;
 use spl_associated_token_account::get_associated_token_address;
 
@@ -245,8 +243,14 @@ impl IgnitePayClient {
                                 "SPL token transfers require spl_params with mint address"
                             ))
                         })?;
+                        let program_id = session_prog::session_program_id();
+                        let (session_pda, _) = derive_session_pda(
+                            &session.session_data.owner,
+                            &session.keypair.pubkey(),
+                            &program_id,
+                        );
                         let source_ata = params.source_ata_override
-                            .unwrap_or_else(|| Self::derive_ata(&session.keypair.pubkey(), &params.mint));
+                            .unwrap_or_else(|| Self::derive_ata(&session_pda, &params.mint));
                         let dest_ata = params.dest_ata_override
                             .unwrap_or_else(|| Self::derive_ata(&recipient_pubkey, &params.mint));
 
@@ -267,8 +271,14 @@ impl IgnitePayClient {
                                 "SPL token transfers require spl_params with mint address"
                             ))
                         })?;
+                        let program_id = session_prog::session_program_id();
+                        let (session_pda, _) = derive_session_pda(
+                            &session.session_data.owner,
+                            &session.keypair.pubkey(),
+                            &program_id,
+                        );
                         let source_ata = params.source_ata_override
-                            .unwrap_or_else(|| Self::derive_ata(&session.keypair.pubkey(), &params.mint));
+                            .unwrap_or_else(|| Self::derive_ata(&session_pda, &params.mint));
                         let dest_ata = params.dest_ata_override
                             .unwrap_or_else(|| Self::derive_ata(&recipient_pubkey, &params.mint));
 
@@ -312,8 +322,14 @@ impl IgnitePayClient {
                         "SPL token transfers require spl_params with mint address"
                     ))
                 })?;
+                let prog_id = session_prog::session_program_id();
+                let (session_pda, _) = derive_session_pda(
+                    &session.session_data.owner,
+                    &session.keypair.pubkey(),
+                    &prog_id,
+                );
                 let source_ata = params.source_ata_override
-                    .unwrap_or_else(|| Self::derive_ata(&session.keypair.pubkey(), &params.mint));
+                    .unwrap_or_else(|| Self::derive_ata(&session_pda, &params.mint));
                 let dest_ata = params.dest_ata_override
                     .unwrap_or_else(|| Self::derive_ata(&recipient_pubkey, &params.mint));
 
@@ -477,27 +493,35 @@ impl IgnitePayClient {
         self.send_to_relayer(&tx, relayer_url, amount, session).await
     }
 
-    /// Close a session and refund remaining SOL to the owner.
+    /// Close a session and refund remaining SOL from PDA to the owner.
     pub async fn close_session_refund(
         &self,
         session: &SessionKeypair,
         owner: &Pubkey,
     ) -> Result<()> {
-        let balance = self
+        let program_id = session_prog::session_program_id();
+        let (session_pda, _) = derive_session_pda(
+            &session.session_data.owner,
+            &session.keypair.pubkey(),
+            &program_id,
+        );
+
+        let pda_balance = self
             .rpc_client
-            .get_balance(&session.keypair.pubkey())
+            .get_balance(&session_pda)
             .map_err(|e| SolanaError::RpcError(e.to_string()))?;
 
-        if balance > 0 {
+        if pda_balance > 0 {
             let recent_blockhash = self
                 .rpc_client
                 .get_latest_blockhash()
                 .map_err(|e| SolanaError::RpcError(e.to_string()))?;
 
-            let ix = system_instruction::transfer(&session.keypair.pubkey(), owner, balance);
+            // Use the on-chain withdraw_remaining instruction to move SOL from PDA to owner
+            let withdraw_ix = build_withdraw_remaining_ix(&program_id, &session_pda, owner, owner);
 
             let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
-                &[ix],
+                &[withdraw_ix],
                 Some(&session.keypair.pubkey()),
                 &[&session.keypair],
                 recent_blockhash,
