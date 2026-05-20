@@ -9,6 +9,8 @@
 // distribution of the code under the BSL, whichever comes first, the code
 // automatically becomes available under the Apache License 2.0.
 
+#![allow(non_local_definitions)]
+
 use pyo3::prelude::*;
 use pyo3::exceptions::PyRuntimeError;
 use std::collections::HashMap;
