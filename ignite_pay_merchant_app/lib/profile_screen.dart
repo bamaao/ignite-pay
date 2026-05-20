@@ -74,8 +74,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _loadProfile() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
       final channelSvc = context.read<ChannelService>();
       await channelSvc.refreshChannels();
+      if (!mounted) return;
       final merchantSvc = context.read<MerchantService>();
       final pushSvc = context.read<MerchantPushService>();
 

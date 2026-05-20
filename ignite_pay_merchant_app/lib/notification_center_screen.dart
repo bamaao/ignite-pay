@@ -146,7 +146,7 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
                   return ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     itemCount: notifications.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 6),
+                    separatorBuilder: (_, _) => const SizedBox(height: 6),
                     itemBuilder: (context, index) {
                       final n = notifications[index];
                       final isUnread = !_readIds.contains(n.id);

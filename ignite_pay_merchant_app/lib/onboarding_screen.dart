@@ -93,6 +93,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       final svc = context.read<MerchantService>();
       await svc.saveConfig(hubUrl, wsUrl);
 
+      if (!mounted) return;
+
       // Initialize push notifications
       if (wsUrl.isNotEmpty) {
         try {

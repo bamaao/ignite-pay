@@ -23,8 +23,8 @@ import 'package:provider/provider.dart';
 
 void openQrGenerate(BuildContext context) {
   Navigator.of(context).push(PageRouteBuilder(
-    pageBuilder: (_, __, ___) => const QrGenerateScreen(),
-    transitionsBuilder: (_, anim, __, child) =>
+    pageBuilder: (_, _, _) => const QrGenerateScreen(),
+    transitionsBuilder: (_, anim, _, child) =>
         SlideTransition(position: Tween(begin: const Offset(1, 0), end: Offset.zero).animate(anim), child: child),
   ));
 }

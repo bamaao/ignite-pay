@@ -18,8 +18,8 @@ import 'package:ignite_pay_merchant/services/merchant_service.dart';
 
 void openPaymentDetail(BuildContext context, PaymentOrder order) {
   Navigator.of(context).push(PageRouteBuilder(
-    pageBuilder: (_, __, ___) => PaymentDetailScreen(order: order),
-    transitionsBuilder: (_, anim, __, child) =>
+    pageBuilder: (_, _, _) => PaymentDetailScreen(order: order),
+    transitionsBuilder: (_, anim, _, child) =>
         SlideTransition(position: Tween(begin: const Offset(1, 0), end: Offset.zero).animate(anim), child: child),
   ));
 }

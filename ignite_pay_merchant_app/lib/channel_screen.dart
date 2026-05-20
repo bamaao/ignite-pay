@@ -20,8 +20,8 @@ import 'package:provider/provider.dart';
 
 void openChannelScreen(BuildContext context) {
   Navigator.of(context).push(PageRouteBuilder(
-    pageBuilder: (_, __, ___) => const ChannelScreen(),
-    transitionsBuilder: (_, anim, __, child) =>
+    pageBuilder: (_, _, _) => const ChannelScreen(),
+    transitionsBuilder: (_, anim, _, child) =>
         SlideTransition(position: Tween(begin: const Offset(1, 0), end: Offset.zero).animate(anim), child: child),
   ));
 }

@@ -116,7 +116,7 @@ Future<List<HubInfo>> fetchHubList({required String registryUrl}) => RustLib
     .crateApiMerchantDidcommFetchHubList(registryUrl: registryUrl);
 
 /// Parse an OOB invitation URL (from QR code scan).
-/// Expected format: didcomm://?_oob=<base64url-encoded JSON>
+/// Expected format: `didcomm://?_oob=<base64url-encoded JSON>`
 Future<OobInvitationData> parseOobInvitation({required String invitationUrl}) =>
     RustLib.instance.api.crateApiMerchantDidcommParseOobInvitation(
       invitationUrl: invitationUrl,
