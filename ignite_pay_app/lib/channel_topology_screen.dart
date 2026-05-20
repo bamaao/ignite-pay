@@ -212,7 +212,9 @@ class _ChannelTopologyScreenState extends State<ChannelTopologyScreen> {
                                   _mbDepositSub?.cancel();
                                   _mbDepositSub = DidcommService().mbDepositResults.listen((result) {
                                     if (!mounted) return;
-                                    Navigator.of(context).maybePop();
+                                    final nav = Navigator.of(context);
+                                    final messenger = ScaffoldMessenger.of(context);
+                                    nav.maybePop();
                                     final snackBar = SnackBar(
                                       backgroundColor: result.success ? kSuccess : kDanger,
                                       behavior: SnackBarBehavior.floating,
@@ -228,7 +230,7 @@ class _ChannelTopologyScreenState extends State<ChannelTopologyScreen> {
                                       ),
                                       duration: const Duration(seconds: 3),
                                     );
-                                    ScaffoldMessenger.of(context).showSnackBar(snackBar);
+                                    messenger.showSnackBar(snackBar);
                                     _loadChannels();
                                   });
 
@@ -239,19 +241,18 @@ class _ChannelTopologyScreenState extends State<ChannelTopologyScreen> {
                                   );
                                   AppLogService().info('MB', 'Deposit request sent: $amountVal $selectedToken');
                                 } catch (e) {
-                                  if (mounted) {
-                                    setSheetState(() => isSubmitting = false);
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        backgroundColor: kDanger,
-                                        behavior: SnackBarBehavior.floating,
-                                        shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(10)),
-                                        content: Text('Failed to send deposit: $e',
-                                            style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
-                                      ),
-                                    );
-                                  }
+                                  if (!mounted) return;
+                                  setSheetState(() => isSubmitting = false);
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      backgroundColor: kDanger,
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(10)),
+                                      content: Text('Failed to send deposit: $e',
+                                          style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+                                    ),
+                                  );
                                 }
                               },
                         style: ElevatedButton.styleFrom(
@@ -392,7 +393,7 @@ class _ChannelTopologyScreenState extends State<ChannelTopologyScreen> {
                   child: ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     itemCount: channels.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
                     itemBuilder: (context, index) {
                       return _ChannelCard(
                         channel: channels[index],
