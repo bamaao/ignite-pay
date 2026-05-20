@@ -32,6 +32,7 @@ import 'package:ignite_pay_app/services/channel_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
 import 'package:ignite_pay_app/services/direct_payment_service.dart';
 import 'package:ignite_pay_app/services/phantom_wallet_service.dart';
+import 'package:ignite_pay_app/services/reown_wallet_service.dart';
 import 'package:ignite_pay_app/cctp_transfer_screen.dart';
 import 'package:ignite_pay_app/onboarding_screen.dart';
 import 'package:provider/provider.dart';
@@ -451,6 +452,13 @@ class _MainNavigatorState extends State<_MainNavigator> {
   void initState() {
     super.initState();
     _initDeepLinks();
+    _initReownWallet();
+  }
+
+  void _initReownWallet() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ReownWalletService().init(context);
+    });
   }
 
   void _initDeepLinks() {
@@ -464,6 +472,19 @@ class _MainNavigatorState extends State<_MainNavigator> {
   }
 
   void _handleDeepLink(Uri uri) {
+    // Try Reown/WalletConnect deep link handling first (handles Phantom/Solflare/WC2)
+    final reown = ReownWalletService();
+    reown.dispatchDeepLink(uri.toString()).then((handled) {
+      if (handled) return;
+
+      // Fall through to legacy handling
+      _handleLegacyDeepLink(uri);
+    }).catchError((_) {
+      _handleLegacyDeepLink(uri);
+    });
+  }
+
+  void _handleLegacyDeepLink(Uri uri) {
     if (uri.scheme != 'ignitepay') return;
 
     final path = '${uri.host}${uri.path}';

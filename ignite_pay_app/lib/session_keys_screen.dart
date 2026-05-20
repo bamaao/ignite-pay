@@ -16,7 +16,9 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/theme.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
 import 'package:ignite_pay_app/services/phantom_wallet_service.dart';
+import 'package:ignite_pay_app/services/reown_wallet_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
+import 'package:ignite_pay_app/services/wallet_service.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
 import 'package:ignite_pay_app/src/rust/api/session.dart' as session;
 import 'package:path_provider/path_provider.dart';
@@ -205,7 +207,7 @@ class _SessionKeysScreenState extends State<SessionKeysScreen> {
                 fontSize: 16, fontWeight: FontWeight.w700, color: kTextPrimary)),
         content: Text(
           'This will create a new session key and recover tokens from the old key. '
-          'You\'ll need to sign with Phantom wallet.',
+          'You\'ll need to sign with your wallet.',
           style: GoogleFonts.inter(fontSize: 13, color: kTextSecondary),
         ),
         actions: [
@@ -250,20 +252,20 @@ class _SessionKeysScreenState extends State<SessionKeysScreen> {
       final rpcUrl = _svc.rpcUrl;
       final req = renewReq;
 
-      // 3. Connect to Phantom
-      setState(() => _renewStatus = 'Connecting to Phantom...');
-      final phantom = PhantomWalletService();
-      await phantom.loadSession();
-      if (!phantom.isConnected) {
-        final connected = await phantom.connect();
-        if (!connected) throw 'Failed to connect to Phantom wallet';
+      // 3. Connect to wallet
+      setState(() => _renewStatus = 'Connecting to wallet...');
+      final wallet = await _selectWalletService();
+      await wallet.loadSession();
+      if (!wallet.isConnected) {
+        final connected = await wallet.connect();
+        if (!connected) throw 'Failed to connect to wallet';
       }
 
       // 4. Check if new key is already registered on-chain
       setState(() => _renewStatus = 'Checking new key status...');
       final onChainInfo = await rust.getSessionAccountInfo(
         rpcUrl: rpcUrl,
-        ownerB58: phantom.walletPublicKey!,
+        ownerB58: wallet.walletPublicKey!,
         ephemeralB58: req.newSessionKeyPubkey!,
       );
 
@@ -273,14 +275,14 @@ class _SessionKeysScreenState extends State<SessionKeysScreen> {
         final scopes = req.newSessionKeyScopes ?? ['sol:transfer', 'spl:transfer'];
         info = await rust.finalizeExistingSessionKey(
           storagePath: dir.path,
-          ownerPubkeyB58: phantom.walletPublicKey!,
+          ownerPubkeyB58: wallet.walletPublicKey!,
           ephemeralPubkey: req.newSessionKeyPubkey!,
           onChainInfo: onChainInfo,
           scopes: scopes,
           realSecretKey: req.newSessionKeySecretKey,
         );
       } else {
-        // Not registered — build register tx and sign via Phantom
+        // Not registered — build register tx and sign via wallet
         final scopes = req.newSessionKeyScopes ?? ['sol:transfer', 'spl:transfer'];
         final isSpl = scopes.any((s) => s.contains('spl'));
         final targetProgram = isSpl
@@ -291,7 +293,7 @@ class _SessionKeysScreenState extends State<SessionKeysScreen> {
         final unsignedRegister = await session.buildRegisterTxForPhantom(
           storagePath: dir.path,
           rpcUrl: rpcUrl,
-          ownerPubkeyB58: phantom.walletPublicKey!,
+          ownerPubkeyB58: wallet.walletPublicKey!,
           ephemeralPubkeyB58: req.newSessionKeyPubkey!,
           targetProgram: targetProgram,
           scopes: scopes,
@@ -302,9 +304,9 @@ class _SessionKeysScreenState extends State<SessionKeysScreen> {
           tokenMint: req.newSessionKeyTokenMint,
         );
 
-        setState(() => _renewStatus = 'Open Phantom to sign register tx...');
-        final signedRegisterTx = await phantom.signTransaction(unsignedRegister.unsignedTxB58);
-        if (signedRegisterTx == null) throw 'Phantom rejected register transaction';
+        setState(() => _renewStatus = 'Open wallet to sign register tx...');
+        final signedRegisterTx = await wallet.signTransaction(unsignedRegister.unsignedTxB58);
+        if (signedRegisterTx == null) throw 'Wallet rejected register transaction';
 
         setState(() => _renewStatus = 'Broadcasting register transaction...');
         final registerSig = await session.broadcastSignedTx(
@@ -321,18 +323,18 @@ class _SessionKeysScreenState extends State<SessionKeysScreen> {
         );
       }
 
-      // 5. Fund the new key via Phantom
-      setState(() => _renewStatus = 'Funding new key via Phantom...');
+      // 5. Fund the new key via wallet
+      setState(() => _renewStatus = 'Funding new key via wallet...');
       final solAmount = req.newSessionKeySuggestedSolFunding ?? 500000000; // default 0.5 SOL
       if (solAmount > 0) {
         final txB58 = await session.buildUnsignedTransferTx(
           rpcUrl: rpcUrl,
-          walletPubkeyB58: phantom.walletPublicKey!,
+          walletPubkeyB58: wallet.walletPublicKey!,
           merchantDid: info.ephemeralPubkey,
           amountLamports: BigInt.from(solAmount),
         );
-        final sig = await phantom.signAndSendTransaction(txB58);
-        if (sig == null) throw 'Phantom rejected SOL funding';
+        final sig = await wallet.signAndSendTransaction(txB58);
+        if (sig == null) throw 'Wallet rejected SOL funding';
       }
 
       // Fund USDC if suggested
@@ -341,13 +343,13 @@ class _SessionKeysScreenState extends State<SessionKeysScreen> {
       if (usdcAmount > 0) {
         final txB58 = await session.buildUnsignedSplTransferTx(
           rpcUrl: rpcUrl,
-          walletPubkeyB58: phantom.walletPublicKey!,
+          walletPubkeyB58: wallet.walletPublicKey!,
           merchantWalletB58: info.ephemeralPubkey,
           amount: BigInt.from(usdcAmount),
           tokenMintB58: tokenMint,
         );
-        final sig = await phantom.signAndSendTransaction(txB58);
-        if (sig == null) throw 'Phantom rejected USDC funding';
+        final sig = await wallet.signAndSendTransaction(txB58);
+        if (sig == null) throw 'Wallet rejected USDC funding';
       }
 
       // 6. Withdraw remaining tokens from old key
@@ -429,6 +431,60 @@ class _SessionKeysScreenState extends State<SessionKeysScreen> {
     } finally {
       _renewCompleter = null;
     }
+  }
+
+  /// Show a wallet selector and return the chosen WalletService.
+  /// Defaults to Phantom if no selection UI is needed.
+  Future<WalletService> _selectWalletService() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: kSurfaceDark,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'SELECT WALLET',
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: kTextSecondary,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _WalletOptionTile(
+                icon: LucideIcons.link,
+                label: 'Phantom',
+                subtitle: 'Direct deep link connection',
+                color: const Color(0xFFAB9FF2),
+                onTap: () => Navigator.of(ctx).pop('phantom'),
+              ),
+              const SizedBox(height: 8),
+              _WalletOptionTile(
+                icon: LucideIcons.wallet,
+                label: 'Other Wallets',
+                subtitle: 'WalletConnect (Backpack, Trust, Ledger, etc.)',
+                color: const Color(0xFF06B6D4),
+                onTap: () => Navigator.of(ctx).pop('wc2'),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (choice == 'wc2') {
+      return ReownWalletService();
+    }
+    return PhantomWalletService();
   }
 
   String _shortenPubkey(String pubkey) {
@@ -859,6 +915,76 @@ class _ActionChip extends StatelessWidget {
                 color: onTap != null ? color : kTextTertiary,
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wallet Option Tile (for bottom sheet selector)
+// ---------------------------------------------------------------------------
+class _WalletOptionTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _WalletOptionTile({
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: kSurfaceMid.withValues(alpha: 0.4),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: kGlassBorder),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: color.withValues(alpha: 0.2)),
+              ),
+              child: Icon(icon, size: 18, color: color),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: kTextPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: GoogleFonts.inter(fontSize: 11, color: kTextSecondary),
+                  ),
+                ],
+              ),
+            ),
+            Icon(LucideIcons.chevronRight, size: 16, color: kTextSecondary),
           ],
         ),
       ),

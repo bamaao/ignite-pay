@@ -17,8 +17,10 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/services/app_log_service.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
 import 'package:ignite_pay_app/services/phantom_wallet_service.dart';
+import 'package:ignite_pay_app/services/reown_wallet_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
 import 'package:ignite_pay_app/services/wallet_deep_link_service.dart';
+import 'package:ignite_pay_app/services/wallet_service.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
 import 'package:ignite_pay_app/src/rust/api/session.dart' as session;
 import 'package:path_provider/path_provider.dart';
@@ -101,6 +103,9 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   // Funding fields — visible only when creating a new session key
   String _solFundingAmount = '0.01'; // SOL
   String _usdcFundingAmount = '1.0'; // USDC
+
+  // Wallet service — defaults to Phantom, user can switch via selector
+  WalletService? _walletService;
 
   // On-chain PDA existence check
   bool _pdaExistsOnChain = false;
@@ -219,7 +224,7 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
     if (mcpSessionKey != null && mcpSessionKey.isNotEmpty) {
       setState(() {
         _isAuthorizing = true;
-        _authResult = 'Connecting to Phantom wallet...';
+        _authResult = 'Connecting to wallet...';
       });
       try {
         final req = widget.request!;
@@ -227,19 +232,19 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
 
         final dir = await getApplicationSupportDirectory();
 
-        // 1. Connect to Phantom wallet
-        final phantom = PhantomWalletService();
-        await phantom.loadSession();
-        if (!phantom.isConnected) {
-          final connected = await phantom.connect();
-          if (!connected) throw 'Failed to connect to Phantom wallet';
+        // 1. Connect to wallet (Phantom deep link or WC2)
+        final wallet = _walletService ?? PhantomWalletService();
+        await wallet.loadSession();
+        if (!wallet.isConnected) {
+          final connected = await wallet.connect();
+          if (!connected) throw 'Failed to connect to wallet';
         }
 
         // 2. Check if this session key is already registered on-chain
         setState(() => _authResult = 'Checking session key status...');
         final onChainInfo = await rust.getSessionAccountInfo(
           rpcUrl: svc.rpcUrl,
-          ownerB58: phantom.walletPublicKey!,
+          ownerB58: wallet.walletPublicKey!,
           ephemeralB58: req.newSessionKeyPubkey!,
         );
         AppLogService().info('Auth', 'onChain check: exists=${onChainInfo.exists}, revoked=${onChainInfo.revoked}, expiresAt=${onChainInfo.expiresAt}');
@@ -249,7 +254,7 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
           final scopes = req.newSessionKeyScopes ?? ['sol:transfer', 'spl:transfer'];
           final info = await rust.finalizeExistingSessionKey(
             storagePath: dir.path,
-            ownerPubkeyB58: phantom.walletPublicKey!,
+            ownerPubkeyB58: wallet.walletPublicKey!,
             ephemeralPubkey: req.newSessionKeyPubkey!,
             onChainInfo: onChainInfo,
             scopes: scopes,
@@ -260,8 +265,8 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
           final pdaAddress = info.sessionPda ?? info.ephemeralPubkey;
           final needsFund = await _needsFunding(svc.rpcUrl, pdaAddress);
           if (needsFund) {
-            await _fundSessionKeyViaPhantom(
-              phantom,
+            await _fundSessionKeyViaWallet(
+              wallet,
               info.ephemeralPubkey,
               info.sessionPda ?? info.ephemeralPubkey,
               svc.rpcUrl,
@@ -276,7 +281,7 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
           return;
         }
 
-        // ── Not-registered path: register on-chain via Phantom ──
+        // ── Not-registered path: register on-chain via wallet ──
 
         // Determine target program from scopes
         final isSpl = (req.newSessionKeyScopes ?? []).any((s) => s.contains('spl'));
@@ -284,12 +289,12 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
             ? 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
             : '11111111111111111111111111111111';
 
-        // 3. Build register tx with Phantom as owner, ephemeral pubkey from MCP
+        // 3. Build register tx with wallet owner, ephemeral pubkey from MCP
         setState(() => _authResult = 'Building register transaction...');
         final unsignedRegister = await session.buildRegisterTxForPhantom(
           storagePath: dir.path,
           rpcUrl: svc.rpcUrl,
-          ownerPubkeyB58: phantom.walletPublicKey!,
+          ownerPubkeyB58: wallet.walletPublicKey!,
           ephemeralPubkeyB58: req.newSessionKeyPubkey!,
           targetProgram: targetProgram,
           scopes: req.newSessionKeyScopes ?? ['sol:transfer', 'spl:transfer'],
@@ -300,10 +305,10 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
           tokenMint: req.newSessionKeyTokenMint,
         );
 
-        // 4. Phantom signTransaction (signs but does not broadcast)
-        setState(() => _authResult = 'Open Phantom to sign register tx...');
-        final signedRegisterTx = await phantom.signTransaction(unsignedRegister.unsignedTxB58);
-        if (signedRegisterTx == null) throw 'Phantom rejected register transaction';
+        // 4. Wallet signTransaction (signs but does not broadcast)
+        setState(() => _authResult = 'Open wallet to sign register tx...');
+        final signedRegisterTx = await wallet.signTransaction(unsignedRegister.unsignedTxB58);
+        if (signedRegisterTx == null) throw 'Wallet rejected register transaction';
 
         // 5. Broadcast the fully signed register tx
         setState(() => _authResult = 'Broadcasting register transaction...');
@@ -321,9 +326,9 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
           realSecretKey: req.newSessionKeySecretKey,
         );
 
-        // 7. Fund the new session key via Phantom wallet (user-customizable amounts)
-        await _fundSessionKeyViaPhantom(
-          phantom,
+        // 7. Fund the new session key via wallet (user-customizable amounts)
+        await _fundSessionKeyViaWallet(
+          wallet,
           info.ephemeralPubkey,
           info.sessionPda ?? unsignedRegister.sessionPda,
           svc.rpcUrl,
@@ -331,7 +336,7 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
 
         // 8. Send auth response with the registered session key info
         await _sendAuthResponseWithExternalKey(info);
-        setState(() => _authResult = 'Authorized with Phantom-funded session key');
+        setState(() => _authResult = 'Authorized with wallet-funded session key');
         await Future.delayed(const Duration(milliseconds: 1200));
         if (mounted) Navigator.of(context).pop('authorized');
       } catch (e) {
@@ -371,11 +376,11 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
     });
   }
 
-  /// Fund a session key via Phantom wallet using the user's custom SOL/USDC amounts.
+  /// Fund a session key via wallet using the user's custom SOL/USDC amounts.
   /// Sends SOL to the session PDA and USDC to the PDA's ATA.
   /// Also sends a small amount of SOL to the ephemeral key for gas fees.
-  Future<void> _fundSessionKeyViaPhantom(
-    PhantomWalletService phantom,
+  Future<void> _fundSessionKeyViaWallet(
+    WalletService wallet,
     String ephemeralPubkey,
     String sessionPda,
     String rpcUrl,
@@ -383,45 +388,45 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
     // 1. Send SOL to session PDA
     final solAmount = _parseSol(_solFundingAmount);
     if (solAmount > 0) {
-      setState(() => _authResult = 'Open Phantom to send SOL to PDA...');
+      setState(() => _authResult = 'Open wallet to send SOL to PDA...');
       final solLamports = (solAmount * 1000000000).round();
       final txB58 = await session.buildUnsignedTransferTx(
         rpcUrl: rpcUrl,
-        walletPubkeyB58: phantom.walletPublicKey!,
+        walletPubkeyB58: wallet.walletPublicKey!,
         merchantDid: sessionPda,
         amountLamports: BigInt.from(solLamports),
       );
-      final sig = await phantom.signAndSendTransaction(txB58);
-      if (sig == null) throw 'Phantom rejected SOL transfer';
+      final sig = await wallet.signAndSendTransaction(txB58);
+      if (sig == null) throw 'Wallet rejected SOL transfer';
     }
 
     // 2. Send gas SOL to ephemeral key (0.01 SOL)
-    setState(() => _authResult = 'Open Phantom to send gas SOL...');
+    setState(() => _authResult = 'Open wallet to send gas SOL...');
     final gasTxB58 = await session.buildUnsignedTransferTx(
       rpcUrl: rpcUrl,
-      walletPubkeyB58: phantom.walletPublicKey!,
+      walletPubkeyB58: wallet.walletPublicKey!,
       merchantDid: ephemeralPubkey,
       amountLamports: BigInt.from(10000000), // 0.01 SOL
     );
-    final gasSig = await phantom.signAndSendTransaction(gasTxB58);
-    if (gasSig == null) throw 'Phantom rejected gas SOL transfer';
+    final gasSig = await wallet.signAndSendTransaction(gasTxB58);
+    if (gasSig == null) throw 'Wallet rejected gas SOL transfer';
 
     // 3. Send USDC to PDA's ATA
     final usdcAmount = double.tryParse(_usdcFundingAmount) ?? 0.0;
     final tokenMint = widget.request?.newSessionKeyTokenMint
         ?? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'; // devnet USDC
     if (usdcAmount > 0) {
-      setState(() => _authResult = 'Open Phantom to send USDC to PDA ATA...');
+      setState(() => _authResult = 'Open wallet to send USDC to PDA ATA...');
       final usdcRaw = (usdcAmount * 1000000).round(); // USDC has 6 decimals
       final txB58 = await session.buildUnsignedSplTransferTx(
         rpcUrl: rpcUrl,
-        walletPubkeyB58: phantom.walletPublicKey!,
+        walletPubkeyB58: wallet.walletPublicKey!,
         merchantWalletB58: sessionPda,
         amount: BigInt.from(usdcRaw),
         tokenMintB58: tokenMint,
       );
-      final sig = await phantom.signAndSendTransaction(txB58);
-      if (sig == null) throw 'Phantom rejected USDC transfer';
+      final sig = await wallet.signAndSendTransaction(txB58);
+      if (sig == null) throw 'Wallet rejected USDC transfer';
     }
   }
 
@@ -655,23 +660,32 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
                 label: 'Built-in Key',
                 subtitle: 'Sign with DID-derived key (no wallet needed)',
                 color: _kSuccess,
-                onTap: () => Navigator.of(ctx).pop(SigningMethod.builtIn),
+                onTap: () {
+                  _walletService = null;
+                  Navigator.of(ctx).pop(SigningMethod.builtIn);
+                },
               ),
               const SizedBox(height: 8),
               _SigningMethodTile(
                 icon: LucideIcons.link,
-                label: 'Phantom / Solflare',
-                subtitle: 'Open wallet app to sign (Deep Link)',
+                label: 'Phantom',
+                subtitle: 'Direct deep link (recommended for Phantom)',
                 color: const Color(0xFFAB9FF2),
-                onTap: () => Navigator.of(ctx).pop(SigningMethod.deepLink),
+                onTap: () {
+                  _walletService = PhantomWalletService();
+                  Navigator.of(ctx).pop(SigningMethod.deepLink);
+                },
               ),
               const SizedBox(height: 8),
               _SigningMethodTile(
-                icon: LucideIcons.smartphone,
-                label: 'Mobile Wallet',
-                subtitle: 'MWA protocol (Android only)',
+                icon: LucideIcons.wallet,
+                label: 'Other Wallets',
+                subtitle: 'WalletConnect (Backpack, Trust, Ledger, etc.)',
                 color: const Color(0xFF06B6D4),
-                onTap: () => Navigator.of(ctx).pop(SigningMethod.mwa),
+                onTap: () {
+                  _walletService = ReownWalletService();
+                  Navigator.of(ctx).pop(SigningMethod.mwa);
+                },
               ),
               const SizedBox(height: 8),
             ],
@@ -1303,7 +1317,7 @@ class _FundingCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            'Fund via Phantom wallet (first-time setup)',
+            'Fund via wallet (first-time setup)',
             style: GoogleFonts.inter(fontSize: 11, color: _kTextSecondary),
           ),
           const SizedBox(height: 14),

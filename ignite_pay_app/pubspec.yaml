@@ -65,6 +65,7 @@ dependencies:
   app_links: ^6.3.0
   cryptography: ^2.7.0
   convert: ^3.1.1
+  reown_appkit: ^1.8.2
 
   # Biometric / device PIN lock
   local_auth: ^3.0.1

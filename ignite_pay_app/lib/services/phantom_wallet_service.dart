@@ -19,6 +19,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:ignite_pay_app/services/app_log_service.dart';
+import 'package:ignite_pay_app/services/wallet_service.dart';
 import 'package:ignite_pay_app/src/rust/api/phantom_crypto.dart' as crypto;
 
 // ---------------------------------------------------------------------------
@@ -51,7 +52,7 @@ const _kPrefsSharedSecret = 'phantom_shared_secret';
 /// Crypto operations (Ed25519 keypair, X25519 key exchange, NaCl box
 /// encrypt/decrypt) are delegated to Rust via flutter_rust_bridge.
 /// See `rust/src/api/phantom_crypto.rs` for the Rust implementations.
-class PhantomWalletService extends ChangeNotifier {
+class PhantomWalletService extends ChangeNotifier implements WalletService {
   static final PhantomWalletService _instance =
       PhantomWalletService._internal();
   factory PhantomWalletService() => _instance;
@@ -90,15 +91,18 @@ class PhantomWalletService extends ChangeNotifier {
   // ── Public API ────────────────────────────────────────────────────────
 
   /// Whether the service has an active Phantom session.
+  @override
   bool get isConnected =>
       _walletPublicKey != null &&
       _sessionToken != null &&
       _sharedSecretB64 != null;
 
   /// The Phantom wallet public key in base58, or null if not connected.
+  @override
   String? get walletPublicKey => _walletPublicKey;
 
   /// Initialize by loading any persisted session from SharedPreferences.
+  @override
   Future<void> loadSession() async {
     if (_loaded) return;
     final prefs = await SharedPreferences.getInstance();
@@ -119,6 +123,7 @@ class PhantomWalletService extends ChangeNotifier {
   /// Generates a dApp keypair (if not already present), builds the connect
   /// deep link, opens Phantom, and waits for the redirect callback.
   /// Returns `true` on success, `false` on failure.
+  @override
   Future<bool> connect() async {
     await loadSession();
 
@@ -164,6 +169,7 @@ class PhantomWalletService extends ChangeNotifier {
   }
 
   /// Disconnect the Phantom session and clear persisted state.
+  @override
   Future<void> disconnect() async {
     _dappPublicKeyB64 = null;
     _dappSecretKeyB64 = null;
@@ -188,6 +194,7 @@ class PhantomWalletService extends ChangeNotifier {
   /// [transactionB58] is the base58-encoded unsigned transaction.
   /// Returns the transaction signature (base58), or null if the user declined
   /// or an error occurred.
+  @override
   Future<String?> signAndSendTransaction(String transactionB58) async {
     await loadSession();
 
@@ -250,6 +257,7 @@ class PhantomWalletService extends ChangeNotifier {
   /// [transactionB58] is the base58-encoded unsigned transaction.
   /// Returns the fully signed transaction (base58), or null if the user
   /// declined or an error occurred.
+  @override
   Future<String?> signTransaction(String transactionB58) async {
     await loadSession();
 
