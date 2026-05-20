@@ -478,6 +478,38 @@ pub async fn send_session_renew_response(
     Ok(())
 }
 
+/// Send a session key rotate trigger to the MCP server.
+/// The phone calls this when the user taps "Renew Key".
+pub async fn send_session_key_rotate_trigger(
+    storage_path: String,
+    mcp_did: String,
+    old_session_key_pubkey: String,
+) -> Result<()> {
+    let global = GLOBAL_WS_CLIENT.lock().await;
+    let client = global
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Not connected to mediator"))?;
+
+    let mgr = IdentityManager::new(&storage_path)?;
+    let our_did = mgr.did().to_string();
+    let agent = mgr.agent();
+
+    let msg = ignite_pay_core::didcomm::build_session_key_rotate_trigger(
+        &our_did,
+        &mcp_did,
+        &old_session_key_pubkey,
+    );
+
+    let jwe = {
+        let agent_guard = agent.lock().await;
+        ignite_pay_core::didcomm::pack_encrypted(&agent_guard, &msg, &our_did, &mcp_did)
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?
+    };
+
+    client.send_raw(&jwe).await?;
+    Ok(())
+}
+
 /// Mock payment signing (placeholder for real signing).
 pub async fn sign_payment(merchant_did: String, amount: u64) -> Result<AuthGrant> {
     let mock_signature = format!("sig_of_{}_for_{}", merchant_did, amount);
@@ -738,6 +770,25 @@ pub async fn revoke_session_key_onchain(
 /// Delete a session key from local storage only.
 pub fn delete_session_key_local(storage_path: String, session_pubkey: String) -> Result<()> {
     crate::api::session::delete_session_key_local(storage_path, session_pubkey)
+}
+
+/// Withdraw SOL and optionally SPL tokens from an old session key to a new one.
+/// Signs locally using the old ephemeral secret key stored in sled.
+pub async fn withdraw_session_funds(
+    rpc_url: String,
+    storage_path: String,
+    old_ephemeral_pubkey: String,
+    new_ephemeral_pubkey: String,
+    token_mint_b58: Option<String>,
+) -> Result<crate::api::session::WithdrawResult> {
+    crate::api::session::withdraw_session_funds(
+        rpc_url,
+        storage_path,
+        old_ephemeral_pubkey,
+        new_ephemeral_pubkey,
+        token_mint_b58,
+    )
+    .await
 }
 
 /// Register an externally-provided session key on-chain (MCP created the keypair).
@@ -1421,6 +1472,7 @@ pub fn finalize_existing_session_key(
     ephemeral_pubkey: String,
     on_chain_info: SessionOnChainInfo,
     scopes: Vec<String>,
+    real_secret_key: Option<String>,
 ) -> Result<SessionKeyInfo> {
     crate::api::session::finalize_existing_session_key(
         storage_path,
@@ -1428,6 +1480,7 @@ pub fn finalize_existing_session_key(
         ephemeral_pubkey,
         on_chain_info,
         scopes,
+        real_secret_key,
     )
 }
 

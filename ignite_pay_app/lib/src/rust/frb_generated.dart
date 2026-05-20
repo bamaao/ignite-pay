@@ -71,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -31135916;
+  int get rustContentHash => -823905435;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -319,6 +319,7 @@ abstract class RustLibApi extends BaseApi {
     required String ephemeralPubkey,
     required SessionOnChainInfo onChainInfo,
     required List<String> scopes,
+    String? realSecretKey,
   });
 
   Future<SessionKeyInfo> crateApiSimpleFinalizeExistingSessionKey({
@@ -327,6 +328,7 @@ abstract class RustLibApi extends BaseApi {
     required String ephemeralPubkey,
     required SessionOnChainInfo onChainInfo,
     required List<String> scopes,
+    String? realSecretKey,
   });
 
   Future<SessionKeyInfo> crateApiSessionFinalizePhantomSessionKey({
@@ -334,6 +336,7 @@ abstract class RustLibApi extends BaseApi {
     required String ephemeralPubkey,
     required String txSignature,
     required String sessionPda,
+    String? realSecretKey,
   });
 
   Future<SessionKeyEntry?> crateApiSessionFindActiveSessionKey({
@@ -691,6 +694,12 @@ abstract class RustLibApi extends BaseApi {
     String? txSignature,
   });
 
+  Future<void> crateApiSimpleSendSessionKeyRotateTrigger({
+    required String storagePath,
+    required String mcpDid,
+    required String oldSessionKeyPubkey,
+  });
+
   Future<void> crateApiSimpleSendSessionRenewResponse({
     required String storagePath,
     required String mcpDid,
@@ -720,6 +729,22 @@ abstract class RustLibApi extends BaseApi {
     required String did,
     required String message,
     required String signatureB64,
+  });
+
+  Future<WithdrawResult> crateApiSessionWithdrawSessionFunds({
+    required String rpcUrl,
+    required String storagePath,
+    required String oldEphemeralPubkey,
+    required String newEphemeralPubkey,
+    String? tokenMintB58,
+  });
+
+  Future<WithdrawResult> crateApiSimpleWithdrawSessionFunds({
+    required String rpcUrl,
+    required String storagePath,
+    required String oldEphemeralPubkey,
+    required String newEphemeralPubkey,
+    String? tokenMintB58,
   });
 }
 
@@ -2253,6 +2278,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String ephemeralPubkey,
     required SessionOnChainInfo onChainInfo,
     required List<String> scopes,
+    String? realSecretKey,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -2263,6 +2289,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(ephemeralPubkey, serializer);
           sse_encode_box_autoadd_session_on_chain_info(onChainInfo, serializer);
           sse_encode_list_String(scopes, serializer);
+          sse_encode_opt_String(realSecretKey, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -2281,6 +2308,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           ephemeralPubkey,
           onChainInfo,
           scopes,
+          realSecretKey,
         ],
         apiImpl: this,
       ),
@@ -2296,6 +2324,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "ephemeralPubkey",
           "onChainInfo",
           "scopes",
+          "realSecretKey",
         ],
       );
 
@@ -2306,6 +2335,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String ephemeralPubkey,
     required SessionOnChainInfo onChainInfo,
     required List<String> scopes,
+    String? realSecretKey,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -2316,6 +2346,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(ephemeralPubkey, serializer);
           sse_encode_box_autoadd_session_on_chain_info(onChainInfo, serializer);
           sse_encode_list_String(scopes, serializer);
+          sse_encode_opt_String(realSecretKey, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -2334,6 +2365,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           ephemeralPubkey,
           onChainInfo,
           scopes,
+          realSecretKey,
         ],
         apiImpl: this,
       ),
@@ -2349,6 +2381,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "ephemeralPubkey",
           "onChainInfo",
           "scopes",
+          "realSecretKey",
         ],
       );
 
@@ -2358,6 +2391,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String ephemeralPubkey,
     required String txSignature,
     required String sessionPda,
+    String? realSecretKey,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -2367,6 +2401,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(ephemeralPubkey, serializer);
           sse_encode_String(txSignature, serializer);
           sse_encode_String(sessionPda, serializer);
+          sse_encode_opt_String(realSecretKey, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -2379,7 +2414,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiSessionFinalizePhantomSessionKeyConstMeta,
-        argValues: [storagePath, ephemeralPubkey, txSignature, sessionPda],
+        argValues: [
+          storagePath,
+          ephemeralPubkey,
+          txSignature,
+          sessionPda,
+          realSecretKey,
+        ],
         apiImpl: this,
       ),
     );
@@ -2393,6 +2434,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "ephemeralPubkey",
           "txSignature",
           "sessionPda",
+          "realSecretKey",
         ],
       );
 
@@ -4748,6 +4790,43 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiSimpleSendSessionKeyRotateTrigger({
+    required String storagePath,
+    required String mcpDid,
+    required String oldSessionKeyPubkey,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(mcpDid, serializer);
+          sse_encode_String(oldSessionKeyPubkey, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 94,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleSendSessionKeyRotateTriggerConstMeta,
+        argValues: [storagePath, mcpDid, oldSessionKeyPubkey],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleSendSessionKeyRotateTriggerConstMeta =>
+      const TaskConstMeta(
+        debugName: "send_session_key_rotate_trigger",
+        argNames: ["storagePath", "mcpDid", "oldSessionKeyPubkey"],
+      );
+
+  @override
   Future<void> crateApiSimpleSendSessionRenewResponse({
     required String storagePath,
     required String mcpDid,
@@ -4769,7 +4848,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 94,
+            funcId: 95,
             port: port_,
           );
         },
@@ -4820,7 +4899,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 95,
+            funcId: 96,
             port: port_,
           );
         },
@@ -4855,7 +4934,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 96,
+            funcId: 97,
             port: port_,
           );
         },
@@ -4889,7 +4968,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 97,
+            funcId: 98,
             port: port_,
           );
         },
@@ -4925,7 +5004,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 98,
+            funcId: 99,
             port: port_,
           );
         },
@@ -4944,6 +5023,112 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(
         debugName: "verify_did_signature",
         argNames: ["did", "message", "signatureB64"],
+      );
+
+  @override
+  Future<WithdrawResult> crateApiSessionWithdrawSessionFunds({
+    required String rpcUrl,
+    required String storagePath,
+    required String oldEphemeralPubkey,
+    required String newEphemeralPubkey,
+    String? tokenMintB58,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(rpcUrl, serializer);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(oldEphemeralPubkey, serializer);
+          sse_encode_String(newEphemeralPubkey, serializer);
+          sse_encode_opt_String(tokenMintB58, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 100,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_withdraw_result,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSessionWithdrawSessionFundsConstMeta,
+        argValues: [
+          rpcUrl,
+          storagePath,
+          oldEphemeralPubkey,
+          newEphemeralPubkey,
+          tokenMintB58,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionWithdrawSessionFundsConstMeta =>
+      const TaskConstMeta(
+        debugName: "withdraw_session_funds",
+        argNames: [
+          "rpcUrl",
+          "storagePath",
+          "oldEphemeralPubkey",
+          "newEphemeralPubkey",
+          "tokenMintB58",
+        ],
+      );
+
+  @override
+  Future<WithdrawResult> crateApiSimpleWithdrawSessionFunds({
+    required String rpcUrl,
+    required String storagePath,
+    required String oldEphemeralPubkey,
+    required String newEphemeralPubkey,
+    String? tokenMintB58,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(rpcUrl, serializer);
+          sse_encode_String(storagePath, serializer);
+          sse_encode_String(oldEphemeralPubkey, serializer);
+          sse_encode_String(newEphemeralPubkey, serializer);
+          sse_encode_opt_String(tokenMintB58, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 101,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_withdraw_result,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSimpleWithdrawSessionFundsConstMeta,
+        argValues: [
+          rpcUrl,
+          storagePath,
+          oldEphemeralPubkey,
+          newEphemeralPubkey,
+          tokenMintB58,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleWithdrawSessionFundsConstMeta =>
+      const TaskConstMeta(
+        debugName: "withdraw_session_funds",
+        argNames: [
+          "rpcUrl",
+          "storagePath",
+          "oldEphemeralPubkey",
+          "newEphemeralPubkey",
+          "tokenMintB58",
+        ],
       );
 
   @protected
@@ -5541,6 +5726,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       unsignedTxB58: dco_decode_String(arr[0]),
       sessionPda: dco_decode_String(arr[1]),
       ephemeralPubkey: dco_decode_String(arr[2]),
+    );
+  }
+
+  @protected
+  WithdrawResult dco_decode_withdraw_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return WithdrawResult(
+      solWithdrawn: dco_decode_u_64(arr[0]),
+      tokenWithdrawn: dco_decode_u_64(arr[1]),
+      solSig: dco_decode_opt_String(arr[2]),
+      tokenSig: dco_decode_opt_String(arr[3]),
     );
   }
 
@@ -6366,6 +6565,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  WithdrawResult sse_decode_withdraw_result(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_solWithdrawn = sse_decode_u_64(deserializer);
+    var var_tokenWithdrawn = sse_decode_u_64(deserializer);
+    var var_solSig = sse_decode_opt_String(deserializer);
+    var var_tokenSig = sse_decode_opt_String(deserializer);
+    return WithdrawResult(
+      solWithdrawn: var_solWithdrawn,
+      tokenWithdrawn: var_tokenWithdrawn,
+      solSig: var_solSig,
+      tokenSig: var_tokenSig,
+    );
+  }
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getInt32();
@@ -7034,6 +7248,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.unsignedTxB58, serializer);
     sse_encode_String(self.sessionPda, serializer);
     sse_encode_String(self.ephemeralPubkey, serializer);
+  }
+
+  @protected
+  void sse_encode_withdraw_result(
+    WithdrawResult self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self.solWithdrawn, serializer);
+    sse_encode_u_64(self.tokenWithdrawn, serializer);
+    sse_encode_opt_String(self.solSig, serializer);
+    sse_encode_opt_String(self.tokenSig, serializer);
   }
 
   @protected

@@ -9,7 +9,7 @@
 // distribution of the code under the BSL, whichever comes first, the code
 // automatically becomes available under the Apache License 2.0.
 
-use ignite_pay_mcp::mediator::{MediatorConnection, MbDepositCommand, QrPaymentCommand};
+use ignite_pay_mcp::mediator::{MediatorConnection, MbDepositCommand, QrPaymentCommand, SessionRotateTriggerCommand};
 use ignite_pay_mcp::payment::{
     execute_mock_payment, AuthResponse, PaymentRequest, PaymentStatus,
     PendingAuthStore, PendingFundStore,
@@ -2362,6 +2362,87 @@ impl IgnitePayMcpServer {
         }
     }
 
+    /// Create a new ephemeral keypair and send a session-renew-request to the phone.
+    /// Used both by background `check_and_renew_session` and by phone-initiated rotate trigger.
+    /// Returns the old pubkey on success (for logging).
+    pub async fn create_and_send_renew_request(
+        &self,
+        old_pubkey: &str,
+    ) -> Result<String, String> {
+        let session = match self.get_active_session() {
+            Some(s) => s,
+            None => return Err("No active session".to_string()),
+        };
+
+        // Verify the old_pubkey matches
+        if session.keypair.pubkey().to_string() != old_pubkey {
+            return Err(format!(
+                "Old pubkey mismatch: expected {}, got {}",
+                session.keypair.pubkey(),
+                old_pubkey
+            ));
+        }
+
+        let phone_did = match self.resolve_phone_did().await {
+            Some(d) => d,
+            None => return Err("No phone DID resolved".to_string()),
+        };
+
+        let new_sk = match self.create_session_key_for_request(
+            &PaymentRequest {
+                id: String::new(),
+                recipient: String::new(),
+                merchant_did: String::new(),
+                amount: session.session_data.spending_limit,
+                token: if session.session_data.token_mint == Pubkey::default() {
+                    "SOL".to_string()
+                } else {
+                    session.session_data.token_mint.to_string()
+                },
+                network: "solana".to_string(),
+                description: String::new(),
+                status: PaymentStatus::PendingAuth,
+                created_at: chrono::Utc::now(),
+                tx_signature: None,
+            },
+            &None,
+        ) {
+            Some(sk) => sk,
+            None => return Err("Failed to create new session key".to_string()),
+        };
+
+        let expires_at = session.session_data.expires_at;
+        let old_pk = old_pubkey.to_string();
+        let rx = self.pending_renew.register(&old_pk);
+
+        let msg = ignite_pay_core::didcomm::build_session_renew_request(
+            self.mediator.our_did(),
+            &phone_did,
+            &old_pk,
+            expires_at,
+            &new_sk,
+        );
+
+        self.mediator
+            .send_to_phone(&msg, &phone_did)
+            .await
+            .map_err(|e| format!("Failed to send renew request: {}", e))?;
+
+        // Wait for response with 60s timeout
+        match tokio::time::timeout(std::time::Duration::from_secs(60), rx).await {
+            Ok(Ok(resp)) if resp.renewed => {
+                tracing::info!(
+                    "Session renewed: old={} new={}",
+                    old_pk, resp.new_session_key_pubkey
+                );
+                Ok(old_pk)
+            }
+            Ok(Ok(_)) => Err("Phone declined session renewal".to_string()),
+            Ok(Err(_)) => Err("Session renew channel error".to_string()),
+            Err(_) => Err("Session renew request timed out (60s)".to_string()),
+        }
+    }
+
     /// Resolve the phone DID: prefer the dynamically paired phone DID,
     /// fall back to the config value, then to the input parameter.
     async fn resolve_phone_did(&self) -> Option<String> {
@@ -2917,10 +2998,11 @@ async fn main() -> anyhow::Result<()> {
     // Connect to mediator (spawns background task with pending auth handling)
     let (qr_payment_tx, mut qr_payment_rx) = tokio::sync::mpsc::unbounded_channel::<QrPaymentCommand>();
     let (mb_deposit_tx, mut mb_deposit_rx) = tokio::sync::mpsc::unbounded_channel::<MbDepositCommand>();
+    let (session_rotate_tx, mut session_rotate_rx) = tokio::sync::mpsc::unbounded_channel::<SessionRotateTriggerCommand>();
     let pending_fund_store = Arc::new(PendingFundStore::new());
     let pending_renew_store = Arc::new(ignite_pay_mcp::payment::PendingRenewStore::new());
     mediator
-        .connect(Arc::clone(&pending), Arc::clone(&pending_fund_store), Arc::clone(&pending_renew_store), None, Some(mb_deposit_tx), Some(qr_payment_tx))
+        .connect(Arc::clone(&pending), Arc::clone(&pending_fund_store), Arc::clone(&pending_renew_store), None, Some(mb_deposit_tx), Some(qr_payment_tx), Some(session_rotate_tx))
         .await?;
     tracing::info!("Connecting to mediator at {}...", config.mediator.ws_url);
 
@@ -3247,6 +3329,25 @@ async fn main() -> anyhow::Result<()> {
                 match server.mediator.send_to_phone(&response, &cmd.phone_did).await {
                     Ok(_) => tracing::info!("MB deposit response sent to phone"),
                     Err(e) => tracing::error!("Failed to send MB deposit response: {}", e),
+                }
+            }
+        });
+    }
+
+    // Spawn session rotate trigger handler background task
+    // When the phone sends a session-key-rotate-trigger, the mediator forwards it here.
+    {
+        let server = server.clone();
+        tokio::spawn(async move {
+            while let Some(cmd) = session_rotate_rx.recv().await {
+                tracing::info!(
+                    "Processing session rotate trigger from {}: old_pubkey={}",
+                    cmd.phone_did, cmd.old_session_key_pubkey
+                );
+
+                match server.create_and_send_renew_request(&cmd.old_session_key_pubkey).await {
+                    Ok(old_pk) => tracing::info!("Session rotate completed: {}", old_pk),
+                    Err(e) => tracing::warn!("Session rotate failed: {}", e),
                 }
             }
         });

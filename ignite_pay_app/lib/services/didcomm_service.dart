@@ -1422,6 +1422,25 @@ class DidcommService extends ChangeNotifier {
     }
   }
 
+  /// Send a session key rotate trigger to MCP.
+  /// Called when the user taps "Renew Key" on the phone.
+  Future<void> sendSessionKeyRotateTrigger({
+    required String mcpDid,
+    required String oldSessionKeyPubkey,
+  }) async {
+    try {
+      await rust.sendSessionKeyRotateTrigger(
+        storagePath: _storagePath,
+        mcpDid: mcpDid,
+        oldSessionKeyPubkey: oldSessionKeyPubkey,
+      );
+      AppLogService().info('DIDComm', 'Session key rotate trigger sent: $oldSessionKeyPubkey');
+    } catch (e) {
+      AppLogService().error('DIDComm', 'Failed to send rotate trigger: $e');
+      rethrow;
+    }
+  }
+
   /// Clear the pending auth request.
   void clearPendingAuth() {
     _pendingAuth = null;

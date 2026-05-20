@@ -845,6 +845,7 @@ class _MockRustLibApi extends RustLibApi {
     required String ephemeralPubkey,
     required String txSignature,
     required String sessionPda,
+    String? realSecretKey,
   }) async =>
       SessionKeyInfo(
         ephemeralPubkey: ephemeralPubkey,
@@ -863,6 +864,7 @@ class _MockRustLibApi extends RustLibApi {
     required String ephemeralPubkey,
     required SessionOnChainInfo onChainInfo,
     required List<String> scopes,
+    String? realSecretKey,
   }) async =>
       SessionKeyInfo(
         ephemeralPubkey: ephemeralPubkey,
@@ -881,6 +883,7 @@ class _MockRustLibApi extends RustLibApi {
     required String ephemeralPubkey,
     required SessionOnChainInfo onChainInfo,
     required List<String> scopes,
+    String? realSecretKey,
   }) async =>
       SessionKeyInfo(
         ephemeralPubkey: ephemeralPubkey,
@@ -1025,6 +1028,43 @@ class _MockRustLibApi extends RustLibApi {
     required String merchantDid,
   }) async =>
       null;
+
+  @override
+  Future<void> crateApiSimpleSendSessionKeyRotateTrigger({
+    required String storagePath,
+    required String mcpDid,
+    required String oldSessionKeyPubkey,
+  }) async {}
+
+  @override
+  Future<WithdrawResult> crateApiSimpleWithdrawSessionFunds({
+    required String rpcUrl,
+    required String storagePath,
+    required String oldEphemeralPubkey,
+    required String newEphemeralPubkey,
+    String? tokenMintB58,
+  }) async =>
+      WithdrawResult(
+        solWithdrawn: BigInt.zero,
+        tokenWithdrawn: BigInt.zero,
+        solSig: null,
+        tokenSig: null,
+      );
+
+  @override
+  Future<WithdrawResult> crateApiSessionWithdrawSessionFunds({
+    required String rpcUrl,
+    required String storagePath,
+    required String oldEphemeralPubkey,
+    required String newEphemeralPubkey,
+    String? tokenMintB58,
+  }) async =>
+      WithdrawResult(
+        solWithdrawn: BigInt.zero,
+        tokenWithdrawn: BigInt.zero,
+        solSig: null,
+        tokenSig: null,
+      );
 }
 
 void main() {

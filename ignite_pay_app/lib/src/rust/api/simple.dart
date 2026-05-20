@@ -140,6 +140,18 @@ Future<void> sendSessionRenewResponse({
   txSignature: txSignature,
 );
 
+/// Send a session key rotate trigger to the MCP server.
+/// The phone calls this when the user taps "Renew Key".
+Future<void> sendSessionKeyRotateTrigger({
+  required String storagePath,
+  required String mcpDid,
+  required String oldSessionKeyPubkey,
+}) => RustLib.instance.api.crateApiSimpleSendSessionKeyRotateTrigger(
+  storagePath: storagePath,
+  mcpDid: mcpDid,
+  oldSessionKeyPubkey: oldSessionKeyPubkey,
+);
+
 /// Mock payment signing (placeholder for real signing).
 Future<AuthGrant> signPayment({
   required String merchantDid,
@@ -249,6 +261,22 @@ Future<void> deleteSessionKeyLocal({
 }) => RustLib.instance.api.crateApiSimpleDeleteSessionKeyLocal(
   storagePath: storagePath,
   sessionPubkey: sessionPubkey,
+);
+
+/// Withdraw SOL and optionally SPL tokens from an old session key to a new one.
+/// Signs locally using the old ephemeral secret key stored in sled.
+Future<WithdrawResult> withdrawSessionFunds({
+  required String rpcUrl,
+  required String storagePath,
+  required String oldEphemeralPubkey,
+  required String newEphemeralPubkey,
+  String? tokenMintB58,
+}) => RustLib.instance.api.crateApiSimpleWithdrawSessionFunds(
+  rpcUrl: rpcUrl,
+  storagePath: storagePath,
+  oldEphemeralPubkey: oldEphemeralPubkey,
+  newEphemeralPubkey: newEphemeralPubkey,
+  tokenMintB58: tokenMintB58,
 );
 
 /// Register an externally-provided session key on-chain (MCP created the keypair).
@@ -667,12 +695,14 @@ Future<SessionKeyInfo> finalizeExistingSessionKey({
   required String ephemeralPubkey,
   required SessionOnChainInfo onChainInfo,
   required List<String> scopes,
+  String? realSecretKey,
 }) => RustLib.instance.api.crateApiSimpleFinalizeExistingSessionKey(
   storagePath: storagePath,
   ownerPubkeyB58: ownerPubkeyB58,
   ephemeralPubkey: ephemeralPubkey,
   onChainInfo: onChainInfo,
   scopes: scopes,
+  realSecretKey: realSecretKey,
 );
 
 /// Derive the owner's Solana pubkey from the DID stored in sled.

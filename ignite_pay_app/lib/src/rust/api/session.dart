@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `build_raw_transaction`, `build_register_ix_data`, `compact_u64_encode`, `derive_ata`, `derive_session_pda_simple`, `devnet_airdrop`, `get_recent_blockhash`, `get_session_program_id_bytes`, `is_on_curve`, `send_transaction`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Create a session key for payment authorization.
 /// This generates an ephemeral Ed25519 keypair locally and stores it in sled.
@@ -206,33 +206,42 @@ Future<String> broadcastSignedTx({
 /// Finalize a Phantom-signed session key registration.
 /// Moves the key from `pending:{pubkey}` to `session:{pubkey}` in sled storage
 /// after the transaction has been successfully broadcast.
+///
+/// If `real_secret_key` is provided (non-empty, valid 64-byte base58), it replaces
+/// the placeholder zeros from the pending entry so the app can later sign with it.
 Future<SessionKeyInfo> finalizePhantomSessionKey({
   required String storagePath,
   required String ephemeralPubkey,
   required String txSignature,
   required String sessionPda,
+  String? realSecretKey,
 }) => RustLib.instance.api.crateApiSessionFinalizePhantomSessionKey(
   storagePath: storagePath,
   ephemeralPubkey: ephemeralPubkey,
   txSignature: txSignature,
   sessionPda: sessionPda,
+  realSecretKey: realSecretKey,
 );
 
 /// Finalize an already-registered session key by creating a `SessionKeyInfo` from
 /// on-chain data and persisting it to local sled storage (so it becomes the active key).
-/// The ephemeral secret key is set to all-zeros because MCP holds the real key.
+///
+/// If `real_secret_key` is provided (non-empty, valid 64-byte base58), it is stored
+/// instead of zeros, allowing the app to sign transactions locally.
 Future<SessionKeyInfo> finalizeExistingSessionKey({
   required String storagePath,
   required String ownerPubkeyB58,
   required String ephemeralPubkey,
   required SessionOnChainInfo onChainInfo,
   required List<String> scopes,
+  String? realSecretKey,
 }) => RustLib.instance.api.crateApiSessionFinalizeExistingSessionKey(
   storagePath: storagePath,
   ownerPubkeyB58: ownerPubkeyB58,
   ephemeralPubkey: ephemeralPubkey,
   onChainInfo: onChainInfo,
   scopes: scopes,
+  realSecretKey: realSecretKey,
 );
 
 /// Complete session key registration after receiving the owner signature from an external wallet.
@@ -258,6 +267,22 @@ Future<String> revokeSessionKeyOnchain({
   storagePath: storagePath,
   sessionPubkey: sessionPubkey,
   rpcUrl: rpcUrl,
+);
+
+/// Withdraw SOL and optionally SPL tokens from an old ephemeral session key to a new one.
+/// Uses the old key's secret key stored in sled to sign locally (no Phantom needed).
+Future<WithdrawResult> withdrawSessionFunds({
+  required String rpcUrl,
+  required String storagePath,
+  required String oldEphemeralPubkey,
+  required String newEphemeralPubkey,
+  String? tokenMintB58,
+}) => RustLib.instance.api.crateApiSessionWithdrawSessionFunds(
+  rpcUrl: rpcUrl,
+  storagePath: storagePath,
+  oldEphemeralPubkey: oldEphemeralPubkey,
+  newEphemeralPubkey: newEphemeralPubkey,
+  tokenMintB58: tokenMintB58,
 );
 
 /// Delete a session key from local sled storage only (no on-chain action).
@@ -773,4 +798,43 @@ class UnsignedRegisterTx {
           unsignedTxB58 == other.unsignedTxB58 &&
           sessionPda == other.sessionPda &&
           ephemeralPubkey == other.ephemeralPubkey;
+}
+
+/// Result of withdrawing funds from an old session key to a new one.
+class WithdrawResult {
+  /// SOL withdrawn in lamports.
+  final BigInt solWithdrawn;
+
+  /// SPL token withdrawn in smallest unit.
+  final BigInt tokenWithdrawn;
+
+  /// SOL transfer transaction signature.
+  final String? solSig;
+
+  /// Token transfer transaction signature.
+  final String? tokenSig;
+
+  const WithdrawResult({
+    required this.solWithdrawn,
+    required this.tokenWithdrawn,
+    this.solSig,
+    this.tokenSig,
+  });
+
+  @override
+  int get hashCode =>
+      solWithdrawn.hashCode ^
+      tokenWithdrawn.hashCode ^
+      solSig.hashCode ^
+      tokenSig.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is WithdrawResult &&
+          runtimeType == other.runtimeType &&
+          solWithdrawn == other.solWithdrawn &&
+          tokenWithdrawn == other.tokenWithdrawn &&
+          solSig == other.solSig &&
+          tokenSig == other.tokenSig;
 }

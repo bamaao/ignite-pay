@@ -32,6 +32,14 @@ type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Command sent when a create-channel-request is received from the phone app.
+/// Command sent when a session-key-rotate-trigger is received from the phone app.
+/// The MCP creates a new ephemeral keypair and sends a session-renew-request back.
+#[derive(Debug)]
+pub struct SessionRotateTriggerCommand {
+    pub phone_did: String,
+    pub old_session_key_pubkey: String,
+}
+
 pub struct CreateChannelCommand {
     pub requestor_did: String,
     pub hub_endpoint: String,
@@ -278,6 +286,7 @@ impl MediatorConnection {
         create_channel_tx: Option<mpsc::UnboundedSender<CreateChannelCommand>>,
         mb_deposit_tx: Option<mpsc::UnboundedSender<MbDepositCommand>>,
         qr_payment_tx: Option<mpsc::UnboundedSender<QrPaymentCommand>>,
+        session_rotate_tx: Option<mpsc::UnboundedSender<SessionRotateTriggerCommand>>,
     ) -> Result<()> {
         let agent = self.agent.clone();
         let our_did = self.our_did.clone();
@@ -318,6 +327,7 @@ impl MediatorConnection {
                 create_channel_tx,
                 mb_deposit_tx,
                 qr_payment_tx,
+                session_rotate_tx,
                 &signing_private,
                 &db,
             )
@@ -659,6 +669,7 @@ async fn real_ws_client(
     create_channel_tx: Option<mpsc::UnboundedSender<CreateChannelCommand>>,
     mb_deposit_tx: Option<mpsc::UnboundedSender<MbDepositCommand>>,
     qr_payment_tx: Option<mpsc::UnboundedSender<QrPaymentCommand>>,
+    session_rotate_tx: Option<mpsc::UnboundedSender<SessionRotateTriggerCommand>>,
     signing_private: &[u8; 32],
     db: &sled::Db,
 ) {
@@ -678,6 +689,7 @@ async fn real_ws_client(
             &create_channel_tx,
             &mb_deposit_tx,
             &qr_payment_tx,
+            &session_rotate_tx,
             signing_private,
             db,
         )
@@ -710,6 +722,7 @@ async fn connect_and_run(
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
     mb_deposit_tx: &Option<mpsc::UnboundedSender<MbDepositCommand>>,
     qr_payment_tx: &Option<mpsc::UnboundedSender<QrPaymentCommand>>,
+    session_rotate_tx: &Option<mpsc::UnboundedSender<SessionRotateTriggerCommand>>,
     signing_private: &[u8; 32],
     db: &sled::Db,
 ) -> Result<()> {
@@ -876,7 +889,7 @@ async fn connect_and_run(
                                     for entry in messages {
                                         if let Some(jwe) = entry.get("message").and_then(|m| m.as_str()) {
                                             handle_incoming_message(
-                                                jwe, agent, pending, pending_fund, pending_renew, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, mb_deposit_tx, qr_payment_tx, db, our_did, did_doc, ws_url, signing_private,
+                                                jwe, agent, pending, pending_fund, pending_renew, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, mb_deposit_tx, qr_payment_tx, session_rotate_tx, db, our_did, did_doc, ws_url, signing_private,
                                             )
                                             .await;
                                         }
@@ -915,7 +928,7 @@ async fn connect_and_run(
             msg = ws.next() => {
                 match msg {
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
-                        handle_incoming_message(&text, agent, pending, pending_fund, pending_renew, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, mb_deposit_tx, qr_payment_tx, db, our_did, did_doc, ws_url, signing_private).await;
+                        handle_incoming_message(&text, agent, pending, pending_fund, pending_renew, paired_phone, pending_phone, phone_mediator_http_url, create_channel_tx, mb_deposit_tx, qr_payment_tx, session_rotate_tx, db, our_did, did_doc, ws_url, signing_private).await;
                     }
                     Some(Ok(_)) => {}
                     Some(Err(e)) => return Err(e.into()),
@@ -1026,6 +1039,7 @@ async fn handle_incoming_message(
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
     mb_deposit_tx: &Option<mpsc::UnboundedSender<MbDepositCommand>>,
     qr_payment_tx: &Option<mpsc::UnboundedSender<QrPaymentCommand>>,
+    session_rotate_tx: &Option<mpsc::UnboundedSender<SessionRotateTriggerCommand>>,
     db: &sled::Db,
     our_did: &str,
     did_doc: &Value,
@@ -1038,7 +1052,7 @@ async fn handle_incoming_message(
         match didcomm::unpack_message(&agent_guard, text, None) {
             Ok(msg) => {
                 drop(agent_guard);
-                process_inner_message(&msg, pending, pending_fund, pending_renew, paired_phone, pending_phone, phone_mediator_http_url, agent, create_channel_tx, mb_deposit_tx, qr_payment_tx, db, our_did, did_doc, mcp_ws_url, signing_private).await;
+                process_inner_message(&msg, pending, pending_fund, pending_renew, paired_phone, pending_phone, phone_mediator_http_url, agent, create_channel_tx, mb_deposit_tx, qr_payment_tx, session_rotate_tx, db, our_did, did_doc, mcp_ws_url, signing_private).await;
                 return;
             }
             Err(e) => {
@@ -1301,6 +1315,7 @@ async fn process_inner_message(
     create_channel_tx: &Option<mpsc::UnboundedSender<CreateChannelCommand>>,
     mb_deposit_tx: &Option<mpsc::UnboundedSender<MbDepositCommand>>,
     qr_payment_tx: &Option<mpsc::UnboundedSender<QrPaymentCommand>>,
+    session_rotate_tx: &Option<mpsc::UnboundedSender<SessionRotateTriggerCommand>>,
     db: &sled::Db,
     our_did: &str,
     did_doc: &Value,
@@ -1721,6 +1736,20 @@ async fn process_inner_message(
         };
         if pending_renew.resolve(&old_session_key_pubkey, response) {
             tracing::info!("Resolved pending renew: {} -> renewed={}", old_session_key_pubkey, renewed);
+        }
+    } else if msg.typ.contains("session-key-rotate-trigger") {
+        let phone_did = msg.from.clone().unwrap_or_default();
+        let old_pubkey = msg.body.get("old_session_key_pubkey")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        tracing::info!("Received session-key-rotate-trigger from {}: old_pubkey={}", phone_did, old_pubkey);
+
+        if let Some(tx) = session_rotate_tx {
+            let _ = tx.send(SessionRotateTriggerCommand {
+                phone_did,
+                old_session_key_pubkey: old_pubkey,
+            });
         }
     } else {
         tracing::info!("Received message type={}, no handler", msg.typ);

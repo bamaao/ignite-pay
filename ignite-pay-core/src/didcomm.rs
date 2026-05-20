@@ -1021,6 +1021,23 @@ pub fn build_session_renew_response(
     .to(vec![to_did.to_string()])
 }
 
+/// Build a session key rotate trigger message.
+/// Sent from phone to MCP when the user initiates a key renewal.
+pub fn build_session_key_rotate_trigger(
+    from_did: &str,
+    to_did: &str,
+    old_session_key_pubkey: &str,
+) -> Message {
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/session-key-rotate-trigger",
+        json!({
+            "old_session_key_pubkey": old_session_key_pubkey,
+        }),
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
 /// Encrypt a DIDComm message using authcrypt (authenticated encryption).
 /// Returns a JWE JSON string.
 pub fn pack_encrypted(

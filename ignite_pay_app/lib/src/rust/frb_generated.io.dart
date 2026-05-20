@@ -200,6 +200,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UnsignedRegisterTx dco_decode_unsigned_register_tx(dynamic raw);
 
   @protected
+  WithdrawResult dco_decode_withdraw_result(dynamic raw);
+
+  @protected
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
@@ -410,6 +413,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UnsignedRegisterTx sse_decode_unsigned_register_tx(
     SseDeserializer deserializer,
   );
+
+  @protected
+  WithdrawResult sse_decode_withdraw_result(SseDeserializer deserializer);
 
   @protected
   int sse_decode_i_32(SseDeserializer deserializer);
@@ -687,6 +693,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_unsigned_register_tx(
     UnsignedRegisterTx self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_withdraw_result(
+    WithdrawResult self,
     SseSerializer serializer,
   );
 
