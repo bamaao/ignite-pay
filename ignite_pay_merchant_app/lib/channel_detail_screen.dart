@@ -19,8 +19,8 @@ import 'package:provider/provider.dart';
 
 void openChannelDetail(BuildContext context, ChannelInfo channel) {
   Navigator.of(context).push(PageRouteBuilder(
-    pageBuilder: (_, __, ___) => ChannelDetailScreen(channel: channel),
-    transitionsBuilder: (_, anim, __, child) =>
+    pageBuilder: (_, _, _) => ChannelDetailScreen(channel: channel),
+    transitionsBuilder: (_, anim, _, child) =>
         SlideTransition(position: Tween(begin: const Offset(1, 0), end: Offset.zero).animate(anim), child: child),
   ));
 }
@@ -56,7 +56,7 @@ class ChannelDetailScreen extends StatelessWidget {
                       const SizedBox(height: 12),
                       _InfoRow(label: '状态', value: channel.status),
                       const SizedBox(height: 12),
-                      _InfoRow(label: '序列号', value: '${channel.sequence.toRadixString(10)}'),
+                      _InfoRow(label: '序列号', value: channel.sequence.toRadixString(10)),
                       const SizedBox(height: 12),
                       _InfoRow(label: '叶子数', value: '${channel.leafCount}'),
                       const SizedBox(height: 12),
