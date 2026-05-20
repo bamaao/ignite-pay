@@ -24,7 +24,6 @@ import 'package:ignite_pay_app/vault_screen.dart';
 import 'package:ignite_pay_app/messages_screen.dart';
 import 'package:ignite_pay_app/settings_screen.dart';
 import 'package:ignite_pay_app/notification_screen.dart';
-import 'package:ignite_pay_app/channel_topology_screen.dart';
 import 'package:ignite_pay_app/qr_scanner_screen.dart';
 import 'package:ignite_pay_app/qr_payment_screen.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';

@@ -17,9 +17,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/services/app_log_service.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
 import 'package:ignite_pay_app/services/phantom_wallet_service.dart';
-import 'package:ignite_pay_app/services/reown_wallet_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
-import 'package:ignite_pay_app/services/wallet_deep_link_service.dart';
 import 'package:ignite_pay_app/services/wallet_service.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
 import 'package:ignite_pay_app/src/rust/api/session.dart' as session;
@@ -584,115 +582,6 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
     if (usdcBalance < usdcThreshold) return true;
 
     return false;
-  }
-
-  /// Poll for session key registration completion after deep link callback.
-  /// The deep link callback (in main.dart) calls completeRegistration which
-  /// sets activeSessionKey on SessionKeyService. This polls until that happens.
-  void _pollForSessionKeyCompletion() {
-    Timer.periodic(const Duration(seconds: 2), (timer) async {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-      final svc = SessionKeyService();
-      if (svc.activeSessionKey != null) {
-        timer.cancel();
-        try {
-          setState(() {
-            _authResult = 'Session key registered, sending authorization...';
-          });
-          await _sendAuthResponse();
-          setState(() => _authResult = 'Authorized with session key');
-          await Future.delayed(const Duration(milliseconds: 1200));
-          if (mounted) Navigator.of(context).pop('authorized');
-        } catch (e) {
-          setState(() {
-            _authResult = 'Error: $e';
-            _isAuthorizing = false;
-          });
-        }
-      }
-      // Timeout after 5 minutes
-      if (timer.tick > 150) {
-        timer.cancel();
-        if (mounted) {
-          setState(() {
-            _authResult = 'Error: Timed out waiting for wallet signature';
-            _isAuthorizing = false;
-          });
-        }
-      }
-    });
-  }
-
-  Future<SigningMethod?> _showSigningMethodSelector() {
-    return showModalBottomSheet<SigningMethod>(
-      context: context,
-      backgroundColor: _kSurfaceDark,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'SIGNING METHOD',
-                style: GoogleFonts.inter(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: _kTextSecondary,
-                  letterSpacing: 1.2,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Choose how to sign the session key registration',
-                style: GoogleFonts.inter(fontSize: 13, color: _kTextSecondary),
-              ),
-              const SizedBox(height: 16),
-              _SigningMethodTile(
-                icon: LucideIcons.keyRound,
-                label: 'Built-in Key',
-                subtitle: 'Sign with DID-derived key (no wallet needed)',
-                color: _kSuccess,
-                onTap: () {
-                  _walletService = null;
-                  Navigator.of(ctx).pop(SigningMethod.builtIn);
-                },
-              ),
-              const SizedBox(height: 8),
-              _SigningMethodTile(
-                icon: LucideIcons.link,
-                label: 'Phantom',
-                subtitle: 'Direct deep link (recommended for Phantom)',
-                color: const Color(0xFFAB9FF2),
-                onTap: () {
-                  _walletService = PhantomWalletService();
-                  Navigator.of(ctx).pop(SigningMethod.deepLink);
-                },
-              ),
-              const SizedBox(height: 8),
-              _SigningMethodTile(
-                icon: LucideIcons.wallet,
-                label: 'Other Wallets',
-                subtitle: 'WalletConnect (Backpack, Trust, Ledger, etc.)',
-                color: const Color(0xFF06B6D4),
-                onTap: () {
-                  _walletService = ReownWalletService();
-                  Navigator.of(ctx).pop(SigningMethod.mwa);
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   void _onDecline() {
@@ -1827,76 +1716,6 @@ class _ListActionChip extends StatelessWidget {
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Signing Method Tile (for bottom sheet selector)
-// ---------------------------------------------------------------------------
-class _SigningMethodTile extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String subtitle;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _SigningMethodTile({
-    required this.icon,
-    required this.label,
-    required this.subtitle,
-    required this.color,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: _kSurfaceMid.withValues(alpha: 0.4),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: _kGlassBorder),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: color.withValues(alpha: 0.2)),
-              ),
-              child: Icon(icon, size: 18, color: color),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: _kTextPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: GoogleFonts.inter(fontSize: 11, color: _kTextSecondary),
-                  ),
-                ],
-              ),
-            ),
-            Icon(LucideIcons.chevronRight, size: 16, color: _kTextSecondary),
-          ],
         ),
       ),
     );

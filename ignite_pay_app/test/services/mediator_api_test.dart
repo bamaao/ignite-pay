@@ -93,9 +93,6 @@ void main() {
       });
 
       MediatorApi _createApi() {
-        final api = MediatorApi();
-        // Override the internal dio - we test via the mock interceptor
-        // by using a separate helper
         return _TestableMediatorApi(dio);
       }
 
