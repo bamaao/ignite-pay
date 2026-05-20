@@ -608,7 +608,7 @@ class PhantomWalletService extends ChangeNotifier implements WalletService {
       zeros++;
     }
     // Allocate enough space: log(256)/log(58) ≈ 1.37.
-    final encoded = List.filled(((bytes.length - zeros) * 138 / 100 + 1).floor() + zeros, 0);
+    final encoded = List.filled((bytes.length * 138 / 100).ceil() + 2, 0);
     int encodedLen = 0;
     for (int i = zeros; i < bytes.length; i++) {
       int carry = bytes[i];
@@ -646,7 +646,7 @@ class PhantomWalletService extends ChangeNotifier implements WalletService {
     while (zeros < input.length && input[zeros] == '1') {
       zeros++;
     }
-    final bytes = List.filled(((input.length - zeros) * 733 / 1000 + 1).floor() + zeros, 0);
+    final bytes = List.filled((input.length * 733 / 1000).ceil() + 2, 0);
     int bytesLen = 0;
     for (int i = zeros; i < input.length; i++) {
       int carry = _b58Alphabet.indexOf(input[i]);
