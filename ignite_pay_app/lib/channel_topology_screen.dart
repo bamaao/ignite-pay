@@ -207,13 +207,15 @@ class _ChannelTopologyScreenState extends State<ChannelTopologyScreen> {
 
                                 setSheetState(() => isSubmitting = true);
 
+                                // Capture before async gap so linter is satisfied
+                                final nav = Navigator.of(this.context);
+                                final messenger = ScaffoldMessenger.of(this.context);
+
                                 try {
                                   // Listen for the response
                                   _mbDepositSub?.cancel();
                                   _mbDepositSub = DidcommService().mbDepositResults.listen((result) {
                                     if (!mounted) return;
-                                    final nav = Navigator.of(context);
-                                    final messenger = ScaffoldMessenger.of(context);
                                     nav.maybePop();
                                     final snackBar = SnackBar(
                                       backgroundColor: result.success ? kSuccess : kDanger,
@@ -243,7 +245,7 @@ class _ChannelTopologyScreenState extends State<ChannelTopologyScreen> {
                                 } catch (e) {
                                   if (!mounted) return;
                                   setSheetState(() => isSubmitting = false);
-                                  ScaffoldMessenger.of(context).showSnackBar(
+                                  messenger.showSnackBar(
                                     SnackBar(
                                       backgroundColor: kDanger,
                                       behavior: SnackBarBehavior.floating,
