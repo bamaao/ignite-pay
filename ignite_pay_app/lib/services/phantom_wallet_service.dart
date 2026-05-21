@@ -322,6 +322,12 @@ class PhantomWalletService extends ChangeNotifier implements WalletService {
   void handleConnectCallback(Uri uri) {
     AppLogService().info('Phantom', 'Connect callback received');
 
+    // Guard against duplicate callback processing
+    if (_connectCompleter == null || _connectCompleter!.isCompleted) {
+      AppLogService().info('Phantom', 'Ignoring duplicate connect callback');
+      return;
+    }
+
     // Check for error response.
     final errorCode = uri.queryParameters['errorCode'];
     if (errorCode != null) {
@@ -342,17 +348,24 @@ class PhantomWalletService extends ChangeNotifier implements WalletService {
       return;
     }
 
+    AppLogService().info('Phantom', 'dapp_sec=${_dappSecretKeyB64?.substring(0, 8)}..., phantom_enc_pub_b58=${phantomEncPubKey.substring(0, 8)}..., dapp_pub=${_dappPublicKeyB64?.substring(0, 8)}...');
+
     // Phantom returns base58-encoded values; convert to base64url for Rust crypto.
     final phantomEncPubKeyB64 = _b58ToB64(phantomEncPubKey);
     final dataB64 = _b58ToB64(dataB58);
     final nonceB64 = _b58ToB64(nonceB58);
 
+    AppLogService().info('Phantom', 'phantom_enc_pub_b64_len=${phantomEncPubKeyB64.length}, data_b64_len=${dataB64.length}, nonce_b64_len=${nonceB64.length}');
+
     // Compute shared secret.
     _computeSharedSecret(phantomEncPubKeyB64).then((_) async {
       if (_sharedSecretB64 == null) {
+        AppLogService().error('Phantom', 'Shared secret is null after computation');
         _completeConnect(false);
         return;
       }
+
+      AppLogService().info('Phantom', 'shared_secret=${_sharedSecretB64!.substring(0, 8)}..., trying decrypt...');
 
       // Decrypt the data payload.
       try {
@@ -602,38 +615,30 @@ class PhantomWalletService extends ChangeNotifier implements WalletService {
   /// Encode bytes to base58 (Bitcoin alphabet).
   static String _b58Encode(List<int> input) {
     final bytes = Uint8List.fromList(input);
-    // Count leading zeros.
     int zeros = 0;
     while (zeros < bytes.length && bytes[zeros] == 0) {
       zeros++;
     }
-    // Allocate enough space: log(256)/log(58) ≈ 1.37.
-    final encoded = List.filled((bytes.length * 138 / 100).ceil() + 2, 0);
-    int encodedLen = 0;
+    // Use a growable list to avoid any buffer sizing issues
+    List<int> encoded = [];
     for (int i = zeros; i < bytes.length; i++) {
       int carry = bytes[i];
-      int j = 0;
-      for (int k = encodedLen - 1; k >= 0; k--, j++) {
-        carry += encoded[k] * 256;
-        encoded[k] = carry % 58;
+      for (int j = 0; j < encoded.length; j++) {
+        carry += encoded[j] * 256;
+        encoded[j] = carry % 58;
         carry ~/= 58;
       }
       while (carry > 0) {
-        encodedLen++;
-        // Shift right if needed.
-        if (encodedLen > encoded.length) break;
-        encoded[encoded.length - encodedLen] = carry % 58;
+        encoded.add(carry % 58);
         carry ~/= 58;
       }
     }
-    // Build result with leading '1's for each leading zero byte.
+    // encoded is little-endian, need to reverse
     final sb = StringBuffer();
     for (int i = 0; i < zeros; i++) {
       sb.write('1');
     }
-    // Find the start position in encoded array.
-    int start = encoded.length - encodedLen;
-    for (int i = start; i < encoded.length; i++) {
+    for (int i = encoded.length - 1; i >= 0; i--) {
       sb.write(_b58Alphabet[encoded[i]]);
     }
     return sb.toString();
@@ -641,36 +646,33 @@ class PhantomWalletService extends ChangeNotifier implements WalletService {
 
   /// Decode a base58 string to bytes.
   static Uint8List _b58Decode(String input) {
-    // Count leading '1's.
     int zeros = 0;
     while (zeros < input.length && input[zeros] == '1') {
       zeros++;
     }
-    final bytes = List.filled((input.length * 733 / 1000).ceil() + 2, 0);
-    int bytesLen = 0;
+    // Use a growable list to avoid any buffer sizing issues
+    List<int> bytes = [];
     for (int i = zeros; i < input.length; i++) {
       int carry = _b58Alphabet.indexOf(input[i]);
       if (carry < 0) {
         throw FormatException('Invalid base58 character: ${input[i]}');
       }
-      for (int j = 0; j < bytesLen; j++) {
-        carry += bytes[bytes.length - 1 - j] * 58;
-        bytes[bytes.length - 1 - j] = carry & 0xFF;
+      for (int j = 0; j < bytes.length; j++) {
+        carry += bytes[j] * 58;
+        bytes[j] = carry & 0xFF;
         carry >>= 8;
       }
       while (carry > 0) {
-        bytesLen++;
-        if (bytesLen > bytes.length) break;
-        bytes[bytes.length - bytesLen] = carry & 0xFF;
+        bytes.add(carry & 0xFF);
         carry >>= 8;
       }
     }
+    // bytes is little-endian, need to reverse to big-endian
     final result = BytesBuilder();
     for (int i = 0; i < zeros; i++) {
       result.addByte(0);
     }
-    int start = bytes.length - bytesLen;
-    for (int i = start; i < bytes.length; i++) {
+    for (int i = bytes.length - 1; i >= 0; i--) {
       result.addByte(bytes[i]);
     }
     return result.toBytes();

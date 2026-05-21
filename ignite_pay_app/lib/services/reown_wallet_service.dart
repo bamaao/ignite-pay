@@ -310,32 +310,29 @@ class ReownWalletService extends WalletService {
     while (zeros < input.length && input[zeros] == '1') {
       zeros++;
     }
-    final bytes = List.filled(
-        (input.length * 733 / 1000).ceil() + 2, 0);
-    int bytesLen = 0;
+    // Use a growable list to avoid any buffer sizing issues
+    List<int> bytes = [];
     for (int i = zeros; i < input.length; i++) {
       int carry = _b58Alphabet.indexOf(input[i]);
       if (carry < 0) {
         throw FormatException('Invalid base58 character: ${input[i]}');
       }
-      for (int j = 0; j < bytesLen; j++) {
-        carry += bytes[bytes.length - 1 - j] * 58;
-        bytes[bytes.length - 1 - j] = carry & 0xFF;
+      for (int j = 0; j < bytes.length; j++) {
+        carry += bytes[j] * 58;
+        bytes[j] = carry & 0xFF;
         carry >>= 8;
       }
       while (carry > 0) {
-        bytesLen++;
-        if (bytesLen > bytes.length) break;
-        bytes[bytes.length - bytesLen] = carry & 0xFF;
+        bytes.add(carry & 0xFF);
         carry >>= 8;
       }
     }
+    // bytes is little-endian, need to reverse to big-endian
     final result = BytesBuilder();
     for (int i = 0; i < zeros; i++) {
       result.addByte(0);
     }
-    int start = bytes.length - bytesLen;
-    for (int i = start; i < bytes.length; i++) {
+    for (int i = bytes.length - 1; i >= 0; i--) {
       result.addByte(bytes[i]);
     }
     return result.toBytes();
@@ -347,30 +344,26 @@ class ReownWalletService extends WalletService {
     while (zeros < bytes.length && bytes[zeros] == 0) {
       zeros++;
     }
-    final encoded = List.filled(
-        (bytes.length * 138 / 100).ceil() + 2, 0);
-    int encodedLen = 0;
+    // Use a growable list to avoid any buffer sizing issues
+    List<int> encoded = [];
     for (int i = zeros; i < bytes.length; i++) {
       int carry = bytes[i];
-      int j = 0;
-      for (int k = encodedLen - 1; k >= 0; k--, j++) {
-        carry += encoded[k] * 256;
-        encoded[k] = carry % 58;
+      for (int j = 0; j < encoded.length; j++) {
+        carry += encoded[j] * 256;
+        encoded[j] = carry % 58;
         carry ~/= 58;
       }
       while (carry > 0) {
-        encodedLen++;
-        if (encodedLen > encoded.length) break;
-        encoded[encoded.length - encodedLen] = carry % 58;
+        encoded.add(carry % 58);
         carry ~/= 58;
       }
     }
+    // encoded is little-endian, need to reverse
     final sb = StringBuffer();
     for (int i = 0; i < zeros; i++) {
       sb.write('1');
     }
-    int start = encoded.length - encodedLen;
-    for (int i = start; i < encoded.length; i++) {
+    for (int i = encoded.length - 1; i >= 0; i--) {
       sb.write(_b58Alphabet[encoded[i]]);
     }
     return sb.toString();

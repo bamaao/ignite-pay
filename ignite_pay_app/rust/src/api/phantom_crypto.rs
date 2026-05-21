@@ -45,9 +45,17 @@ pub fn phantom_shared_secret(
         return Err(anyhow::anyhow!("Invalid key length"));
     }
 
-    // Ed25519 secret -> X25519 secret (clamping)
+    // Ed25519 secret -> X25519 secret via libsodium convention:
+    // SHA-512 hash the 32-byte seed, clamp the first 32 bytes of the output.
     let my_secret_array: [u8; 32] = my_secret_bytes.try_into().unwrap();
-    let x25519_secret = x25519_dalek::StaticSecret::from(my_secret_array);
+
+    let mut x25519_secret_bytes = <sha2::Sha512 as sha2::Digest>::digest(my_secret_array);
+    // Clamp first 32 bytes
+    x25519_secret_bytes[0] &= 248;
+    x25519_secret_bytes[31] &= 127;
+    x25519_secret_bytes[31] |= 64;
+    let secret_array: [u8; 32] = x25519_secret_bytes[..32].try_into().unwrap();
+    let x25519_secret = x25519_dalek::StaticSecret::from(secret_array);
 
     // Their public key: try Ed25519 -> X25519 conversion, else use directly
     let their_public_array: [u8; 32] = their_public_bytes.try_into().unwrap();
@@ -93,10 +101,10 @@ pub fn phantom_encrypt(
         .encrypt_in_place_detached(nonce, b"", &mut buf)
         .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
 
-    // Output: tag (16 bytes) + ciphertext
-    let mut output = Vec::with_capacity(16 + buf.len());
-    output.extend_from_slice(&tag);
+    // Output: ciphertext + tag (NaCl crypto_box_easy format: MAC at end)
+    let mut output = Vec::with_capacity(buf.len() + 16);
     output.extend_from_slice(&buf);
+    output.extend_from_slice(&tag);
 
     Ok(base64::Engine::encode(&engine, &output))
 }
@@ -129,9 +137,10 @@ pub fn phantom_decrypt(
     let nonce = Nonce::from_slice(&nonce_bytes);
     let cipher = XSalsa20Poly1305::new(key);
 
-    // Split tag (first 16 bytes) and ciphertext
-    let tag = Tag::from_slice(&ciphertext_bytes[..16]);
-    let mut buf = ciphertext_bytes[16..].to_vec();
+    // Split ciphertext and tag (last 16 bytes) — NaCl crypto_box_easy format
+    let ct_len = ciphertext_bytes.len() - 16;
+    let tag = Tag::from_slice(&ciphertext_bytes[ct_len..]);
+    let mut buf = ciphertext_bytes[..ct_len].to_vec();
 
     cipher
         .decrypt_in_place_detached(nonce, b"", &mut buf, tag)
