@@ -9,6 +9,8 @@
 // distribution of the code under the BSL, whichever comes first, the code
 // automatically becomes available under the Apache License 2.0.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -77,8 +79,11 @@ class IgnitePayApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => DidcommService(),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => DidcommService()),
+        ChangeNotifierProvider(create: (_) => SessionKeyService()),
+      ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         title: 'Ignite Pay',
@@ -472,13 +477,16 @@ class _MainNavigatorState extends State<_MainNavigator> {
   }
 
   void _handleDeepLink(Uri uri) {
-    // Try Reown/WalletConnect deep link handling first (handles Phantom/Solflare/WC2)
+    // Legacy Phantom deep links use the ignitepay:// scheme — handle directly.
+    if (uri.scheme == 'ignitepay') {
+      _handleLegacyDeepLink(uri);
+      return;
+    }
+
+    // Everything else (https:// WC2 redirects, etc.) goes to Reown.
     final reown = ReownWalletService();
     reown.dispatchDeepLink(uri.toString()).then((handled) {
-      if (handled) return;
-
-      // Fall through to legacy handling
-      _handleLegacyDeepLink(uri);
+      if (!handled) _handleLegacyDeepLink(uri);
     }).catchError((_) {
       _handleLegacyDeepLink(uri);
     });
@@ -2151,6 +2159,7 @@ class _AuthAction extends StatefulWidget {
 
 class _AuthActionState extends State<_AuthAction> {
   Stream<AuthRequest>? _authStream;
+  StreamSubscription<SessionFundRequest>? _fundSub;
 
   @override
   void initState() {
@@ -2158,6 +2167,119 @@ class _AuthActionState extends State<_AuthAction> {
     // Listen for auth requests from DidcommService
     final didService = DidcommService();
     _authStream = didService.authRequests;
+
+    // Listen for session fund requests from MCP (topup when balance low)
+    _fundSub = didService.sessionFundRequests.listen(_onSessionFundRequest);
+  }
+
+  @override
+  void dispose() {
+    _fundSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _onSessionFundRequest(SessionFundRequest req) async {
+    if (!mounted) return;
+    final didService = DidcommService();
+    final mcpDid = didService.pairedMcps.isNotEmpty ? didService.pairedMcps.first.did : '';
+    if (mcpDid.isEmpty) return;
+
+    final requiredSol = req.requiredAmount / 1000000000.0;
+    final currentSol = req.currentBalance / 1000000000.0;
+    final reason = req.reason ?? 'Session balance below threshold';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _SessionFundDialog(
+        requiredSol: requiredSol,
+        currentSol: currentSol,
+        reason: reason,
+        sessionKeyPubkey: req.sessionKeyPubkey,
+      ),
+    );
+
+    if (confirmed != true || !mounted) {
+      // User declined — notify MCP
+      await didService.respondToFundRequest(
+        mcpDid: mcpDid,
+        sessionKeyPubkey: req.sessionKeyPubkey,
+        funded: false,
+        newBalance: req.currentBalance,
+      );
+      return;
+    }
+
+    // User confirmed — connect wallet and fund
+    try {
+      final wallet = PhantomWalletService();
+      await wallet.loadSession();
+      if (!wallet.isConnected) {
+        final connected = await wallet.connect();
+        if (!connected) throw 'Wallet connection failed';
+      }
+
+      final svc = SessionKeyService();
+      await svc.initialize();
+
+      // Send SOL to session PDA
+      final solLamports = BigInt.from(req.requiredAmount);
+      final txB58 = await session.buildUnsignedTransferTx(
+        rpcUrl: svc.rpcUrl,
+        walletPubkeyB58: wallet.walletPublicKey!,
+        merchantDid: req.sessionKeyPubkey,
+        amountLamports: solLamports,
+      );
+      final sig = await wallet.signAndSendTransaction(txB58);
+      if (sig == null) throw 'Wallet rejected funding transaction';
+
+      // Check new balance
+      final newBalance = await rust.getSolBalance(
+        rpcUrl: svc.rpcUrl,
+        pubkeyB58: req.sessionKeyPubkey,
+      );
+
+      await didService.respondToFundRequest(
+        mcpDid: mcpDid,
+        sessionKeyPubkey: req.sessionKeyPubkey,
+        funded: true,
+        newBalance: newBalance.toInt(),
+        txSignature: sig,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: _kSuccess,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            content: Text('Session funded successfully', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Session funding failed: $e');
+      await didService.respondToFundRequest(
+        mcpDid: mcpDid,
+        sessionKeyPubkey: req.sessionKeyPubkey,
+        funded: false,
+        newBalance: req.currentBalance,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: _kIntercepted,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            content: Text('Funding failed: $e', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _openChallenge(BuildContext context, {AuthRequest? request}) async {
@@ -2263,6 +2385,120 @@ class _AuthActionState extends State<_AuthAction> {
           ],
         );
       },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Session Fund Dialog (topup when MCP requests funding)
+// ---------------------------------------------------------------------------
+class _SessionFundDialog extends StatelessWidget {
+  final double requiredSol;
+  final double currentSol;
+  final String reason;
+  final String sessionKeyPubkey;
+
+  const _SessionFundDialog({
+    required this.requiredSol,
+    required this.currentSol,
+    required this.reason,
+    required this.sessionKeyPubkey,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final shortPubkey = sessionKeyPubkey.length > 16
+        ? '${sessionKeyPubkey.substring(0, 8)}...${sessionKeyPubkey.substring(sessionKeyPubkey.length - 4)}'
+        : sessionKeyPubkey;
+
+    return AlertDialog(
+      backgroundColor: _kSurfaceDark,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Row(
+        children: [
+          const Icon(LucideIcons.wallet, size: 20, color: _kAmber),
+          const SizedBox(width: 10),
+          Text(
+            'Session Top-up Required',
+            style: GoogleFonts.inter(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: _kTextPrimary,
+            ),
+          ),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            reason,
+            style: GoogleFonts.inter(fontSize: 13, color: _kTextSecondary),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: _kSurfaceMid.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _kGlassBorder),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Current balance', style: GoogleFonts.inter(fontSize: 12, color: _kTextSecondary)),
+                    Text('${currentSol.toStringAsFixed(4)} SOL', style: GoogleFonts.jetBrainsMono(fontSize: 13, fontWeight: FontWeight.w600, color: _kTextPrimary)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Required', style: GoogleFonts.inter(fontSize: 12, color: _kAmber)),
+                    Text('${requiredSol.toStringAsFixed(4)} SOL', style: GoogleFonts.jetBrainsMono(fontSize: 13, fontWeight: FontWeight.w600, color: _kAmber)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Session key', style: GoogleFonts.inter(fontSize: 11, color: _kTextSecondary)),
+                    Text(shortPubkey, style: GoogleFonts.jetBrainsMono(fontSize: 11, color: _kTextSecondary)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Your wallet will open to confirm the transfer.',
+            style: GoogleFonts.inter(fontSize: 12, color: _kTextSecondary),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text('Decline', style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: _kTextSecondary)),
+        ),
+        GestureDetector(
+          onTap: () => Navigator.of(context).pop(true),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(colors: [_kNeonCyan, _kNeonCyanDim]),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              'Fund via Wallet',
+              style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: _kBackground),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

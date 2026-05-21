@@ -216,19 +216,58 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   Future<void> _onAuthorize() async {
     final svc = SessionKeyService();
 
-    // F2: If MCP provided a new session key, always go through Phantom flow
+    // F2: If MCP provided a new session key, handle auth flow
     final mcpSessionKey = widget.request?.newSessionKeyPubkey;
     AppLogService().info('Auth', 'onAuthorize: newSessionKeyPubkey=$mcpSessionKey, tokenMint=${widget.request?.tokenMint}, hasRequest=${widget.request != null}');
     if (mcpSessionKey != null && mcpSessionKey.isNotEmpty) {
       setState(() {
         _isAuthorizing = true;
-        _authResult = 'Connecting to wallet...';
+        _authResult = 'Authorizing...';
       });
       try {
         final req = widget.request!;
         await svc.initialize();
 
         final dir = await getApplicationSupportDirectory();
+
+        // ── Wallet-free path: PDA already exists on-chain ──
+        // Only needs cached public key from SharedPreferences, no active wallet connection.
+        if (_pdaExistsOnChain) {
+          final wallet = _walletService ?? PhantomWalletService();
+          await wallet.loadSession(); // loads cached public key
+          final cachedPubKey = wallet.walletPublicKey;
+          if (cachedPubKey == null) throw 'No cached wallet key — connect wallet first';
+
+          setState(() => _authResult = 'Finalizing session key...');
+          final onChainInfo = await rust.getSessionAccountInfo(
+            rpcUrl: svc.rpcUrl,
+            ownerB58: cachedPubKey,
+            ephemeralB58: req.newSessionKeyPubkey!,
+          );
+
+          if (onChainInfo.exists && !onChainInfo.revoked) {
+            final scopes = req.newSessionKeyScopes ?? ['sol:transfer', 'spl:transfer'];
+            final info = await rust.finalizeExistingSessionKey(
+              storagePath: dir.path,
+              ownerPubkeyB58: cachedPubKey,
+              ephemeralPubkey: req.newSessionKeyPubkey!,
+              onChainInfo: onChainInfo,
+              scopes: scopes,
+              realSecretKey: req.newSessionKeySecretKey,
+            );
+
+            await _sendAuthResponseWithExternalKey(info);
+            setState(() => _authResult = 'Authorized');
+            await Future.delayed(const Duration(milliseconds: 1200));
+            if (mounted) Navigator.of(context).pop('authorized');
+            return;
+          }
+          // PDA no longer exists despite _pdaExistsOnChain — fall through to full wallet flow
+          AppLogService().warn('Auth', 'PDA marked as existing but on-chain check failed, falling through to wallet flow');
+        }
+
+        // ── Full wallet flow: new PDA creation ──
+        setState(() => _authResult = 'Connecting to wallet...');
 
         // 1. Connect to wallet (Phantom deep link or WC2)
         final wallet = _walletService ?? PhantomWalletService();
@@ -248,7 +287,9 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
         AppLogService().info('Auth', 'onChain check: exists=${onChainInfo.exists}, revoked=${onChainInfo.revoked}, expiresAt=${onChainInfo.expiresAt}');
 
         if (onChainInfo.exists && !onChainInfo.revoked) {
-          // ── Already-registered path: skip registration, finalize locally ──
+          // ── Already-registered path: wallet-free authorization ──
+          // PDA exists on-chain — no wallet interaction needed.
+          // MCP handles topup via ensure_session_funded() -> session-fund-request.
           final scopes = req.newSessionKeyScopes ?? ['sol:transfer', 'spl:transfer'];
           final info = await rust.finalizeExistingSessionKey(
             storagePath: dir.path,
@@ -259,21 +300,9 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
             realSecretKey: req.newSessionKeySecretKey,
           );
 
-          // Check balances and top-up if needed
-          final pdaAddress = info.sessionPda ?? info.ephemeralPubkey;
-          final needsFund = await _needsFunding(svc.rpcUrl, pdaAddress);
-          if (needsFund) {
-            await _fundSessionKeyViaWallet(
-              wallet,
-              info.ephemeralPubkey,
-              info.sessionPda ?? info.ephemeralPubkey,
-              svc.rpcUrl,
-            );
-          }
-
-          // Send auth response
+          // Send auth response immediately — no funding check
           await _sendAuthResponseWithExternalKey(info);
-          setState(() => _authResult = 'Authorized with existing session key');
+          setState(() => _authResult = 'Authorized');
           await Future.delayed(const Duration(milliseconds: 1200));
           if (mounted) Navigator.of(context).pop('authorized');
           return;
@@ -559,29 +588,6 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   /// Parse a SOL string to a double, returning 0 on failure.
   double _parseSol(String value) {
     return double.tryParse(value) ?? 0.0;
-  }
-
-  /// Check whether a session key needs SOL or USDC funding.
-  /// Returns true if either balance is below the user-specified funding amounts.
-  Future<bool> _needsFunding(String rpcUrl, String ephemeralPubkey) async {
-    final solBalance = await rust.getSolBalance(
-      rpcUrl: rpcUrl,
-      pubkeyB58: ephemeralPubkey,
-    );
-    final solThreshold = BigInt.from((_parseSol(_solFundingAmount) * 1000000000).round());
-    if (solBalance < solThreshold) return true;
-
-    final tokenMint = widget.request?.newSessionKeyTokenMint
-        ?? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'; // devnet USDC
-    final usdcBalance = await rust.getTokenBalance(
-      rpcUrl: rpcUrl,
-      ownerPubkeyB58: ephemeralPubkey,
-      tokenMintB58: tokenMint,
-    );
-    final usdcThreshold = BigInt.from(((double.tryParse(_usdcFundingAmount) ?? 0.0) * 1000000).round());
-    if (usdcBalance < usdcThreshold) return true;
-
-    return false;
   }
 
   void _onDecline() {

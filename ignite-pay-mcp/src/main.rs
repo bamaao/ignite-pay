@@ -1941,6 +1941,60 @@ impl IgnitePayMcpServer {
             }
         }
 
+        // 4b. If active session exists, is not expired, and payment is within limits,
+        //     execute directly without asking the phone.
+        if let Some(session) = self.get_active_session() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let not_expired = session.session_data.expires_at == 0
+                || session.session_data.expires_at > now;
+            let remaining = session.session_data.spending_limit
+                .saturating_sub(session.session_data.current_spent);
+            let within_spending_limit = remaining >= amount;
+            let within_per_tx = session.session_data.per_tx_limit == 0
+                || amount <= session.session_data.per_tx_limit;
+
+            if not_expired && within_spending_limit && within_per_tx {
+                tracing::info!(
+                    "Active session exists (remaining={}, per_tx_limit={}), executing payment {} directly without phone auth",
+                    remaining, session.session_data.per_tx_limit, payment_id
+                );
+                let session = Some(session);
+                return match self.execute_payment_atomic(&payment, &session, spl_params.as_ref(), None).await {
+                    Ok(proof) => {
+                        let _ = self.payments.update_status(&payment_id, &PaymentStatus::Executed);
+                        if let PaymentProof::TxSignature(tx_sig) = &proof {
+                            let _ = self.payments.set_tx_signature(&payment_id, tx_sig);
+                        }
+                        let _ = self.audit.record_payment_event(&payment_id, "payment_executed", amount, &merchant_did);
+                        X402Result::Success {
+                            payment_id: payment_id.clone(),
+                            proof: X402Proof::from(&proof),
+                            amount,
+                            token: token.clone(),
+                            recipient: recipient.clone(),
+                            merchant_did: merchant_did.clone(),
+                            method: Some(proof_method(&proof)),
+                        }
+                    }
+                    Err(e) => {
+                        let _ = self.payments.update_status(&payment_id, &PaymentStatus::Rejected);
+                        X402Result::Error {
+                            payment_id: Some(payment_id.clone()),
+                            message: format!("Payment execution failed: {}", e),
+                        }
+                    }
+                };
+            }
+
+            tracing::info!(
+                "Session exists but cannot auto-pay: expired={}, remaining={}, amount={}, per_tx_ok={}",
+                !not_expired, remaining, amount, within_per_tx
+            );
+        }
+
         // 5. Register pending auth and send request
         let rx = self.pending.register(&payment_id);
 
