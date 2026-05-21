@@ -885,6 +885,8 @@ impl IgnitePayMcpServer {
                                                     per_tx_limit: 0,
                                                     daily_tx_count_limit: 0,
                                                     scopes: vec![],
+                                                    current_daily_count: 0,
+                                                    last_daily_reset: 0,
                                                 },
                                             };
                                             match client.register_session_on_chain(
@@ -1955,11 +1957,23 @@ impl IgnitePayMcpServer {
             let within_spending_limit = remaining >= amount;
             let within_per_tx = session.session_data.per_tx_limit == 0
                 || amount <= session.session_data.per_tx_limit;
+            let within_daily_count = if session.session_data.daily_tx_count_limit == 0 {
+                true
+            } else {
+                let today_start = now - (now % 86400);
+                if session.session_data.last_daily_reset < today_start {
+                    true // new day, count resets
+                } else {
+                    session.session_data.current_daily_count < session.session_data.daily_tx_count_limit
+                }
+            };
 
-            if not_expired && within_spending_limit && within_per_tx {
+            if not_expired && within_spending_limit && within_per_tx && within_daily_count {
                 tracing::info!(
-                    "Active session exists (remaining={}, per_tx_limit={}), executing payment {} directly without phone auth",
-                    remaining, session.session_data.per_tx_limit, payment_id
+                    "Active session exists (remaining={}, per_tx_limit={}, daily_count={}/{}), executing payment {} directly without phone auth",
+                    remaining, session.session_data.per_tx_limit,
+                    session.session_data.current_daily_count, session.session_data.daily_tx_count_limit,
+                    payment_id
                 );
                 let session = Some(session);
                 return match self.execute_payment_atomic(&payment, &session, spl_params.as_ref(), None).await {
@@ -1990,8 +2004,8 @@ impl IgnitePayMcpServer {
             }
 
             tracing::info!(
-                "Session exists but cannot auto-pay: expired={}, remaining={}, amount={}, per_tx_ok={}",
-                !not_expired, remaining, amount, within_per_tx
+                "Session exists but cannot auto-pay: expired={}, remaining={}, amount={}, per_tx_ok={}, daily_count_ok={}",
+                !not_expired, remaining, amount, within_per_tx, within_daily_count
             );
         }
 
@@ -2649,6 +2663,14 @@ impl IgnitePayMcpServer {
             per_tx_limit: resp.per_tx_limit.unwrap_or(0),
             daily_tx_count_limit: resp.daily_tx_count_limit.unwrap_or(0),
             scopes,
+            current_daily_count: 0,
+            last_daily_reset: {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                now - (now % 86400)
+            },
         };
 
         // Store in sled for reuse (using session: prefix so get_active_session can find it)

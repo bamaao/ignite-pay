@@ -59,6 +59,8 @@ impl SessionManager {
 
         let ephemeral = Keypair::new();
 
+        let today_start = now - (now % 86400);
+
         let session_data = SessionTokenData {
             owner: *owner,
             ephemeral_signer: ephemeral.pubkey(),
@@ -70,6 +72,8 @@ impl SessionManager {
             per_tx_limit,
             daily_tx_count_limit,
             scopes,
+            current_daily_count: 0,
+            last_daily_reset: today_start,
         };
 
         // Persist: key = session:{pubkey_base58}, value = borsh(SessionTokenData) + 64-byte keypair
@@ -156,7 +160,27 @@ impl SessionManager {
         session.current_spent.saturating_add(amount) <= session.spending_limit
     }
 
-    /// Record spent amount for a session.
+    /// Check if the daily transaction count would still be within limit after one more tx.
+    /// Handles day-rollover by resetting the counter when a new UTC day starts.
+    pub fn check_daily_tx_count(&self, session: &SessionTokenData) -> bool {
+        if session.daily_tx_count_limit == 0 {
+            return true; // no limit
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        // Check if we're in a new UTC day
+        let today_start = now - (now % 86400);
+        let current_count = if session.last_daily_reset < today_start {
+            0 // new day, count resets
+        } else {
+            session.current_daily_count
+        };
+        current_count < session.daily_tx_count_limit
+    }
+
+    /// Record spent amount and increment daily tx count for a session.
     pub fn record_spent(&self, ephemeral_pubkey: &Pubkey, amount: u64) -> Result<()> {
         let key = format!("session:{}", ephemeral_pubkey);
         if let Some(value) = self.db.get(&key)? {
@@ -168,6 +192,19 @@ impl SessionManager {
             let mut session_data: SessionTokenData = SessionTokenData::deserialize(&mut &value[..data_len])?;
 
             session_data.current_spent = session_data.current_spent.saturating_add(amount);
+
+            // Update daily tx count with day-rollover handling
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let today_start = now - (now % 86400);
+            if session_data.last_daily_reset < today_start {
+                session_data.current_daily_count = 1;
+                session_data.last_daily_reset = today_start;
+            } else {
+                session_data.current_daily_count = session_data.current_daily_count.saturating_add(1);
+            }
 
             let keypair_bytes = &value[data_len..];
 

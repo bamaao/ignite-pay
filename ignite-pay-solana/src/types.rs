@@ -54,6 +54,13 @@ pub struct SessionTokenData {
     pub daily_tx_count_limit: u32,
     /// Permission scopes (e.g., ["sol:transfer", "spl:transfer"])
     pub scopes: Vec<String>,
+    /// Number of transactions executed today (local tracking).
+    #[serde(default)]
+    pub current_daily_count: u32,
+    /// Unix timestamp of the start of the current daily counting window.
+    /// Resets `current_daily_count` when a new day begins.
+    #[serde(default)]
+    pub last_daily_reset: i64,
 }
 
 /// Payment mode for the session.
