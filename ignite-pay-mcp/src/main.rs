@@ -1766,7 +1766,14 @@ impl IgnitePayMcpServer {
         } else {
             format!("token({})", &token[..8.min(token.len())])
         };
-        let description = format!("{} {} transfer on {} to {}", amount, token_symbol, network, recipient);
+        let human_amount = if token == "SOL" || token == "sol" {
+            format!("{}", amount as f64 / 1_000_000_000.0)
+        } else if token.contains("EPjFWdd5") || token.contains("4zMMC9srt5") {
+            format!("{}", amount as f64 / 1_000_000.0)
+        } else {
+            format!("{}", amount)
+        };
+        let description = format!("{} {} transfer on {} to {}", human_amount, token_symbol, network, recipient);
 
         // 2. Create payment record
         let payment = PaymentRequest {
