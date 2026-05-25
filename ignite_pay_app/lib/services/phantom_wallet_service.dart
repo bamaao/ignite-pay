@@ -125,6 +125,11 @@ class PhantomWalletService extends ChangeNotifier implements WalletService {
   /// Returns `true` on success, `false` on failure.
   @override
   Future<bool> connect() async {
+    // Clear any stale session state to avoid encryption mismatches
+    if (isConnected) {
+      await disconnect();
+    }
+
     await loadSession();
 
     // Generate a new dApp keypair for every connect attempt.
@@ -348,7 +353,7 @@ class PhantomWalletService extends ChangeNotifier implements WalletService {
       return;
     }
 
-    AppLogService().info('Phantom', 'dapp_sec=${_dappSecretKeyB64?.substring(0, 8)}..., phantom_enc_pub_b58=${phantomEncPubKey.substring(0, 8)}..., dapp_pub=${_dappPublicKeyB64?.substring(0, 8)}...');
+    AppLogService().info('Phantom', 'dapp_sec=${_dappSecretKeyB64?.substring(0, 8)}..., dapp_pub=${_dappPublicKeyB64?.substring(0, 8)}..., phantom_enc_pub_b58=${phantomEncPubKey.substring(0, 8)}...');
 
     // Phantom returns base58-encoded values; convert to base64url for Rust crypto.
     final phantomEncPubKeyB64 = _b58ToB64(phantomEncPubKey);
@@ -365,7 +370,7 @@ class PhantomWalletService extends ChangeNotifier implements WalletService {
         return;
       }
 
-      AppLogService().info('Phantom', 'shared_secret=${_sharedSecretB64!.substring(0, 8)}..., trying decrypt...');
+      AppLogService().info('Phantom', 'shared_secret=${_sharedSecretB64!.substring(0, 8)}..., phantom_enc_pub_b64=${phantomEncPubKeyB64.substring(0, 8)}..., dapp_sec_b64=${_dappSecretKeyB64!.substring(0, 8)}..., trying decrypt...');
 
       // Decrypt the data payload.
       try {

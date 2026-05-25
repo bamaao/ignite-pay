@@ -57,7 +57,10 @@ class ReownWalletService extends WalletService {
   /// Initialize the ReownAppKitModal. Must be called with a valid [context]
   /// before any other operations. Called once; subsequent calls are no-ops.
   Future<void> init(BuildContext context) async {
-    if (_initialized) return;
+    if (_initialized && _appKit != null) {
+      // Already initialized — update context for modal display
+      return;
+    }
 
     try {
       _appKit = ReownAppKitModal(
@@ -73,6 +76,19 @@ class ReownWalletService extends WalletService {
             universal: 'https://ignitepay.app',
           ),
         ),
+        featuredWalletIds: {
+          // Phantom
+          'a8258c8427e4b3bc1a2e0f567e453a1e',
+          // Solflare
+          '571c6e1071e3ddcd0c3995e9d2b92364',
+        },
+        includedWalletIds: {
+          'a8258c8427e4b3bc1a2e0f567e453a1e', // Phantom
+          '571c6e1071e3ddcd0c3995e9d2b92364', // Solflare
+          '2041d8c3c4c7e81a4d7a2cc2f8a3f37c', // Backpack
+          '971e689d0a5be527bac79629b4ee9b41', // Trust Wallet
+          '38f5d18bd8522c244bdd70cb4a68e0e0', // Ledger
+        },
       );
 
       await _appKit!.init();
@@ -147,7 +163,16 @@ class ReownWalletService extends WalletService {
       return false;
     }
 
-    if (isConnected) return true;
+    // Always disconnect stale sessions before reconnecting to ensure
+    // the wallet selector appears and the wallet gets a fresh pairing.
+    if (isConnected) {
+      try {
+        await _appKit!.disconnect();
+        AppLogService().info('Reown', 'Disconnected stale session before reconnect');
+      } catch (e) {
+        AppLogService().error('Reown', 'Disconnect before reconnect failed: $e');
+      }
+    }
 
     _connectCompleter = Completer<bool>();
 

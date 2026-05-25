@@ -16,7 +16,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/services/app_log_service.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
-import 'package:ignite_pay_app/services/phantom_wallet_service.dart';
+import 'package:ignite_pay_app/services/reown_wallet_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
 import 'package:ignite_pay_app/services/wallet_service.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
@@ -91,6 +91,7 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   String _listLabel = '';
   String _listMaxAmount = '';
   bool _checkingExistingKey = true;
+  bool _wizardLaunched = false;
 
   // Authorization policy fields (editable by user)
   String _dailySpendingLimit = ''; // SOL string, default = amount*10
@@ -102,7 +103,7 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   String _solFundingAmount = '0.01'; // SOL
   String _usdcFundingAmount = '1.0'; // USDC
 
-  // Wallet service — defaults to Phantom, user can switch via selector
+  // Wallet service — defaults to Reown (WC2)
   WalletService? _walletService;
 
   // On-chain PDA existence check
@@ -209,8 +210,60 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
             }
           });
         }
+        // Auto-open wizard when PDA doesn't exist
+        if (!_wizardLaunched && _isNewSessionKey) {
+          _wizardLaunched = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) => _openPdaWizard());
+        }
       }
     }
+  }
+
+  Future<void> _openPdaWizard() async {
+    final result = await Navigator.of(context).push<String>(
+      PageRouteBuilder(
+        opaque: false,
+        fullscreenDialog: true,
+        transitionDuration: const Duration(milliseconds: 400),
+        reverseTransitionDuration: const Duration(milliseconds: 300),
+        pageBuilder: (_, animation, _) {
+          return AnimatedBuilder(
+            animation: animation,
+            builder: (context, child) {
+              return FadeTransition(
+                opacity: CurvedAnimation(
+                  parent: animation,
+                  curve: Curves.easeOut,
+                ),
+                child: child,
+              );
+            },
+            child: _PdaSetupWizard(
+              request: widget.request,
+              dailySpendingLimit: _dailySpendingLimit,
+              dailyTxCountLimit: _dailyTxCountLimit,
+              perTxLimit: _perTxLimit,
+              durationHours: _durationHours,
+              solFundingAmount: _solFundingAmount,
+              usdcFundingAmount: _usdcFundingAmount,
+              walletService: _walletService,
+              listAction: _listAction,
+              listLabel: _listLabel,
+              listMaxAmount: _listMaxAmount,
+            ),
+          );
+        },
+      ),
+    );
+
+    if (!mounted) return;
+
+    if (result == 'authorized') {
+      Navigator.of(context).pop('authorized');
+    } else if (result == 'declined') {
+      Navigator.of(context).pop('declined');
+    }
+    // If wizard was dismissed without action, stay on challenge screen
   }
 
   Future<void> _onAuthorize() async {
@@ -233,7 +286,7 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
         // ── Wallet-free path: PDA already exists on-chain ──
         // Only needs cached public key from SharedPreferences, no active wallet connection.
         if (_pdaExistsOnChain) {
-          final wallet = _walletService ?? PhantomWalletService();
+          final wallet = _walletService ?? ReownWalletService();
           await wallet.loadSession(); // loads cached public key
           final cachedPubKey = wallet.walletPublicKey;
           if (cachedPubKey == null) throw 'No cached wallet key — connect wallet first';
@@ -266,106 +319,12 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
           AppLogService().warn('Auth', 'PDA marked as existing but on-chain check failed, falling through to wallet flow');
         }
 
-        // ── Full wallet flow: new PDA creation ──
-        setState(() => _authResult = 'Connecting to wallet...');
-
-        // 1. Connect to wallet (Phantom deep link or WC2)
-        final wallet = _walletService ?? PhantomWalletService();
-        await wallet.loadSession();
-        if (!wallet.isConnected) {
-          final connected = await wallet.connect();
-          if (!connected) throw 'Failed to connect to wallet';
-        }
-
-        // 2. Check if this session key is already registered on-chain
-        setState(() => _authResult = 'Checking session key status...');
-        final onChainInfo = await rust.getSessionAccountInfo(
-          rpcUrl: svc.rpcUrl,
-          ownerB58: wallet.walletPublicKey!,
-          ephemeralB58: req.newSessionKeyPubkey!,
-        );
-        AppLogService().info('Auth', 'onChain check: exists=${onChainInfo.exists}, revoked=${onChainInfo.revoked}, expiresAt=${onChainInfo.expiresAt}');
-
-        if (onChainInfo.exists && !onChainInfo.revoked) {
-          // ── Already-registered path: wallet-free authorization ──
-          // PDA exists on-chain — no wallet interaction needed.
-          // MCP handles topup via ensure_session_funded() -> session-fund-request.
-          final scopes = req.newSessionKeyScopes ?? ['sol:transfer', 'spl:transfer'];
-          final info = await rust.finalizeExistingSessionKey(
-            storagePath: dir.path,
-            ownerPubkeyB58: wallet.walletPublicKey!,
-            ephemeralPubkey: req.newSessionKeyPubkey!,
-            onChainInfo: onChainInfo,
-            scopes: scopes,
-            realSecretKey: req.newSessionKeySecretKey,
-          );
-
-          // Send auth response immediately — no funding check
-          await _sendAuthResponseWithExternalKey(info);
-          setState(() => _authResult = 'Authorized');
-          await Future.delayed(const Duration(milliseconds: 1200));
-          if (mounted) Navigator.of(context).pop('authorized');
-          return;
-        }
-
-        // ── Not-registered path: register on-chain via wallet ──
-
-        // Determine target program from scopes
-        final isSpl = (req.newSessionKeyScopes ?? []).any((s) => s.contains('spl'));
-        final targetProgram = isSpl
-            ? 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
-            : '11111111111111111111111111111111';
-
-        // 3. Build register tx with wallet owner, ephemeral pubkey from MCP
-        setState(() => _authResult = 'Building register transaction...');
-        final unsignedRegister = await session.buildRegisterTxForPhantom(
-          storagePath: dir.path,
-          rpcUrl: svc.rpcUrl,
-          ownerPubkeyB58: wallet.walletPublicKey!,
-          ephemeralPubkeyB58: req.newSessionKeyPubkey!,
-          targetProgram: targetProgram,
-          scopes: req.newSessionKeyScopes ?? ['sol:transfer', 'spl:transfer'],
-          spendingLimit: BigInt.from(req.newSessionKeySpendingLimit ?? 0),
-          durationSecs: req.newSessionKeyDurationSecs ?? 3600,
-          perTxLimit: BigInt.from((_parseSol(_perTxLimit) * 1000000000).round()),
-          dailyTxCountLimit: int.tryParse(_dailyTxCountLimit) ?? 50,
-          tokenMint: req.newSessionKeyTokenMint,
-        );
-
-        // 4. Wallet signTransaction (signs but does not broadcast)
-        setState(() => _authResult = 'Open wallet to sign register tx...');
-        final signedRegisterTx = await wallet.signTransaction(unsignedRegister.unsignedTxB58);
-        if (signedRegisterTx == null) throw 'Wallet rejected register transaction';
-
-        // 5. Broadcast the fully signed register tx
-        setState(() => _authResult = 'Broadcasting register transaction...');
-        final registerSig = await session.broadcastSignedTx(
-          rpcUrl: svc.rpcUrl,
-          signedTxB58: signedRegisterTx,
-        );
-
-        // 6. Finalize: move pending key to permanent storage
-        final info = await session.finalizePhantomSessionKey(
-          storagePath: dir.path,
-          ephemeralPubkey: unsignedRegister.ephemeralPubkey,
-          txSignature: registerSig,
-          sessionPda: unsignedRegister.sessionPda,
-          realSecretKey: req.newSessionKeySecretKey,
-        );
-
-        // 7. Fund the new session key via wallet (user-customizable amounts)
-        await _fundSessionKeyViaWallet(
-          wallet,
-          info.ephemeralPubkey,
-          info.sessionPda ?? unsignedRegister.sessionPda,
-          svc.rpcUrl,
-        );
-
-        // 8. Send auth response with the registered session key info
-        await _sendAuthResponseWithExternalKey(info);
-        setState(() => _authResult = 'Authorized with wallet-funded session key');
-        await Future.delayed(const Duration(milliseconds: 1200));
-        if (mounted) Navigator.of(context).pop('authorized');
+        // ── If PDA doesn't exist, this should have been handled by wizard ──
+        // If we reach here, the wizard was dismissed without completing.
+        setState(() {
+          _authResult = 'Error: Session key not registered — setup wizard required';
+          _isAuthorizing = false;
+        });
       } catch (e) {
         setState(() {
           _authResult = 'Error: $e';
@@ -401,60 +360,6 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
     setState(() {
       _authResult = 'Error: MCP server did not provide a session key';
     });
-  }
-
-  /// Fund a session key via wallet using the user's custom SOL/USDC amounts.
-  /// Sends SOL to the session PDA and USDC to the PDA's ATA.
-  /// Also sends a small amount of SOL to the ephemeral key for gas fees.
-  Future<void> _fundSessionKeyViaWallet(
-    WalletService wallet,
-    String ephemeralPubkey,
-    String sessionPda,
-    String rpcUrl,
-  ) async {
-    // 1. Send SOL to session PDA
-    final solAmount = _parseSol(_solFundingAmount);
-    if (solAmount > 0) {
-      setState(() => _authResult = 'Open wallet to send SOL to PDA...');
-      final solLamports = (solAmount * 1000000000).round();
-      final txB58 = await session.buildUnsignedTransferTx(
-        rpcUrl: rpcUrl,
-        walletPubkeyB58: wallet.walletPublicKey!,
-        merchantDid: sessionPda,
-        amountLamports: BigInt.from(solLamports),
-      );
-      final sig = await wallet.signAndSendTransaction(txB58);
-      if (sig == null) throw 'Wallet rejected SOL transfer';
-    }
-
-    // 2. Send gas SOL to ephemeral key (0.01 SOL)
-    setState(() => _authResult = 'Open wallet to send gas SOL...');
-    final gasTxB58 = await session.buildUnsignedTransferTx(
-      rpcUrl: rpcUrl,
-      walletPubkeyB58: wallet.walletPublicKey!,
-      merchantDid: ephemeralPubkey,
-      amountLamports: BigInt.from(10000000), // 0.01 SOL
-    );
-    final gasSig = await wallet.signAndSendTransaction(gasTxB58);
-    if (gasSig == null) throw 'Wallet rejected gas SOL transfer';
-
-    // 3. Send USDC to PDA's ATA
-    final usdcAmount = double.tryParse(_usdcFundingAmount) ?? 0.0;
-    final tokenMint = widget.request?.newSessionKeyTokenMint
-        ?? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'; // devnet USDC
-    if (usdcAmount > 0) {
-      setState(() => _authResult = 'Open wallet to send USDC to PDA ATA...');
-      final usdcRaw = (usdcAmount * 1000000).round(); // USDC has 6 decimals
-      final txB58 = await session.buildUnsignedSplTransferTx(
-        rpcUrl: rpcUrl,
-        walletPubkeyB58: wallet.walletPublicKey!,
-        merchantWalletB58: sessionPda,
-        amount: BigInt.from(usdcRaw),
-        tokenMintB58: tokenMint,
-      );
-      final sig = await wallet.signAndSendTransaction(txB58);
-      if (sig == null) throw 'Wallet rejected USDC transfer';
-    }
   }
 
   Future<void> _sendAuthResponse() async {
@@ -660,15 +565,31 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
                       onDurationHoursChanged: (v) => setState(() => _durationHours = v),
                     ),
                     const SizedBox(height: 16),
-                    // Show funding section only when creating a new session key
+                    // If wizard is being launched, show loading indicator
                     if (_isNewSessionKey && !_checkingExistingKey) ...[
-                      _FundingCard(
-                        solFundingAmount: _solFundingAmount,
-                        onSolFundingAmountChanged: (v) => setState(() => _solFundingAmount = v),
-                        usdcFundingAmount: _usdcFundingAmount,
-                        onUsdcFundingAmountChanged: (v) => setState(() => _usdcFundingAmount = v),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Center(
+                          child: Column(
+                            children: [
+                              SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: _kAmber,
+                                ),
+                              ),
+                              SizedBox(height: 8),
+                              Text(
+                                'Opening setup wizard...',
+                                style: TextStyle(color: _kTextSecondary, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 8),
                     ],
                     _ListActionSelector(
                       selected: _listAction,
@@ -713,6 +634,896 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
           ),
         ],
       ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PDA Setup Wizard — 4-step flow for new session key creation + funding
+// ---------------------------------------------------------------------------
+class _PdaSetupWizard extends StatefulWidget {
+  final AuthRequest? request;
+  final String dailySpendingLimit;
+  final String dailyTxCountLimit;
+  final String perTxLimit;
+  final String durationHours;
+  final String solFundingAmount;
+  final String usdcFundingAmount;
+  final WalletService? walletService;
+  final String listAction;
+  final String listLabel;
+  final String listMaxAmount;
+
+  const _PdaSetupWizard({
+    this.request,
+    required this.dailySpendingLimit,
+    required this.dailyTxCountLimit,
+    required this.perTxLimit,
+    required this.durationHours,
+    required this.solFundingAmount,
+    required this.usdcFundingAmount,
+    this.walletService,
+    required this.listAction,
+    required this.listLabel,
+    required this.listMaxAmount,
+  });
+
+  @override
+  State<_PdaSetupWizard> createState() => _PdaSetupWizardState();
+}
+
+class _PdaSetupWizardState extends State<_PdaSetupWizard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _glowCtrl;
+  int _currentStep = 0; // 0=Create PDA, 1=Fund SOL, 2=Fund USDC, 3=Authorize
+  String _statusText = '';
+  bool _isBusy = false;
+  String? _errorMessage;
+
+  // Policy fields (editable in step 0)
+  late String _dailySpendingLimit;
+  late String _dailyTxCountLimit;
+  late String _perTxLimit;
+  late String _durationHours;
+
+  // Funding fields (editable in steps 1-2)
+  late String _solFundingAmount;
+  late String _usdcFundingAmount;
+
+  // List action (step 3)
+  late String _listAction;
+  late String _listLabel;
+  late String _listMaxAmount;
+
+  // Session info after step 0
+  session.SessionKeyInfo? _sessionKeyInfo;
+  String? _sessionPda;
+  String? _ephemeralPubkey;
+
+  String get _merchantDid => widget.request?.merchantDid ?? '';
+  int get _amount => widget.request?.amount ?? 0;
+  String get _paymentId => widget.request?.paymentId ?? '';
+  String get _description => widget.request?.description ?? '';
+
+  bool get _showLabelInput => _listAction == 'add_whitelist' || _listAction == 'add_blacklist';
+  bool get _showMaxAmountInput => _listAction == 'add_whitelist';
+
+  static const _stepIcons = [
+    LucideIcons.keyRound,
+    LucideIcons.coins,
+    LucideIcons.banknote,
+    LucideIcons.shieldCheck,
+  ];
+  static const _stepTitles = [
+    'Create Session Key',
+    'Fund SOL (Gas)',
+    'Fund USDC',
+    'Authorize Payment',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _glowCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    )..repeat(reverse: true);
+    _dailySpendingLimit = widget.dailySpendingLimit;
+    _dailyTxCountLimit = widget.dailyTxCountLimit;
+    _perTxLimit = widget.perTxLimit;
+    _durationHours = widget.durationHours;
+    _solFundingAmount = widget.solFundingAmount;
+    _usdcFundingAmount = widget.usdcFundingAmount;
+    _listAction = widget.listAction;
+    _listLabel = widget.listLabel;
+    _listMaxAmount = widget.listMaxAmount;
+  }
+
+  @override
+  void dispose() {
+    _glowCtrl.dispose();
+    super.dispose();
+  }
+
+  double _parseSol(String value) => double.tryParse(value) ?? 0.0;
+
+  // ── Step 0: Create PDA ────────────────────────────────────────────────
+  Future<void> _onCreatePda() async {
+    if (_isBusy) return;
+    setState(() {
+      _isBusy = true;
+      _errorMessage = null;
+      _statusText = 'Connecting to wallet...';
+    });
+
+    try {
+      final req = widget.request!;
+      final svc = SessionKeyService();
+      await svc.initialize();
+      final dir = await getApplicationSupportDirectory();
+
+      // 1. Connect wallet
+      final wallet = widget.walletService ?? ReownWalletService();
+      if (wallet is ReownWalletService) {
+        await wallet.init(Navigator.of(context, rootNavigator: true).context);
+      }
+      await wallet.loadSession();
+      if (!wallet.isConnected) {
+        final connected = await wallet.connect();
+        if (!connected) throw 'Failed to connect to wallet';
+      }
+
+      // 2. Build register tx
+      setState(() => _statusText = 'Building register transaction...');
+      final isSpl = (req.newSessionKeyScopes ?? []).any((s) => s.contains('spl'));
+      final targetProgram = isSpl
+          ? 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+          : '11111111111111111111111111111111';
+
+      final unsignedRegister = await session.buildRegisterTxForPhantom(
+        storagePath: dir.path,
+        rpcUrl: svc.rpcUrl,
+        ownerPubkeyB58: wallet.walletPublicKey!,
+        ephemeralPubkeyB58: req.newSessionKeyPubkey!,
+        targetProgram: targetProgram,
+        scopes: req.newSessionKeyScopes ?? ['sol:transfer', 'spl:transfer'],
+        spendingLimit: BigInt.from(req.newSessionKeySpendingLimit ?? 0),
+        durationSecs: req.newSessionKeyDurationSecs ?? 3600,
+        perTxLimit: BigInt.from((_parseSol(_perTxLimit) * 1000000000).round()),
+        dailyTxCountLimit: int.tryParse(_dailyTxCountLimit) ?? 50,
+        tokenMint: req.newSessionKeyTokenMint,
+      );
+
+      // 3. Wallet sign (sign only, not broadcast)
+      setState(() => _statusText = 'Open wallet to sign register tx...');
+      final signedRegisterTx = await wallet.signTransaction(unsignedRegister.unsignedTxB58);
+      if (signedRegisterTx == null) throw 'Wallet rejected register transaction';
+
+      // 4. Broadcast
+      setState(() => _statusText = 'Broadcasting register transaction...');
+      final registerSig = await session.broadcastSignedTx(
+        rpcUrl: svc.rpcUrl,
+        signedTxB58: signedRegisterTx,
+      );
+
+      // 5. Finalize
+      final info = await session.finalizePhantomSessionKey(
+        storagePath: dir.path,
+        ephemeralPubkey: unsignedRegister.ephemeralPubkey,
+        txSignature: registerSig,
+        sessionPda: unsignedRegister.sessionPda,
+        realSecretKey: req.newSessionKeySecretKey,
+      );
+
+      setState(() {
+        _sessionKeyInfo = info;
+        _sessionPda = info.sessionPda ?? unsignedRegister.sessionPda;
+        _ephemeralPubkey = info.ephemeralPubkey;
+        _statusText = 'Session key created!';
+        _currentStep = 1;
+        _isBusy = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = e.toString();
+        _statusText = '';
+        _isBusy = false;
+      });
+    }
+  }
+
+  // ── Step 1: Fund SOL (gas) ────────────────────────────────────────────
+  Future<void> _onFundSol() async {
+    if (_isBusy) return;
+    setState(() {
+      _isBusy = true;
+      _errorMessage = null;
+      _statusText = 'Connecting to wallet...';
+    });
+
+    try {
+      final svc = SessionKeyService();
+      await svc.initialize();
+      final wallet = widget.walletService ?? ReownWalletService();
+      if (wallet is ReownWalletService) {
+        await wallet.init(Navigator.of(context, rootNavigator: true).context);
+      }
+      await wallet.loadSession();
+      if (!wallet.isConnected) {
+        final connected = await wallet.connect();
+        if (!connected) throw 'Failed to connect to wallet';
+      }
+
+      final solAmount = _parseSol(_solFundingAmount);
+      if (solAmount <= 0) throw 'Enter a valid SOL amount';
+
+      // Send SOL to ephemeral key for gas
+      setState(() => _statusText = 'Open wallet to send SOL...');
+      final solLamports = (solAmount * 1000000000).round();
+      final txB58 = await session.buildUnsignedTransferTx(
+        rpcUrl: svc.rpcUrl,
+        walletPubkeyB58: wallet.walletPublicKey!,
+        merchantDid: _ephemeralPubkey!,
+        amountLamports: BigInt.from(solLamports),
+      );
+      final sig = await wallet.signAndSendTransaction(txB58);
+      if (sig == null) throw 'Wallet rejected SOL transfer';
+
+      setState(() {
+        _statusText = 'SOL sent!';
+        _currentStep = 2;
+        _isBusy = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = e.toString();
+        _statusText = '';
+        _isBusy = false;
+      });
+    }
+  }
+
+  // ── Step 2: Fund USDC ─────────────────────────────────────────────────
+  Future<void> _onFundUsdc() async {
+    if (_isBusy) return;
+    setState(() {
+      _isBusy = true;
+      _errorMessage = null;
+      _statusText = 'Connecting to wallet...';
+    });
+
+    try {
+      final svc = SessionKeyService();
+      await svc.initialize();
+      final wallet = widget.walletService ?? ReownWalletService();
+      if (wallet is ReownWalletService) {
+        await wallet.init(Navigator.of(context, rootNavigator: true).context);
+      }
+      await wallet.loadSession();
+      if (!wallet.isConnected) {
+        final connected = await wallet.connect();
+        if (!connected) throw 'Failed to connect to wallet';
+      }
+
+      final usdcAmount = double.tryParse(_usdcFundingAmount) ?? 0.0;
+      if (usdcAmount <= 0) throw 'Enter a valid USDC amount';
+
+      final tokenMint = widget.request?.newSessionKeyTokenMint
+          ?? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'; // devnet USDC
+
+      setState(() => _statusText = 'Open wallet to send USDC...');
+      final usdcRaw = (usdcAmount * 1000000).round();
+      final txB58 = await session.buildUnsignedSplTransferTx(
+        rpcUrl: svc.rpcUrl,
+        walletPubkeyB58: wallet.walletPublicKey!,
+        merchantWalletB58: _sessionPda!,
+        amount: BigInt.from(usdcRaw),
+        tokenMintB58: tokenMint,
+      );
+      final sig = await wallet.signAndSendTransaction(txB58);
+      if (sig == null) throw 'Wallet rejected USDC transfer';
+
+      setState(() {
+        _statusText = 'USDC sent!';
+        _currentStep = 3;
+        _isBusy = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = e.toString();
+        _statusText = '';
+        _isBusy = false;
+      });
+    }
+  }
+
+  // ── Step 3: Authorize ─────────────────────────────────────────────────
+  Future<void> _onApprove() async {
+    if (_isBusy) return;
+    setState(() {
+      _isBusy = true;
+      _errorMessage = null;
+      _statusText = 'Authorizing...';
+    });
+
+    try {
+      await _sendAuthResponseWithExternalKey(_sessionKeyInfo!);
+      setState(() => _statusText = 'Authorized');
+      await Future.delayed(const Duration(milliseconds: 800));
+      if (mounted) Navigator.of(context).pop('authorized');
+    } catch (e) {
+      setState(() {
+        _errorMessage = e.toString();
+        _statusText = '';
+        _isBusy = false;
+      });
+    }
+  }
+
+  Future<void> _sendAuthResponseWithExternalKey(session.SessionKeyInfo info) async {
+    final dailyLimitLamports = (_parseSol(_dailySpendingLimit) * 1000000000).round();
+    final perTxLimitLamports = (_parseSol(_perTxLimit) * 1000000000).round();
+    final dailyTxCount = int.tryParse(_dailyTxCountLimit) ?? 50;
+    final durationSecs = (int.tryParse(_durationHours) ?? 24) * 3600;
+
+    // Persist merchant policy
+    try {
+      final dir = await getApplicationSupportDirectory();
+      if (_merchantDid.isNotEmpty) {
+        await rust.saveMerchantPolicy(
+          storagePath: dir.path,
+          merchantDid: _merchantDid,
+          dailySpendingLimit: BigInt.from(dailyLimitLamports),
+          dailyTxCountLimit: dailyTxCount,
+          perTxLimit: BigInt.from(perTxLimitLamports),
+          durationSecs: durationSecs,
+        );
+
+        final prefs = await SharedPreferences.getInstance();
+        final known = prefs.getStringList('known_merchant_dids') ?? [];
+        if (!known.contains(_merchantDid)) {
+          known.add(_merchantDid);
+          await prefs.setStringList('known_merchant_dids', known);
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to save merchant policy: $e');
+    }
+
+    await rust.sendAuthResponse(
+      storagePath: DidcommService().storagePath,
+      paymentId: _paymentId,
+      authorized: true,
+      listAction: _listAction,
+      mcpDid: DidcommService().pairedMcps.isNotEmpty
+          ? DidcommService().pairedMcps.first.did
+          : '',
+      sessionKeyInfo: info,
+      listLabel: _showLabelInput && _listLabel.isNotEmpty ? _listLabel : null,
+      listMaxAmount: _showMaxAmountInput && _listMaxAmount.isNotEmpty
+          ? int.tryParse(_listMaxAmount) != null
+              ? BigInt.from(int.parse(_listMaxAmount))
+              : null
+          : null,
+      dailyTxCountLimit: dailyTxCount,
+      perTxLimit: BigInt.from(perTxLimitLamports),
+      tokenMint: widget.request?.newSessionKeyTokenMint,
+      paymentMethod: null,
+    );
+
+    DidcommService().clearPendingAuth();
+
+    // Save payment record
+    final svc = SessionKeyService();
+    await svc.savePaymentRecord(
+      paymentId: _paymentId,
+      merchantDid: _merchantDid,
+      amount: BigInt.from(_amount),
+      tokenMint: widget.request?.tokenMint ?? info.sessionPda,
+      description: _description,
+      authorized: true,
+      sessionKeyPubkey: info.ephemeralPubkey,
+      txSignature: info.txSignature,
+    );
+  }
+
+  void _onDecline() {
+    Navigator.of(context).pop('declined');
+  }
+
+  // ── Build methods for each step ───────────────────────────────────────
+
+  Widget _buildStepIndicator() {
+    return Row(
+      children: List.generate(4, (i) {
+        final isActive = i == _currentStep;
+        final isDone = i < _currentStep;
+        return Expanded(
+          child: Row(
+            children: [
+              Expanded(
+                child: Container(
+                  height: 3,
+                  decoration: BoxDecoration(
+                    color: isDone
+                        ? _kSuccess
+                        : isActive
+                            ? _kAmber
+                            : _kSurfaceMid,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              if (i < 3) const SizedBox(width: 4),
+            ],
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget _buildStepHeader() {
+    return Column(
+      children: [
+        _buildStepIndicator(),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: _kAmber.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _kAmber.withValues(alpha: 0.3)),
+              ),
+              child: Icon(_stepIcons[_currentStep], size: 18, color: _kAmber),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Step ${_currentStep + 1} of 4',
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: _kTextSecondary,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _stepTitles[_currentStep],
+                    style: GoogleFonts.inter(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: _kTextPrimary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCreatePdaStep() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildStepHeader(),
+        const SizedBox(height: 20),
+        _MerchantCard(merchantDid: _merchantDid),
+        const SizedBox(height: 16),
+        _AmountDisplay(amount: _amount, tokenMint: widget.request?.tokenMint),
+        const SizedBox(height: 8),
+        _ReasonBlock(description: _description),
+        const SizedBox(height: 16),
+        _AuthorizationPolicyCard(
+          dailySpendingLimit: _dailySpendingLimit,
+          onDailySpendingLimitChanged: (v) => setState(() => _dailySpendingLimit = v),
+          dailyTxCountLimit: _dailyTxCountLimit,
+          onDailyTxCountLimitChanged: (v) => setState(() => _dailyTxCountLimit = v),
+          perTxLimit: _perTxLimit,
+          onPerTxLimitChanged: (v) => setState(() => _perTxLimit = v),
+          durationHours: _durationHours,
+          onDurationHoursChanged: (v) => setState(() => _durationHours = v),
+        ),
+        const SizedBox(height: 20),
+        _ActionButton(
+          label: 'Create PDA',
+          icon: LucideIcons.keyRound,
+          onTap: _isBusy ? null : _onCreatePda,
+          isBusy: _isBusy,
+          statusText: _statusText,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFundSolStep() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildStepHeader(),
+        const SizedBox(height: 20),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: _kSurfaceDark.withValues(alpha: 0.7),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _kAmber.withValues(alpha: 0.2)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(LucideIcons.coins, size: 14, color: _kAmber),
+                  const SizedBox(width: 6),
+                  Text(
+                    'SEND SOL FOR GAS FEES',
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: _kAmber,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'SOL is needed for transaction fees on the session key.',
+                style: GoogleFonts.inter(fontSize: 11, color: _kTextSecondary),
+              ),
+              if (_ephemeralPubkey != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'To: ${_ephemeralPubkey!.substring(0, 8)}...${_ephemeralPubkey!.substring(_ephemeralPubkey!.length - 6)}',
+                  style: GoogleFonts.jetBrainsMono(fontSize: 11, color: _kTextSecondary),
+                ),
+              ],
+              const SizedBox(height: 14),
+              _PolicyRow(
+                label: 'Amount',
+                value: _solFundingAmount,
+                onChanged: (v) => setState(() => _solFundingAmount = v),
+                suffix: 'SOL',
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        _ActionButton(
+          label: 'Send SOL',
+          icon: LucideIcons.send,
+          onTap: _isBusy ? null : _onFundSol,
+          isBusy: _isBusy,
+          statusText: _statusText,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFundUsdcStep() {
+    final tokenMint = widget.request?.newSessionKeyTokenMint
+        ?? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildStepHeader(),
+        const SizedBox(height: 20),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: _kSurfaceDark.withValues(alpha: 0.7),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _kAmber.withValues(alpha: 0.2)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(LucideIcons.banknote, size: 14, color: _kAmber),
+                  const SizedBox(width: 6),
+                  Text(
+                    'SEND USDC TO SESSION KEY',
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: _kAmber,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'USDC will be used for payments from this session key.',
+                style: GoogleFonts.inter(fontSize: 11, color: _kTextSecondary),
+              ),
+              if (_sessionPda != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'To PDA: ${_sessionPda!.substring(0, 8)}...${_sessionPda!.substring(_sessionPda!.length - 6)}',
+                  style: GoogleFonts.jetBrainsMono(fontSize: 11, color: _kTextSecondary),
+                ),
+              ],
+              const SizedBox(height: 4),
+              Text(
+                'Mint: ${tokenMint.substring(0, 8)}...',
+                style: GoogleFonts.jetBrainsMono(fontSize: 10, color: _kTextSecondary.withValues(alpha: 0.6)),
+              ),
+              const SizedBox(height: 14),
+              _PolicyRow(
+                label: 'Amount',
+                value: _usdcFundingAmount,
+                onChanged: (v) => setState(() => _usdcFundingAmount = v),
+                suffix: 'USDC',
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        _ActionButton(
+          label: 'Send USDC',
+          icon: LucideIcons.send,
+          onTap: _isBusy ? null : _onFundUsdc,
+          isBusy: _isBusy,
+          statusText: _statusText,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAuthorizeStep() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildStepHeader(),
+        const SizedBox(height: 20),
+        _MerchantCard(merchantDid: _merchantDid),
+        const SizedBox(height: 16),
+        _AmountDisplay(amount: _amount, tokenMint: widget.request?.tokenMint),
+        const SizedBox(height: 8),
+        _ReasonBlock(description: _description),
+        const SizedBox(height: 16),
+        _ListActionSelector(
+          selected: _listAction,
+          onChanged: (v) => setState(() => _listAction = v),
+          label: _listLabel,
+          onLabelChanged: (v) => setState(() => _listLabel = v),
+          maxAmount: _listMaxAmount,
+          onMaxAmountChanged: (v) => setState(() => _listMaxAmount = v),
+          showLabelInput: _showLabelInput,
+          showMaxAmountInput: _showMaxAmountInput,
+        ),
+        if (_statusText.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _ResultBanner(result: _statusText),
+        ],
+        const SizedBox(height: 20),
+        _ApproveButton(
+          onTap: _isBusy ? null : _onApprove,
+          isAuthorizing: _isBusy,
+        ),
+        const SizedBox(height: 10),
+        _DeclineButton(onTap: _onDecline),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _kBackground,
+      body: Stack(
+        children: [
+          // Ambient amber glow
+          Positioned(
+            top: -80,
+            left: -80,
+            right: -80,
+            height: 300,
+            child: AnimatedBuilder(
+              animation: _glowCtrl,
+              builder: (context, _) {
+                return Container(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: Alignment.topCenter,
+                      radius: 0.8,
+                      colors: [
+                        _kAmberGlow.withValues(alpha: 0.35 + 0.1 * _glowCtrl.value),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    const SizedBox(height: 16),
+                    // Header with close button
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: _kAmber.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: _kAmber.withValues(alpha: 0.3)),
+                              ),
+                              child: const Icon(LucideIcons.shieldAlert, size: 18, color: _kAmber),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              'Session Key Setup',
+                              style: GoogleFonts.inter(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: _kTextPrimary,
+                              ),
+                            ),
+                          ],
+                        ),
+                        GestureDetector(
+                          onTap: () => Navigator.of(context).pop('dismissed'),
+                          child: Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: _kSurfaceMid.withValues(alpha: 0.5),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: _kGlassBorder),
+                            ),
+                            child: const Icon(LucideIcons.x, size: 18, color: _kTextSecondary),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    // Error message
+                    if (_errorMessage != null) ...[
+                      _ResultBanner(result: 'Error: $_errorMessage'),
+                      const SizedBox(height: 12),
+                    ],
+                    // Current step content
+                    switch (_currentStep) {
+                      0 => _buildCreatePdaStep(),
+                      1 => _buildFundSolStep(),
+                      2 => _buildFundUsdcStep(),
+                      _ => _buildAuthorizeStep(),
+                    },
+                    const SizedBox(height: 32),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Action Button (used in wizard steps)
+// ---------------------------------------------------------------------------
+class _ActionButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback? onTap;
+  final bool isBusy;
+  final String statusText;
+
+  const _ActionButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    required this.isBusy,
+    required this.statusText,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        if (statusText.isNotEmpty && isBusy) ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: _kAmber.withValues(alpha: 0.8),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  statusText,
+                  style: GoogleFonts.inter(fontSize: 12, color: _kTextSecondary),
+                ),
+              ],
+            ),
+          ),
+        ],
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: double.infinity,
+            height: 52,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(26),
+              gradient: LinearGradient(
+                colors: isBusy
+                    ? [const Color(0xFF666680), const Color(0xFF666680)]
+                    : [const Color(0xFFFFB300), const Color(0xFFFFC107)],
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: _kAmber.withValues(alpha: isBusy ? 0.0 : 0.3),
+                  blurRadius: 16,
+                  spreadRadius: 0,
+                ),
+              ],
+            ),
+            child: Center(
+              child: isBusy
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _kBackground,
+                      ),
+                    )
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(icon, size: 18, color: _kBackground),
+                        const SizedBox(width: 8),
+                        Text(
+                          label,
+                          style: GoogleFonts.inter(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: _kBackground,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1159,77 +1970,6 @@ class _ResultBanner extends StatelessWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Funding Card (SOL + USDC amounts for new session key)
-// ---------------------------------------------------------------------------
-class _FundingCard extends StatelessWidget {
-  final String solFundingAmount;
-  final ValueChanged<String> onSolFundingAmountChanged;
-  final String usdcFundingAmount;
-  final ValueChanged<String> onUsdcFundingAmountChanged;
-
-  const _FundingCard({
-    required this.solFundingAmount,
-    required this.onSolFundingAmountChanged,
-    required this.usdcFundingAmount,
-    required this.onUsdcFundingAmountChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: _kSurfaceDark.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFAB9FF2).withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(LucideIcons.wallet, size: 14, color: Color(0xFFAB9FF2)),
-              const SizedBox(width: 6),
-              Text(
-                'SESSION KEY FUNDING',
-                style: GoogleFonts.inter(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFFAB9FF2),
-                  letterSpacing: 1.0,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Fund via wallet (first-time setup)',
-            style: GoogleFonts.inter(fontSize: 11, color: _kTextSecondary),
-          ),
-          const SizedBox(height: 14),
-          _PolicyRow(
-            label: 'SOL Amount',
-            value: solFundingAmount,
-            onChanged: onSolFundingAmountChanged,
-            suffix: 'SOL',
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          ),
-          const SizedBox(height: 10),
-          _PolicyRow(
-            label: 'USDC Amount',
-            value: usdcFundingAmount,
-            onChanged: onUsdcFundingAmountChanged,
-            suffix: 'USDC',
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
           ),
         ],
       ),
