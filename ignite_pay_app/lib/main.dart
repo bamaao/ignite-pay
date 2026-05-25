@@ -1053,10 +1053,13 @@ class _SessionKeyBalanceCard extends StatefulWidget {
 }
 
 class _SessionKeyBalanceCardState extends State<_SessionKeyBalanceCard> {
+  List<session.PaymentRecord> _paymentRecords = [];
+
   @override
   void initState() {
     super.initState();
     _refresh();
+    _loadPaymentRecords();
   }
 
   Future<void> _refresh() async {
@@ -1066,6 +1069,99 @@ class _SessionKeyBalanceCardState extends State<_SessionKeyBalanceCard> {
     }
   }
 
+  Future<void> _loadPaymentRecords() async {
+    final svc = SessionKeyService();
+    final records = await svc.loadPaymentRecords();
+    if (mounted) {
+      setState(() => _paymentRecords = records);
+    }
+  }
+
+  String _truncatePubkey(String pk) {
+    if (pk.length <= 16) return pk;
+    return '${pk.substring(0, 8)}...${pk.substring(pk.length - 8)}';
+  }
+
+  Widget _buildAllowanceBar(SessionKeyService svc, session.SessionKeyEntry active) {
+    final BigInt spent;
+    final BigInt limit;
+    if (svc.onChainInfo != null && svc.onChainInfo!.spendingLimit > BigInt.zero) {
+      spent = svc.onChainInfo!.currentSpent;
+      limit = svc.onChainInfo!.spendingLimit;
+    } else if (active.spendingLimit > BigInt.zero) {
+      spent = BigInt.zero;
+      limit = active.spendingLimit;
+    } else {
+      // Unlimited — no bar to show.
+      return const SizedBox.shrink();
+    }
+
+    final spentSol = spent.toInt() / 1000000000.0;
+    final limitSol = limit.toInt() / 1000000000.0;
+    final ratio = (spentSol / limitSol).clamp(0.0, 1.0);
+    final remaining = limitSol - spentSol;
+    final pct = (ratio * 100).toStringAsFixed(0);
+
+    final Color barColor;
+    if (ratio < 0.5) {
+      barColor = _kSuccess;
+    } else if (ratio < 0.8) {
+      barColor = _kAmber;
+    } else {
+      barColor = _kIntercepted;
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(LucideIcons.gauge, size: 12, color: _kTextSecondary.withValues(alpha: 0.6)),
+            const SizedBox(width: 8),
+            Text(
+              'ALLOWANCE',
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: _kTextSecondary,
+                letterSpacing: 1.2,
+              ),
+            ),
+            const Spacer(),
+            Text(
+              '${spentSol.toStringAsFixed(2)} / ${limitSol.toStringAsFixed(2)} SOL',
+              style: GoogleFonts.jetBrainsMono(fontSize: 11, color: _kTextPrimary),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(3),
+          child: LinearProgressIndicator(
+            value: ratio > 0 ? ratio : 0.01, // minimum visible sliver
+            minHeight: 6,
+            backgroundColor: _kSurfaceDark.withValues(alpha: 0.5),
+            valueColor: AlwaysStoppedAnimation(barColor),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Text(
+              'Remaining: ${remaining.toStringAsFixed(2)} SOL',
+              style: GoogleFonts.inter(fontSize: 10, color: _kTextSecondary),
+            ),
+            const Spacer(),
+            Text(
+              '$pct% used',
+              style: GoogleFonts.inter(fontSize: 10, color: barColor),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<SessionKeyService>(
@@ -1073,6 +1169,17 @@ class _SessionKeyBalanceCardState extends State<_SessionKeyBalanceCard> {
         final active = svc.activeSessionKey;
 
         if (active == null) {
+          // Find the most recent expired key for summary display.
+          final expiredKeys = svc.sessionKeys
+              .where((k) => k.status == 'expired')
+              .toList();
+          final lastExpired = expiredKeys.isNotEmpty ? expiredKeys.first : null;
+          final totalPayments = _paymentRecords.length;
+          final totalAmount = _paymentRecords.fold<double>(
+            0.0,
+            (sum, r) => sum + r.amount.toInt() / 1000000000.0,
+          );
+
           return GestureDetector(
             onTap: () => _openRecords(context),
             child: Container(
@@ -1084,17 +1191,70 @@ class _SessionKeyBalanceCardState extends State<_SessionKeyBalanceCard> {
                 border: Border.all(color: _kGlassBorder),
               ),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(LucideIcons.wallet, size: 28, color: _kTextSecondary.withValues(alpha: 0.4)),
-                  const SizedBox(height: 10),
-                  Text(
-                    'No active session key',
-                    style: GoogleFonts.inter(fontSize: 14, color: _kTextSecondary),
+                  // Header row
+                  Row(
+                    children: [
+                      Icon(LucideIcons.wallet, size: 16, color: _kTextSecondary.withValues(alpha: 0.6)),
+                      const SizedBox(width: 8),
+                      Text(
+                        'SESSION KEY',
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: _kTextSecondary,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 8),
                   Text(
-                    'Authorize a payment to create one',
-                    style: GoogleFonts.inter(fontSize: 11, color: _kTextSecondary.withValues(alpha: 0.6)),
+                    'Manage on-chain session keys for automated payments',
+                    style: GoogleFonts.inter(fontSize: 12, color: _kTextSecondary.withValues(alpha: 0.7)),
+                  ),
+                  const SizedBox(height: 12),
+                  if (lastExpired != null) ...[
+                    _InfoRow(
+                      icon: LucideIcons.keyRound,
+                      label: 'Last Key',
+                      value: _truncatePubkey(lastExpired.ephemeralPubkey),
+                      mono: true,
+                    ),
+                    const SizedBox(height: 8),
+                    _InfoRow(
+                      icon: LucideIcons.clock,
+                      label: 'Expired',
+                      value: lastExpired.expiresAt > 0
+                          ? DateTime.fromMillisecondsSinceEpoch(lastExpired.expiresAt * 1000)
+                              .toLocal()
+                              .toString()
+                              .substring(0, 16)
+                          : 'Unknown',
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  if (totalPayments > 0) ...[
+                    _InfoRow(
+                      icon: LucideIcons.receipt,
+                      label: 'Payments',
+                      value: '$totalPayments total (${totalAmount.toStringAsFixed(2)} SOL)',
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  Row(
+                    children: [
+                      Text(
+                        'Authorize a payment to create one',
+                        style: GoogleFonts.inter(fontSize: 11, color: _kNeonCyan.withValues(alpha: 0.8)),
+                      ),
+                      Icon(
+                        LucideIcons.chevronRight,
+                        size: 14,
+                        color: _kNeonCyan.withValues(alpha: 0.8),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -1173,9 +1333,28 @@ class _SessionKeyBalanceCardState extends State<_SessionKeyBalanceCard> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 10),
+                // Top-up buttons
+                Row(
+                  children: [
+                    _TopUpButton(
+                      label: '+ SOL',
+                      onTap: () => _showTopUpSheet(context, 'SOL'),
+                    ),
+                    const SizedBox(width: 8),
+                    _TopUpButton(
+                      label: '+ USDC',
+                      onTap: () => _showTopUpSheet(context, 'USDC'),
+                    ),
+                    const Spacer(),
+                  ],
+                ),
                 const SizedBox(height: 14),
                 // Divider
                 Container(height: 1, color: _kGlassBorder),
+                const SizedBox(height: 12),
+                // Allowance progress bar
+                _buildAllowanceBar(svc, active),
                 const SizedBox(height: 12),
                 // Ephemeral pubkey (full)
                 _InfoRow(
@@ -1258,6 +1437,19 @@ class _SessionKeyBalanceCardState extends State<_SessionKeyBalanceCard> {
                       valueColor: _kIntercepted,
                     ),
                 ],
+                // Payment summary
+                if (_paymentRecords.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Builder(builder: (context) {
+                    final authorized = _paymentRecords.where((r) => r.authorized).length;
+                    final rejected = _paymentRecords.length - authorized;
+                    return _InfoRow(
+                      icon: LucideIcons.receipt,
+                      label: 'Payments',
+                      value: '${_paymentRecords.length} total ($authorized authorized, $rejected rejected)',
+                    );
+                  }),
+                ],
                 const SizedBox(height: 4),
                 // Tap hint
                 Row(
@@ -1283,6 +1475,114 @@ class _SessionKeyBalanceCardState extends State<_SessionKeyBalanceCard> {
         );
       },
     );
+  }
+
+  Future<void> _showTopUpSheet(BuildContext context, String token) async {
+    final svc = SessionKeyService();
+    final active = svc.activeSessionKey;
+    if (active == null || !mounted) return;
+
+    final currentBalance = token == 'SOL'
+        ? (svc.solBalance.toInt() / 1000000000.0).toStringAsFixed(4)
+        : (svc.usdcBalance.toInt() / 1000000.0).toStringAsFixed(2);
+
+    final amount = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _TopUpSheet(
+        token: token,
+        currentBalance: currentBalance,
+      ),
+    );
+
+    if (amount != null && mounted) {
+      await _executeTopUp(token, amount);
+    }
+  }
+
+  Future<void> _executeTopUp(String token, String amountText) async {
+    final amount = double.tryParse(amountText);
+    if (amount == null || amount <= 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: _kIntercepted,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            content: Text('Invalid amount', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    final svc = SessionKeyService();
+    final active = svc.activeSessionKey;
+    if (active == null || !mounted) return;
+
+    try {
+      final wallet = ReownWalletService();
+      await wallet.loadSession();
+      final connected = await wallet.connect();
+      if (!connected) throw 'Wallet connection failed';
+
+      await svc.initialize();
+      final ephemeralPubkey = active.ephemeralPubkey;
+
+      String txB58;
+      if (token == 'SOL') {
+        final lamports = (amount * 1e9).round();
+        txB58 = await session.buildUnsignedTransferTx(
+          rpcUrl: svc.rpcUrl,
+          walletPubkeyB58: wallet.walletPublicKey!,
+          merchantDid: ephemeralPubkey,
+          amountLamports: BigInt.from(lamports),
+        );
+      } else {
+        final rawAmount = (amount * 1e6).round();
+        txB58 = await session.buildUnsignedSplTransferTx(
+          rpcUrl: svc.rpcUrl,
+          walletPubkeyB58: wallet.walletPublicKey!,
+          merchantWalletB58: ephemeralPubkey,
+          amount: BigInt.from(rawAmount),
+          tokenMintB58: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+        );
+      }
+
+      final sig = await wallet.signAndSendTransaction(txB58);
+      if (sig == null) throw 'Wallet rejected transaction';
+
+      await svc.refreshBalances();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: _kSuccess,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            content: Text('$token top-up successful', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Top-up failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: _kIntercepted,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            content: Text('Top-up failed: $e', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
   }
 
   void _openRecords(BuildContext context) {
@@ -1337,6 +1637,195 @@ class _BalanceItem extends StatelessWidget {
               fontSize: 18,
               fontWeight: FontWeight.w600,
               color: _kTextPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TopUpButton extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+
+  const _TopUpButton({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: _kNeonCyan.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: _kNeonCyan.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(LucideIcons.plusCircle, size: 12, color: _kNeonCyan),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: _kNeonCyan,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TopUpSheet extends StatefulWidget {
+  final String token;
+  final String currentBalance;
+
+  const _TopUpSheet({required this.token, required this.currentBalance});
+
+  @override
+  State<_TopUpSheet> createState() => _TopUpSheetState();
+}
+
+class _TopUpSheetState extends State<_TopUpSheet> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isSol = widget.token == 'SOL';
+    return Container(
+      decoration: const BoxDecoration(
+        color: _kSurfaceDark,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 12,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Drag handle
+          Container(
+            width: 40,
+            height: 4,
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              color: _kTextSecondary.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          // Title row
+          Row(
+            children: [
+              Icon(
+                LucideIcons.plusCircle,
+                size: 20,
+                color: _kNeonCyan,
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'Top Up ${widget.token}',
+                style: GoogleFonts.inter(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: _kTextPrimary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Current balance
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Current balance',
+                style: GoogleFonts.inter(fontSize: 13, color: _kTextSecondary),
+              ),
+              Text(
+                '${widget.currentBalance} ${widget.token}',
+                style: GoogleFonts.jetBrainsMono(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: _kTextPrimary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Amount input
+          TextField(
+            controller: _controller,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            style: GoogleFonts.jetBrainsMono(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: _kTextPrimary,
+            ),
+            decoration: InputDecoration(
+              hintText: isSol ? '0.01' : '1.00',
+              hintStyle: GoogleFonts.jetBrainsMono(
+                fontSize: 18,
+                color: _kTextSecondary.withValues(alpha: 0.4),
+              ),
+              suffixText: widget.token,
+              suffixStyle: GoogleFonts.inter(
+                fontSize: 13,
+                color: _kTextSecondary,
+              ),
+              filled: true,
+              fillColor: _kSurfaceMid.withValues(alpha: 0.5),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: _kNeonCyan.withValues(alpha: 0.5)),
+              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            ),
+          ),
+          const SizedBox(height: 20),
+          // Fund button
+          SizedBox(
+            width: double.infinity,
+            child: GestureDetector(
+              onTap: () {
+                final text = _controller.text.trim();
+                if (text.isNotEmpty) Navigator.of(context).pop(text);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(colors: [_kNeonCyan, _kNeonCyanDim]),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Center(
+                  child: Text(
+                    'Fund via Wallet',
+                    style: GoogleFonts.inter(
+                      fontWeight: FontWeight.w600,
+                      color: _kBackground,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         ],
@@ -2212,12 +2701,10 @@ class _AuthActionState extends State<_AuthAction> {
 
     // User confirmed — connect wallet and fund
     try {
-      final wallet = PhantomWalletService();
+      final wallet = ReownWalletService();
       await wallet.loadSession();
-      if (!wallet.isConnected) {
-        final connected = await wallet.connect();
-        if (!connected) throw 'Wallet connection failed';
-      }
+      final connected = await wallet.connect();
+      if (!connected) throw 'Wallet connection failed';
 
       final svc = SessionKeyService();
       await svc.initialize();
