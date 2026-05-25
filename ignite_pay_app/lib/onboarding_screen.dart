@@ -54,12 +54,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   // Step 2: Mediator config
   final _mediatorController = TextEditingController(
-    text: 'ws://192.168.0.100:8080/ws',
+    text: 'ws://192.168.0.102:8080/ws',
   );
 
   // Step 2b: DID registry URL
   final _didRegistryController = TextEditingController(
-    text: 'http://192.168.0.100:8081',
+    text: 'http://192.168.0.102:8081',
   );
 
   // Step 2c: connecting state
