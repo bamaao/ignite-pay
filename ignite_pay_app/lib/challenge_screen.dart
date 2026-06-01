@@ -16,8 +16,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/services/app_log_service.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
-import 'package:ignite_pay_app/services/reown_wallet_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
+import 'package:ignite_pay_app/services/wallet_picker.dart';
 import 'package:ignite_pay_app/services/wallet_service.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
 import 'package:ignite_pay_app/src/rust/api/session.dart' as session;
@@ -103,7 +103,7 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
   String _solFundingAmount = '0.01'; // SOL
   String _usdcFundingAmount = '1.0'; // USDC
 
-  // Wallet service — defaults to Reown (WC2)
+  // Wallet service — mobile defaults to Phantom deep link (no QR)
   WalletService? _walletService;
 
   // On-chain PDA existence check
@@ -286,7 +286,7 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
         // ── Wallet-free path: PDA already exists on-chain ──
         // Only needs cached public key from SharedPreferences, no active wallet connection.
         if (_pdaExistsOnChain) {
-          final wallet = _walletService ?? ReownWalletService();
+          final wallet = _walletService ?? createDefaultWalletService();
           await wallet.loadSession(); // loads cached public key
           final cachedPubKey = wallet.walletPublicKey;
           if (cachedPubKey == null) throw 'No cached wallet key — connect wallet first';
@@ -306,7 +306,6 @@ class _X402ChallengeScreenState extends State<_X402ChallengeScreen>
               ephemeralPubkey: req.newSessionKeyPubkey!,
               onChainInfo: onChainInfo,
               scopes: scopes,
-              realSecretKey: req.newSessionKeySecretKey,
             );
 
             await _sendAuthResponseWithExternalKey(info);
@@ -700,6 +699,32 @@ class _PdaSetupWizardState extends State<_PdaSetupWizard>
   String? _sessionPda;
   String? _ephemeralPubkey;
 
+  /// Wizard-local wallet (Phantom on mobile by default).
+  WalletService? _wallet;
+
+  WalletService _resolveWallet() =>
+      widget.walletService ?? _wallet ?? createDefaultWalletService();
+
+  String _walletLabel(WalletService wallet) => wallet.walletDisplayName;
+
+  Future<void> _switchWallet() async {
+    if (_isBusy) return;
+    final picked = await selectWalletService(context);
+    if (_wallet != null && _wallet!.isConnected) {
+      await _wallet!.disconnect();
+    }
+    setState(() => _wallet = picked);
+  }
+
+  Future<WalletService> _connectWallet() async {
+    final wallet = _resolveWallet();
+    await ensureWalletConnected(
+      wallet,
+      Navigator.of(context, rootNavigator: true).context,
+    );
+    return wallet;
+  }
+
   String get _merchantDid => widget.request?.merchantDid ?? '';
   int get _amount => widget.request?.amount ?? 0;
   String get _paymentId => widget.request?.paymentId ?? '';
@@ -747,6 +772,114 @@ class _PdaSetupWizardState extends State<_PdaSetupWizard>
 
   double _parseSol(String value) => double.tryParse(value) ?? 0.0;
 
+  bool _isMethodUnsupported(String? err) {
+    final s = (err ?? '').toLowerCase();
+    return s.contains('not supported') ||
+        s.contains('unsupported') ||
+        s.contains('method is not supported');
+  }
+
+  Future<String> _sendSolFundingTx({
+    required WalletService wallet,
+    required String unsignedTxB58,
+    required String rpcUrl,
+  }) async {
+    if (mounted) {
+      setState(() => _statusText = 'Open wallet to sign SOL transaction...');
+    }
+    final signedTx = await wallet.signTransaction(unsignedTxB58);
+    if (signedTx != null && signedTx.isNotEmpty) {
+      if (mounted) {
+        setState(() => _statusText = 'Broadcasting signed SOL transaction...');
+      }
+      return session.broadcastSignedTx(rpcUrl: rpcUrl, signedTxB58: signedTx);
+    }
+
+    final signErr = wallet.lastError;
+    if (!_isMethodUnsupported(signErr)) {
+      throw signErr != null && signErr.isNotEmpty
+          ? 'Wallet rejected SOL transfer: $signErr'
+          : 'Wallet rejected SOL transfer';
+    }
+
+    if (mounted) {
+      setState(() => _statusText = 'sign-only not supported, trying sign-and-send...');
+    }
+    final viaSignAndSend = await wallet.signAndSendTransaction(unsignedTxB58);
+    if (viaSignAndSend != null && viaSignAndSend.isNotEmpty) {
+      return viaSignAndSend;
+    }
+    final sendErr = wallet.lastError;
+    throw sendErr != null && sendErr.isNotEmpty
+        ? 'Wallet does not support both signTransaction and signAndSendTransaction: $sendErr'
+        : 'Wallet does not support both signTransaction and signAndSendTransaction';
+  }
+
+  Future<String> _sendUsdcFundingTx({
+    required WalletService wallet,
+    required String unsignedTxB58,
+    required String rpcUrl,
+  }) async {
+    if (mounted) {
+      setState(() => _statusText = 'Open wallet to sign USDC transaction...');
+    }
+    final signedTx = await wallet.signTransaction(unsignedTxB58);
+    if (signedTx != null && signedTx.isNotEmpty) {
+      if (mounted) {
+        setState(() => _statusText = 'Broadcasting signed USDC transaction...');
+      }
+      return session.broadcastSignedTx(rpcUrl: rpcUrl, signedTxB58: signedTx);
+    }
+
+    final signErr = wallet.lastError;
+    if (!_isMethodUnsupported(signErr)) {
+      throw signErr != null && signErr.isNotEmpty
+          ? 'Wallet rejected USDC transfer: $signErr'
+          : 'Wallet rejected USDC transfer';
+    }
+
+    if (mounted) {
+      setState(() => _statusText = 'sign-only not supported, trying sign-and-send...');
+    }
+    // Avoid two deep-link launches back-to-back causing wallet app instability.
+    await Future.delayed(const Duration(milliseconds: 450));
+    final viaSignAndSend = await wallet.signAndSendTransaction(unsignedTxB58);
+    if (viaSignAndSend != null && viaSignAndSend.isNotEmpty) {
+      return viaSignAndSend;
+    }
+    final sendErr = wallet.lastError;
+    throw sendErr != null && sendErr.isNotEmpty
+        ? 'Wallet does not support both signTransaction and signAndSendTransaction: $sendErr'
+        : 'Wallet does not support both signTransaction and signAndSendTransaction';
+  }
+
+  Future<bool> _waitForSessionPdaConfirmed({
+    required SessionKeyService svc,
+    required WalletService wallet,
+    required String ephemeralPubkey,
+  }) async {
+    const maxAttempts = 12; // ~24s
+    for (var i = 0; i < maxAttempts; i++) {
+      try {
+        final onChainInfo = await rust.getSessionAccountInfo(
+          rpcUrl: svc.rpcUrl,
+          ownerB58: wallet.walletPublicKey!,
+          ephemeralB58: ephemeralPubkey,
+        );
+        if (onChainInfo.exists && !onChainInfo.revoked) {
+          return true;
+        }
+      } catch (_) {
+        // Retry transient RPC/read errors.
+      }
+      if (mounted) {
+        setState(() => _statusText = 'Waiting for on-chain confirmation... (${i + 1}/$maxAttempts)');
+      }
+      await Future.delayed(const Duration(seconds: 2));
+    }
+    return false;
+  }
+
   // ── Step 0: Create PDA ────────────────────────────────────────────────
   Future<void> _onCreatePda() async {
     if (_isBusy) return;
@@ -762,15 +895,33 @@ class _PdaSetupWizardState extends State<_PdaSetupWizard>
       await svc.initialize();
       final dir = await getApplicationSupportDirectory();
 
-      // 1. Connect wallet
-      final wallet = widget.walletService ?? ReownWalletService();
-      if (wallet is ReownWalletService) {
-        await wallet.init(Navigator.of(context, rootNavigator: true).context);
-      }
-      await wallet.loadSession();
-      if (!wallet.isConnected) {
-        final connected = await wallet.connect();
-        if (!connected) throw 'Failed to connect to wallet';
+      // 1. Connect wallet (Phantom deep link on mobile — opens installed app)
+      final wallet = await _connectWallet();
+
+      // 1.1 If this MCP-provided session key is already on-chain, reuse it.
+      setState(() => _statusText = 'Checking existing session PDA on-chain...');
+      final existingOnChain = await rust.getSessionAccountInfo(
+        rpcUrl: svc.rpcUrl,
+        ownerB58: wallet.walletPublicKey!,
+        ephemeralB58: req.newSessionKeyPubkey!,
+      );
+      if (existingOnChain.exists && !existingOnChain.revoked) {
+        final info = await rust.finalizeExistingSessionKey(
+          storagePath: dir.path,
+          ownerPubkeyB58: wallet.walletPublicKey!,
+          ephemeralPubkey: req.newSessionKeyPubkey!,
+          onChainInfo: existingOnChain,
+          scopes: req.newSessionKeyScopes ?? ['sol:transfer', 'spl:transfer'],
+        );
+        setState(() {
+          _sessionKeyInfo = info;
+          _sessionPda = info.sessionPda;
+          _ephemeralPubkey = info.ephemeralPubkey;
+          _statusText = 'Session key already exists on-chain, reusing.';
+          _currentStep = 1;
+          _isBusy = false;
+        });
+        return;
       }
 
       // 2. Build register tx
@@ -797,14 +948,29 @@ class _PdaSetupWizardState extends State<_PdaSetupWizard>
       // 3. Wallet sign (sign only, not broadcast)
       setState(() => _statusText = 'Open wallet to sign register tx...');
       final signedRegisterTx = await wallet.signTransaction(unsignedRegister.unsignedTxB58);
-      if (signedRegisterTx == null) throw 'Wallet rejected register transaction';
-
-      // 4. Broadcast
-      setState(() => _statusText = 'Broadcasting register transaction...');
-      final registerSig = await session.broadcastSignedTx(
-        rpcUrl: svc.rpcUrl,
-        signedTxB58: signedRegisterTx,
-      );
+      String registerSig;
+      if (signedRegisterTx == null) {
+        // Fallback: some wallets reject sign-only but accept sign-and-send.
+        setState(() => _statusText = 'signTransaction failed, trying sign-and-send...');
+        final onchainSig = await wallet.signAndSendTransaction(unsignedRegister.unsignedTxB58);
+        if (onchainSig == null) {
+          final detail = wallet.lastError;
+          if (_isMethodUnsupported(detail)) {
+            throw 'Wallet does not support both signTransaction and signAndSendTransaction';
+          }
+          throw detail != null && detail.isNotEmpty
+              ? 'Wallet rejected register transaction: $detail'
+              : 'Wallet rejected register transaction';
+        }
+        registerSig = onchainSig;
+      } else {
+        // 4. Broadcast
+        setState(() => _statusText = 'Broadcasting register transaction...');
+        registerSig = await session.broadcastSignedTx(
+          rpcUrl: svc.rpcUrl,
+          signedTxB58: signedRegisterTx,
+        );
+      }
 
       // 5. Finalize
       final info = await session.finalizePhantomSessionKey(
@@ -812,8 +978,17 @@ class _PdaSetupWizardState extends State<_PdaSetupWizard>
         ephemeralPubkey: unsignedRegister.ephemeralPubkey,
         txSignature: registerSig,
         sessionPda: unsignedRegister.sessionPda,
-        realSecretKey: req.newSessionKeySecretKey,
       );
+
+      // Guard against false positives: signature can exist even if tx failed.
+      final confirmed = await _waitForSessionPdaConfirmed(
+        svc: svc,
+        wallet: wallet,
+        ephemeralPubkey: unsignedRegister.ephemeralPubkey,
+      );
+      if (!confirmed) {
+        throw 'Session PDA registration is still pending on-chain. Please retry Create PDA in a few seconds.';
+      }
 
       setState(() {
         _sessionKeyInfo = info;
@@ -844,15 +1019,7 @@ class _PdaSetupWizardState extends State<_PdaSetupWizard>
     try {
       final svc = SessionKeyService();
       await svc.initialize();
-      final wallet = widget.walletService ?? ReownWalletService();
-      if (wallet is ReownWalletService) {
-        await wallet.init(Navigator.of(context, rootNavigator: true).context);
-      }
-      await wallet.loadSession();
-      if (!wallet.isConnected) {
-        final connected = await wallet.connect();
-        if (!connected) throw 'Failed to connect to wallet';
-      }
+      final wallet = await _connectWallet();
 
       final solAmount = _parseSol(_solFundingAmount);
       if (solAmount <= 0) throw 'Enter a valid SOL amount';
@@ -866,8 +1033,11 @@ class _PdaSetupWizardState extends State<_PdaSetupWizard>
         merchantDid: _ephemeralPubkey!,
         amountLamports: BigInt.from(solLamports),
       );
-      final sig = await wallet.signAndSendTransaction(txB58);
-      if (sig == null) throw 'Wallet rejected SOL transfer';
+      await _sendSolFundingTx(
+        wallet: wallet,
+        unsignedTxB58: txB58,
+        rpcUrl: svc.rpcUrl,
+      );
 
       setState(() {
         _statusText = 'SOL sent!';
@@ -895,15 +1065,7 @@ class _PdaSetupWizardState extends State<_PdaSetupWizard>
     try {
       final svc = SessionKeyService();
       await svc.initialize();
-      final wallet = widget.walletService ?? ReownWalletService();
-      if (wallet is ReownWalletService) {
-        await wallet.init(Navigator.of(context, rootNavigator: true).context);
-      }
-      await wallet.loadSession();
-      if (!wallet.isConnected) {
-        final connected = await wallet.connect();
-        if (!connected) throw 'Failed to connect to wallet';
-      }
+      final wallet = await _connectWallet();
 
       final usdcAmount = double.tryParse(_usdcFundingAmount) ?? 0.0;
       if (usdcAmount <= 0) throw 'Enter a valid USDC amount';
@@ -920,8 +1082,11 @@ class _PdaSetupWizardState extends State<_PdaSetupWizard>
         amount: BigInt.from(usdcRaw),
         tokenMintB58: tokenMint,
       );
-      final sig = await wallet.signAndSendTransaction(txB58);
-      if (sig == null) throw 'Wallet rejected USDC transfer';
+      await _sendUsdcFundingTx(
+        wallet: wallet,
+        unsignedTxB58: txB58,
+        rpcUrl: svc.rpcUrl,
+      );
 
       setState(() {
         _statusText = 'USDC sent!';
@@ -1134,6 +1299,24 @@ class _PdaSetupWizardState extends State<_PdaSetupWizard>
           onDurationHoursChanged: (v) => setState(() => _durationHours = v),
         ),
         const SizedBox(height: 20),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Wallet: ${_walletLabel(_resolveWallet())}',
+                style: GoogleFonts.inter(fontSize: 12, color: _kTextSecondary),
+              ),
+            ),
+            TextButton(
+              onPressed: _isBusy ? null : _switchWallet,
+              child: Text(
+                'Switch',
+                style: GoogleFonts.inter(fontSize: 12, color: _kAmber),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
         _ActionButton(
           label: 'Create PDA',
           icon: LucideIcons.keyRound,
@@ -1967,8 +2150,7 @@ class _ResultBanner extends StatelessWidget {
                 fontSize: 11,
                 color: _isError ? _kDanger : _kSuccess,
               ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+              softWrap: true,
             ),
           ),
         ],
