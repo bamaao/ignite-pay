@@ -173,12 +173,21 @@ class MerchantService extends ChangeNotifier {
   }
 
   Future<void> saveConfig(String hubEndpoint, String mediatorWsUrl) async {
+    final mediatorChanged = _mediatorWsUrl != mediatorWsUrl;
     _hubEndpoint = hubEndpoint;
     _mediatorWsUrl = mediatorWsUrl;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('hub_endpoint', hubEndpoint);
     await prefs.setString('mediator_ws_url', mediatorWsUrl);
     notifyListeners();
+
+    if (mediatorChanged && mediatorWsUrl.isNotEmpty) {
+      final pushService = MerchantPushService();
+      await pushService.disconnect();
+      try {
+        await pushService.connectToMediator(mediatorWsUrl);
+      } catch (_) {}
+    }
   }
 
   void setOnPaymentConfirmed(void Function(PaymentOrder) callback) {

@@ -3,7 +3,7 @@
 sse_port = 9001
 
 [mediator]
-ws_url = "ws://192.168.0.102:8080/ws"
+ws_url = "ws://192.168.0.100:8080/ws"
 # DID of the phone app to send authorization requests to
 phone_did = ""
 
@@ -31,7 +31,7 @@ kubo_url = "http://127.0.0.1:5001"
 
 [solana]
 # Solana RPC endpoint
-rpc_url = "http://127.0.0.1:8899"
+rpc_url = "https://api.devnet.solana.com"
 # DID program ID (ignite-pay-did-program) — enables on-chain DID verification
 did_program_id = ""
 # Payment mode: "self_funded" or "sponsored"
@@ -48,6 +48,6 @@ default_owner = ""
 
 [magicblock]
 # MagicBlock RPC endpoint
-rpc_url = "http://127.0.0.1:8899"
+rpc_url = "https://api.devnet.solana.com"
 # MagicBlock ephemeral rollup program ID
 program_id = "6pFXAg1oiV61wVvaJvMHqYdGMe2fscDwmN9UBUSvNuU3"

@@ -7,6 +7,7 @@
 - [Agent 支付流程](agent-payment-flow.md) — 12 步时序图与代码位置
 - [手动测试演练手册](manual-test-walkthrough.md) — 分阶段 UI 测试
 - [App 功能测试](ignite-pay-app-test-plan.md) — 42 条手机端测试用例
+- [Mediator 地址更新 E2E 测试](mediator-update-e2e-test.md) — 配对后 mediator 热更新
 
 ---
 

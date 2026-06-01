@@ -246,6 +246,28 @@ pub fn build_connection_confirm_response(
     .to(vec![to_did.to_string()])
 }
 
+/// Notify a paired peer that our mediator endpoint has changed.
+/// Sent after reconnecting to a new mediator so existing pairings keep working.
+pub fn build_mediator_update(
+    from_did: &str,
+    to_did: &str,
+    mediator_http_url: &str,
+    mediator_ws_url: Option<&str>,
+) -> Message {
+    let mut body = json!({
+        "mediator_http_url": mediator_http_url,
+    });
+    if let Some(ws) = mediator_ws_url {
+        body["mediator_ws_url"] = json!(ws);
+    }
+    Message::new(
+        "https://didcomm.org/ignite-pay/1.0/mediator-update",
+        body,
+    )
+    .from(from_did.to_string())
+    .to(vec![to_did.to_string()])
+}
+
 /// Build a Message Pickup 3.0 `status-request` message.
 /// Asks the mediator how many messages are queued for this DID.
 pub fn build_status_request(from_did: &str) -> Message {
@@ -289,9 +311,8 @@ pub struct NewSessionKeyRequest {
     pub suggested_sol_funding: u64,
     /// Suggested stablecoin funding amount (smallest unit) if applicable.
     pub suggested_token_funding: Option<u64>,
-    /// Base58-encoded 64-byte ephemeral keypair (secret key).
-    /// Sent via DIDComm JWE (authcrypt) so it's end-to-end encrypted.
-    /// The phone needs this to sign the on-chain register_session_key instruction.
+    /// Deprecated: ephemeral secret must not be sent to the phone.
+    /// MCP retains the secret; the phone registers the pubkey with owner wallet signature only.
     pub ephemeral_secret_key: Option<String>,
     /// Suggested per-transaction spending limit in lamports. None = no limit.
     pub suggested_per_tx_limit: Option<u64>,

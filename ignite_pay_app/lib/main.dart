@@ -32,7 +32,7 @@ import 'package:ignite_pay_app/services/didcomm_service.dart';
 import 'package:ignite_pay_app/services/channel_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
 import 'package:ignite_pay_app/services/direct_payment_service.dart';
-import 'package:ignite_pay_app/services/phantom_wallet_service.dart';
+import 'package:ignite_pay_app/services/native_deep_link_wallet_service.dart';
 import 'package:ignite_pay_app/services/reown_wallet_service.dart';
 import 'package:ignite_pay_app/cctp_transfer_screen.dart';
 import 'package:ignite_pay_app/onboarding_screen.dart';
@@ -497,17 +497,7 @@ class _MainNavigatorState extends State<_MainNavigator> {
 
     final path = '${uri.host}${uri.path}';
 
-    // Route Phantom encrypted deep link callbacks to PhantomWalletService
-    if (path == 'phantom/connect') {
-      PhantomWalletService().handleConnectCallback(uri);
-      return;
-    }
-    if (path == 'phantom/sign') {
-      PhantomWalletService().handleSignCallback(uri);
-      return;
-    }
-    if (path == 'phantom/signonly') {
-      PhantomWalletService().handleSignOnlyCallback(uri);
+    if (NativeDeepLinkWalletService.routeCallback(path, uri)) {
       return;
     }
 

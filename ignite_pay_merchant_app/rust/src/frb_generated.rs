@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 518462751;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 915218740;
 
 // Section: executor
 
@@ -447,6 +447,42 @@ fn wire__crate__api__merchant__generate_qr_ascii_impl(
         },
     )
 }
+fn wire__crate__api__merchant__get_mb_merchant_pubkey_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "get_mb_merchant_pubkey",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok =
+                            crate::api::merchant::get_mb_merchant_pubkey(api_storage_path)?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__merchant__get_merchant_did_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -590,6 +626,42 @@ fn wire__crate__api__merchant__get_pending_orders_impl(
         },
     )
 }
+fn wire__crate__api__merchant__initialize_mb_merchant_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "initialize_mb_merchant",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok =
+                            crate::api::merchant::initialize_mb_merchant(api_storage_path)?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__merchant__initialize_merchant_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -693,219 +765,6 @@ fn wire__crate__api__merchant__list_orders_impl(
                     (move || {
                         let output_ok =
                             crate::api::merchant::list_orders(api_storage_path, api_limit)?;
-                        Ok(output_ok)
-                    })(),
-                )
-            }
-        },
-    )
-}
-#[cfg(feature = "state-channel")]
-fn wire__crate__api__merchant__merchant_claim_leaf_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "merchant_claim_leaf",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api__storage_path = <String>::sse_decode(&mut deserializer);
-            let api_hub_endpoint = <String>::sse_decode(&mut deserializer);
-            let api_channel_id = <String>::sse_decode(&mut deserializer);
-            let api_leaf_index = <u32>::sse_decode(&mut deserializer);
-            let api_amount = <u64>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| async move {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || async move {
-                        let output_ok = crate::api::merchant::merchant_claim_leaf(
-                            api__storage_path,
-                            api_hub_endpoint,
-                            api_channel_id,
-                            api_leaf_index,
-                            api_amount,
-                        )
-                        .await?;
-                        Ok(output_ok)
-                    })()
-                    .await,
-                )
-            }
-        },
-    )
-}
-#[cfg(feature = "state-channel")]
-fn wire__crate__api__merchant__merchant_close_channel_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "merchant_close_channel",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_storage_path = <String>::sse_decode(&mut deserializer);
-            let api_hub_endpoint = <String>::sse_decode(&mut deserializer);
-            let api_channel_id = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| async move {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || async move {
-                        let output_ok = crate::api::merchant::merchant_close_channel(
-                            api_storage_path,
-                            api_hub_endpoint,
-                            api_channel_id,
-                        )
-                        .await?;
-                        Ok(output_ok)
-                    })()
-                    .await,
-                )
-            }
-        },
-    )
-}
-#[cfg(feature = "state-channel")]
-fn wire__crate__api__merchant__merchant_finalize_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "merchant_finalize",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api__storage_path = <String>::sse_decode(&mut deserializer);
-            let api_hub_endpoint = <String>::sse_decode(&mut deserializer);
-            let api_channel_id = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| async move {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || async move {
-                        let output_ok = crate::api::merchant::merchant_finalize(
-                            api__storage_path,
-                            api_hub_endpoint,
-                            api_channel_id,
-                        )
-                        .await?;
-                        Ok(output_ok)
-                    })()
-                    .await,
-                )
-            }
-        },
-    )
-}
-#[cfg(feature = "state-channel")]
-fn wire__crate__api__merchant__merchant_get_channel_status_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "merchant_get_channel_status",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_storage_path = <String>::sse_decode(&mut deserializer);
-            let api_channel_id = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || {
-                        let output_ok = crate::api::merchant::merchant_get_channel_status(
-                            api_storage_path,
-                            api_channel_id,
-                        )?;
-                        Ok(output_ok)
-                    })(),
-                )
-            }
-        },
-    )
-}
-#[cfg(feature = "state-channel")]
-fn wire__crate__api__merchant__merchant_list_channels_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "merchant_list_channels",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_storage_path = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || {
-                        let output_ok =
-                            crate::api::merchant::merchant_list_channels(api_storage_path)?;
                         Ok(output_ok)
                     })(),
                 )
@@ -1031,79 +890,6 @@ fn wire__crate__api__merchant__recent_audit_impl(
         },
     )
 }
-
-fn wire__crate__api__merchant__initialize_mb_merchant_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "initialize_mb_merchant",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_storage_path = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || {
-                        let output_ok = crate::api::merchant::initialize_mb_merchant(api_storage_path)?;
-                        Ok(output_ok)
-                    })(),
-                )
-            }
-        },
-    )
-}
-
-fn wire__crate__api__merchant__get_mb_merchant_pubkey_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "get_mb_merchant_pubkey",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_storage_path = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || {
-                        let output_ok = crate::api::merchant::get_mb_merchant_pubkey(api_storage_path)?;
-                        Ok(output_ok)
-                    })(),
-                )
-            }
-        },
-    )
-}
-
 fn wire__crate__api__merchant_didcomm__register_device_token_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1175,7 +961,7 @@ fn wire__crate__api__merchant_didcomm__send_connection_request_impl(
             let api_mediator_ws_url = <String>::sse_decode(&mut deserializer);
             let api_push_channel = <String>::sse_decode(&mut deserializer);
             let api_fcm_token = <Option<String>>::sse_decode(&mut deserializer);
-            let api_app_mediator_ws_url = <Option<String>>::sse_decode(&mut deserializer);
+            let api__app_mediator_ws_url = <Option<String>>::sse_decode(&mut deserializer);
             let api_app_mediator_http_url = <Option<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
@@ -1188,7 +974,7 @@ fn wire__crate__api__merchant_didcomm__send_connection_request_impl(
                             api_mediator_ws_url,
                             api_push_channel,
                             api_fcm_token,
-                            api_app_mediator_ws_url,
+                            api__app_mediator_ws_url,
                             api_app_mediator_http_url,
                         )
                         .await?;
@@ -1241,6 +1027,55 @@ fn wire__crate__api__merchant_didcomm__send_create_channel_request_impl(
                             api_token_mint,
                             api_deposit,
                             api_tree_depth,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__merchant_didcomm__send_mediator_update_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "send_mediator_update",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_storage_path = <String>::sse_decode(&mut deserializer);
+            let api_peer_did = <String>::sse_decode(&mut deserializer);
+            let api_peer_did_doc_json = <String>::sse_decode(&mut deserializer);
+            let api_mcp_mediator_http_url = <String>::sse_decode(&mut deserializer);
+            let api_mediator_http_url = <String>::sse_decode(&mut deserializer);
+            let api_mediator_ws_url = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::merchant_didcomm::send_mediator_update(
+                            api_storage_path,
+                            api_peer_did,
+                            api_peer_did_doc_json,
+                            api_mcp_mediator_http_url,
+                            api_mediator_http_url,
+                            api_mediator_ws_url,
                         )
                         .await?;
                         Ok(output_ok)
@@ -1373,31 +1208,11 @@ impl SseDecode for bool {
     }
 }
 
-#[cfg(feature = "state-channel")]
-impl SseDecode for crate::api::merchant::ChannelStatusBridge {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut var_channelId = <String>::sse_decode(deserializer);
-        let mut var_status = <String>::sse_decode(deserializer);
-        let mut var_sequence = <u64>::sse_decode(deserializer);
-        let mut var_leafCount = <u32>::sse_decode(deserializer);
-        let mut var_providerBalance = <u64>::sse_decode(deserializer);
-        let mut var_totalDeposited = <u64>::sse_decode(deserializer);
-        return crate::api::merchant::ChannelStatusBridge {
-            channel_id: var_channelId,
-            status: var_status,
-            sequence: var_sequence,
-            leaf_count: var_leafCount,
-            provider_balance: var_providerBalance,
-            total_deposited: var_totalDeposited,
-        };
-    }
-}
-
 impl SseDecode for crate::api::merchant_didcomm::DecryptedMessage {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_msgType = <String>::sse_decode(deserializer);
+        let mut var_fromDid = <Option<String>>::sse_decode(deserializer);
         let mut var_paymentId = <Option<String>>::sse_decode(deserializer);
         let mut var_orderId = <Option<String>>::sse_decode(deserializer);
         let mut var_amount = <Option<u64>>::sse_decode(deserializer);
@@ -1410,6 +1225,7 @@ impl SseDecode for crate::api::merchant_didcomm::DecryptedMessage {
         let mut var_tokenMint = <Option<String>>::sse_decode(deserializer);
         return crate::api::merchant_didcomm::DecryptedMessage {
             msg_type: var_msgType,
+            from_did: var_fromDid,
             payment_id: var_paymentId,
             order_id: var_orderId,
             amount: var_amount,
@@ -1776,88 +1592,77 @@ fn pde_ffi_dispatcher_primary_impl(
             wire__crate__api__merchant__generate_payment_qr_impl(port, ptr, rust_vec_len, data_len)
         }
         10 => wire__crate__api__merchant__generate_qr_ascii_impl(port, ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__merchant__get_merchant_did_impl(port, ptr, rust_vec_len, data_len),
-        12 => {
+        11 => wire__crate__api__merchant__get_mb_merchant_pubkey_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        12 => wire__crate__api__merchant__get_merchant_did_impl(port, ptr, rust_vec_len, data_len),
+        13 => {
             wire__crate__api__merchant__get_merchant_pubkey_impl(port, ptr, rust_vec_len, data_len)
         }
-        13 => wire__crate__api__merchant__get_order_impl(port, ptr, rust_vec_len, data_len),
-        14 => {
+        14 => wire__crate__api__merchant__get_order_impl(port, ptr, rust_vec_len, data_len),
+        15 => {
             wire__crate__api__merchant__get_pending_orders_impl(port, ptr, rust_vec_len, data_len)
         }
-        15 => {
+        16 => wire__crate__api__merchant__initialize_mb_merchant_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        17 => {
             wire__crate__api__merchant__initialize_merchant_impl(port, ptr, rust_vec_len, data_len)
         }
-        16 => wire__crate__api__merchant_didcomm__initialize_merchant_comm_impl(
+        18 => wire__crate__api__merchant_didcomm__initialize_merchant_comm_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        17 => wire__crate__api__merchant__list_orders_impl(port, ptr, rust_vec_len, data_len),
-        #[cfg(feature = "state-channel")]
-        18 => {
-            wire__crate__api__merchant__merchant_claim_leaf_impl(port, ptr, rust_vec_len, data_len)
-        }
-        #[cfg(feature = "state-channel")]
-        19 => wire__crate__api__merchant__merchant_close_channel_impl(
+        19 => wire__crate__api__merchant__list_orders_impl(port, ptr, rust_vec_len, data_len),
+        20 => wire__crate__api__merchant_didcomm__parse_oob_invitation_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        #[cfg(feature = "state-channel")]
-        20 => wire__crate__api__merchant__merchant_finalize_impl(port, ptr, rust_vec_len, data_len),
-        #[cfg(feature = "state-channel")]
-        21 => wire__crate__api__merchant__merchant_get_channel_status_impl(
+        21 => wire__crate__api__merchant_didcomm__pull_messages_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        #[cfg(feature = "state-channel")]
-        22 => wire__crate__api__merchant__merchant_list_channels_impl(
+        22 => wire__crate__api__merchant__recent_audit_impl(port, ptr, rust_vec_len, data_len),
+        23 => wire__crate__api__merchant_didcomm__register_device_token_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        23 => wire__crate__api__merchant_didcomm__parse_oob_invitation_impl(
+        24 => wire__crate__api__merchant_didcomm__send_connection_request_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        24 => wire__crate__api__merchant_didcomm__pull_messages_impl(
+        25 => wire__crate__api__merchant_didcomm__send_create_channel_request_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        25 => wire__crate__api__merchant__recent_audit_impl(port, ptr, rust_vec_len, data_len),
-        26 => wire__crate__api__merchant__initialize_mb_merchant_impl(port, ptr, rust_vec_len, data_len),
-        27 => wire__crate__api__merchant__get_mb_merchant_pubkey_impl(port, ptr, rust_vec_len, data_len),
-        26 => wire__crate__api__merchant_didcomm__register_device_token_impl(
+        26 => wire__crate__api__merchant_didcomm__send_mediator_update_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        27 => wire__crate__api__merchant_didcomm__send_connection_request_impl(
-            port,
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        28 => wire__crate__api__merchant_didcomm__send_create_channel_request_impl(
-            port,
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        29 => {
+        27 => {
             wire__crate__api__merchant_didcomm__sign_nonce_impl(port, ptr, rust_vec_len, data_len)
         }
-        30 => wire__crate__api__merchant_didcomm__verify_did_signature_impl(
+        28 => wire__crate__api__merchant_didcomm__verify_did_signature_impl(
             port,
             ptr,
             rust_vec_len,
@@ -1906,38 +1711,11 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::merchant::AuditEntryBridge>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
-#[cfg(feature = "state-channel")]
-impl flutter_rust_bridge::IntoDart for crate::api::merchant::ChannelStatusBridge {
-    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        [
-            self.channel_id.into_into_dart().into_dart(),
-            self.status.into_into_dart().into_dart(),
-            self.sequence.into_into_dart().into_dart(),
-            self.leaf_count.into_into_dart().into_dart(),
-            self.provider_balance.into_into_dart().into_dart(),
-            self.total_deposited.into_into_dart().into_dart(),
-        ]
-        .into_dart()
-    }
-}
-#[cfg(feature = "state-channel")]
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
-    for crate::api::merchant::ChannelStatusBridge
-{
-}
-#[cfg(feature = "state-channel")]
-impl flutter_rust_bridge::IntoIntoDart<crate::api::merchant::ChannelStatusBridge>
-    for crate::api::merchant::ChannelStatusBridge
-{
-    fn into_into_dart(self) -> crate::api::merchant::ChannelStatusBridge {
-        self
-    }
-}
-// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::merchant_didcomm::DecryptedMessage {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.msg_type.into_into_dart().into_dart(),
+            self.from_did.into_into_dart().into_dart(),
             self.payment_id.into_into_dart().into_dart(),
             self.order_id.into_into_dart().into_dart(),
             self.amount.into_into_dart().into_dart(),
@@ -2121,23 +1899,11 @@ impl SseEncode for bool {
     }
 }
 
-#[cfg(feature = "state-channel")]
-impl SseEncode for crate::api::merchant::ChannelStatusBridge {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <String>::sse_encode(self.channel_id, serializer);
-        <String>::sse_encode(self.status, serializer);
-        <u64>::sse_encode(self.sequence, serializer);
-        <u32>::sse_encode(self.leaf_count, serializer);
-        <u64>::sse_encode(self.provider_balance, serializer);
-        <u64>::sse_encode(self.total_deposited, serializer);
-    }
-}
-
 impl SseEncode for crate::api::merchant_didcomm::DecryptedMessage {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.msg_type, serializer);
+        <Option<String>>::sse_encode(self.from_did, serializer);
         <Option<String>>::sse_encode(self.payment_id, serializer);
         <Option<String>>::sse_encode(self.order_id, serializer);
         <Option<u64>>::sse_encode(self.amount, serializer);

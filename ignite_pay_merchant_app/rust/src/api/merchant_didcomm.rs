@@ -36,6 +36,7 @@ pub struct DidcommMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecryptedMessage {
     pub msg_type: String,
+    pub from_did: Option<String>,
     pub payment_id: Option<String>,
     pub order_id: Option<String>,
     pub amount: Option<u64>,
@@ -263,6 +264,7 @@ pub fn decrypt_message(storage_path: String, jwe: String) -> Result<DecryptedMes
     // Extract fields relevant to merchant messages
     let decrypted = DecryptedMessage {
         msg_type: msg_type.clone(),
+        from_did: msg.from.clone(),
         payment_id: msg
             .body
             .get("payment_id")
@@ -313,6 +315,73 @@ pub fn sign_nonce(storage_path: String, nonce: String) -> Result<String> {
 /// Returns true if the signature is valid for the given message and DID.
 pub fn verify_did_signature(did: String, message: String, signature_b64: String) -> Result<bool> {
     Ok(ignite_pay_core::verify_did_signature(&did, &message, &signature_b64))
+}
+
+/// Notify a paired MCP peer that our mediator endpoint changed.
+/// Sends an encrypted mediator-update via HTTP forward to the MCP's mediator.
+pub async fn send_mediator_update(
+    storage_path: String,
+    peer_did: String,
+    peer_did_doc_json: String,
+    mcp_mediator_http_url: String,
+    mediator_http_url: String,
+    mediator_ws_url: String,
+) -> Result<()> {
+    let db = sled::open(&storage_path)?;
+    let identity = ignite_pay_core::identity::load_identity(&db)?
+        .ok_or_else(|| anyhow::anyhow!("DIDComm identity not initialized"))?;
+
+    let our_did = identity.did.clone();
+    let (mut agent, _) = ignite_pay_core::didcomm::create_agent(identity);
+
+    if !peer_did_doc_json.is_empty() {
+        if let Ok(peer_doc) = serde_json::from_str::<serde_json::Value>(&peer_did_doc_json) {
+            if let Some(resolved) =
+                ignite_pay_core::identity::parse_did_document(&peer_did, &peer_doc)
+            {
+                agent.add_peer(resolved);
+            }
+        }
+    }
+
+    let msg = ignite_pay_core::didcomm::build_mediator_update(
+        &our_did,
+        &peer_did,
+        &mediator_http_url,
+        Some(&mediator_ws_url),
+    );
+    let jwe = ignite_pay_core::didcomm::pack_encrypted(&agent, &msg, &our_did, &peer_did)
+        .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
+
+    let forward_msg = serde_json::json!({
+        "type": "https://didcomm.org/routing/2.0/forward",
+        "id": format!("fwd-{}", uuid::Uuid::new_v4()),
+        "body": { "next": peer_did },
+        "attachments": [{
+            "data": { "json": jwe }
+        }]
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&mcp_mediator_http_url)
+        .header("Content-Type", "application/json")
+        .body(serde_json::to_string(&forward_msg)?)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "MCP mediator rejected mediator-update: {} - {}",
+            status,
+            body
+        ));
+    }
+
+    tracing::info!("Sent mediator-update to MCP {} via {}", peer_did, mcp_mediator_http_url);
+    Ok(())
 }
 
 // ── FCM token registration ──────────────────────────────────────────────

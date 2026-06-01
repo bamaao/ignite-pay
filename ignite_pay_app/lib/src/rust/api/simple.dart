@@ -36,6 +36,19 @@ Future<void> connectMediator({
 Future<void> disconnectMediator() =>
     RustLib.instance.api.crateApiSimpleDisconnectMediator();
 
+/// Notify paired MCP peers that our mediator endpoint changed.
+Future<void> sendMediatorUpdate({
+  required String storagePath,
+  required String peerDid,
+  required String mediatorHttpUrl,
+  required String mediatorWsUrl,
+}) => RustLib.instance.api.crateApiSimpleSendMediatorUpdate(
+  storagePath: storagePath,
+  peerDid: peerDid,
+  mediatorHttpUrl: mediatorHttpUrl,
+  mediatorWsUrl: mediatorWsUrl,
+);
+
 /// Register an MCP peer in the DIDComm agent using its DID document.
 /// Must be called after pairing so the agent can decrypt authcrypt JWE
 /// messages from this peer.

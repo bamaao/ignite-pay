@@ -9,13 +9,59 @@
 // distribution of the code under the BSL, whichever comes first, the code
 // automatically becomes available under the Apache License 2.0.
 
+import 'dart:io' show Platform;
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+
+import 'package:ignite_pay_app/services/native_deep_link_wallet_service.dart';
+import 'package:ignite_pay_app/services/native_wallet_config.dart';
+import 'package:ignite_pay_app/services/reown_wallet_service.dart';
+
+/// True on Android/iOS where native wallet deep links work.
+bool get supportsNativeWalletDeepLink =>
+    !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+
+/// Default wallet: Phantom deep link on mobile, WalletConnect elsewhere.
+WalletService createDefaultWalletService() {
+  if (supportsNativeWalletDeepLink) {
+    return NativeDeepLinkWalletService.forWallet(NativeWalletId.phantom);
+  }
+  return ReownWalletService();
+}
+
+/// Init Reown if needed, then connect when no session exists.
+Future<void> ensureWalletConnected(
+  WalletService wallet,
+  BuildContext context,
+) async {
+  if (wallet is ReownWalletService) {
+    await wallet.init(context);
+  }
+  await wallet.loadSession();
+  if (!wallet.isConnected) {
+    final connected = await wallet.connect();
+    if (!connected) {
+      final detail = wallet.lastError;
+      final suffix = (detail != null && detail.isNotEmpty) ? ': $detail' : '';
+      throw StateError(
+        'Failed to connect to ${wallet.walletDisplayName}$suffix',
+      );
+    }
+  }
+}
 
 /// Abstract interface for wallet connections.
 ///
 /// Implementations: [PhantomWalletService] (deep link), [ReownWalletService]
 /// (WalletConnect v2 via reown_appkit).
 abstract class WalletService extends ChangeNotifier {
+  /// Human-readable wallet name for UI.
+  String get walletDisplayName;
+
+  /// Last wallet-level error for diagnostics.
+  String? get lastError;
+
   /// The wallet public key in base58, or null if not connected.
   String? get walletPublicKey;
 

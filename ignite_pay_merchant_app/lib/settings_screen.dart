@@ -108,8 +108,11 @@ class SettingsScreen extends StatelessWidget {
                           shape: BoxShape.circle,
                         ),
                       ),
+                      const SizedBox(width: 8),
+                      const Icon(LucideIcons.chevronRight, size: 16, color: kTextSecondary),
                     ],
                   ),
+                  onTap: () => _editMediatorWs(context, svc),
                 ),
                 const SizedBox(height: 8),
                 SettingsTile(
@@ -363,6 +366,43 @@ class SettingsScreen extends StatelessWidget {
             onPressed: () {
               svc.saveConfig(controller.text, svc.mediatorWsUrl);
               Navigator.pop(context);
+            },
+            child: Text('保存', style: GoogleFonts.inter(color: kNeonCyan)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _editMediatorWs(BuildContext context, MerchantService svc) {
+    final controller = TextEditingController(text: svc.mediatorWsUrl);
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: kSurfaceDark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Text('Mediator WS', style: GoogleFonts.inter(color: kTextPrimary)),
+        content: TextField(
+          controller: controller,
+          style: GoogleFonts.jetBrainsMono(fontSize: 14, color: kTextPrimary),
+          decoration: InputDecoration(
+            hintText: 'ws://192.168.0.102:8080/ws',
+            hintStyle: GoogleFonts.jetBrainsMono(fontSize: 14, color: kTextTertiary),
+            filled: true,
+            fillColor: kSurfaceElevated,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: kBorder)),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: kBorder)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('取消', style: GoogleFonts.inter(color: kTextSecondary)),
+          ),
+          TextButton(
+            onPressed: () async {
+              await svc.saveConfig(svc.hubEndpoint, controller.text.trim());
+              if (context.mounted) Navigator.pop(context);
             },
             child: Text('保存', style: GoogleFonts.inter(color: kNeonCyan)),
           ),

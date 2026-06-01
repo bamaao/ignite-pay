@@ -116,6 +116,92 @@ fn load_phone_mediator_http_url(db: &sled::Db) -> Option<String> {
         .map(|v| String::from_utf8_lossy(&v).to_string())
 }
 
+fn ws_url_to_http_url(ws_url: &str) -> String {
+    ws_url
+        .replace("wss://", "https://")
+        .replace("ws://", "http://")
+        .trim_end_matches("/ws")
+        .to_string()
+        + "/"
+}
+
+async fn send_mediator_update_to_phone(
+    agent: &Arc<Mutex<DIDCommAgent>>,
+    our_did: &str,
+    phone_did: &str,
+    phone_http_url: &str,
+    our_ws_url: &str,
+) -> Result<()> {
+    let our_http_url = ws_url_to_http_url(our_ws_url);
+    let msg = didcomm::build_mediator_update(
+        our_did,
+        phone_did,
+        &our_http_url,
+        Some(our_ws_url),
+    );
+    let jwe = {
+        let agent_guard = agent.lock().await;
+        didcomm::pack_encrypted(&agent_guard, &msg, our_did, phone_did)
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?
+    };
+
+    let forward_msg = serde_json::json!({
+        "type": "https://didcomm.org/routing/2.0/forward",
+        "id": format!("fwd-{}", uuid::Uuid::new_v4()),
+        "body": { "next": phone_did },
+        "attachments": [{
+            "data": { "json": serde_json::from_str::<serde_json::Value>(&jwe).unwrap_or_else(|_| serde_json::Value::String(jwe.clone())) }
+        }]
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(phone_http_url)
+        .header("Content-Type", "application/json")
+        .body(serde_json::to_string(&forward_msg)?)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "Phone mediator rejected mediator-update: {} - {}",
+            status,
+            body
+        ));
+    }
+
+    Ok(())
+}
+
+async fn apply_phone_mediator_update(
+    phone_did: &str,
+    phone_http_url: &str,
+    paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
+    phone_mediator_http_url: &Arc<tokio::sync::Mutex<Option<String>>>,
+    db: &sled::Db,
+) -> bool {
+    let paired = paired_phone.lock().await.clone();
+    if paired.as_deref() != Some(phone_did) {
+        tracing::warn!(
+            "Ignoring mediator-update from unpaired DID {} (paired: {:?})",
+            phone_did,
+            paired
+        );
+        return false;
+    }
+    let mut guard = phone_mediator_http_url.lock().await;
+    *guard = Some(phone_http_url.to_string());
+    save_phone_mediator_http_url(db, phone_http_url);
+    tracing::info!(
+        "Updated phone mediator HTTP URL for {}: {}",
+        phone_did,
+        phone_http_url
+    );
+    true
+}
+
 fn save_phone_did_doc(db: &sled::Db, doc: &serde_json::Value) {
     if let Ok(bytes) = serde_json::to_vec(doc) {
         let _ = db.insert("__phone_did_doc__", bytes);
@@ -921,6 +1007,24 @@ async fn connect_and_run(
 
     tracing::info!("Entering bidirectional loop...");
 
+    // Notify paired phone of our current mediator (handles MCP mediator URL changes).
+    if let Some(phone_did) = paired_phone.lock().await.clone() {
+        if let Some(phone_http) = phone_mediator_http_url.lock().await.clone() {
+            match send_mediator_update_to_phone(
+                agent,
+                our_did,
+                &phone_did,
+                &phone_http,
+                ws_url,
+            )
+            .await
+            {
+                Ok(()) => tracing::info!("Sent mediator-update to paired phone {}", phone_did),
+                Err(e) => tracing::warn!("Failed to send mediator-update to phone: {}", e),
+            }
+        }
+    }
+
     // --- Phase B: Bidirectional loop using tokio::select! ---
     loop {
         tokio::select! {
@@ -1070,6 +1174,30 @@ async fn handle_incoming_message(
             return;
         }
     };
+
+    // Plaintext mediator-update (forwarded by mediator)
+    if v
+        .get("type")
+        .and_then(|t| t.as_str())
+        .map(|t| t.contains("mediator-update"))
+        .unwrap_or(false)
+    {
+        let phone_did = v["from"].as_str().unwrap_or("");
+        if let Some(http_url) = v["body"]
+            .get("mediator_http_url")
+            .and_then(|v| v.as_str())
+        {
+            apply_phone_mediator_update(
+                phone_did,
+                http_url,
+                paired_phone,
+                phone_mediator_http_url,
+                db,
+            )
+            .await;
+        }
+        return;
+    }
 
     // Check for connection-request in plaintext
     if v
@@ -1470,6 +1598,26 @@ async fn process_inner_message(
         save_paired_phone(db, &phone_did);
 
         tracing::info!("Phone {} fully paired", phone_did);
+        return;
+    }
+
+    // Mediator endpoint update from already-paired phone
+    if msg.typ.contains("mediator-update") {
+        let phone_did = msg.from.clone().unwrap_or_default();
+        if let Some(http_url) = msg
+            .body
+            .get("mediator_http_url")
+            .and_then(|v| v.as_str())
+        {
+            apply_phone_mediator_update(
+                &phone_did,
+                http_url,
+                paired_phone,
+                phone_mediator_http_url,
+                db,
+            )
+            .await;
+        }
         return;
     }
 

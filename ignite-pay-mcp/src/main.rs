@@ -598,7 +598,7 @@ impl IgnitePayMcpServer {
             token_mint: token_mint.clone(),
             suggested_sol_funding: payment.amount + 10_000_000, // payment + 0.01 SOL for gas
             suggested_token_funding: if token_mint.is_some() { Some(payment.amount) } else { None },
-            ephemeral_secret_key: Some(bs58::encode(session.keypair.to_bytes()).into_string()),
+            ephemeral_secret_key: None,
             suggested_per_tx_limit: None,
             suggested_daily_tx_count_limit: None,
         })

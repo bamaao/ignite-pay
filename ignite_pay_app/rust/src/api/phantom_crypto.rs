@@ -7,6 +7,11 @@
 // NOT Ed25519 keys. See: https://docs.phantom.com/phantom-deeplinks/encryption
 
 use anyhow::Result;
+use salsa20::hsalsa;
+use salsa20::cipher::{
+    array::Array,
+    consts::{U10, U16},
+};
 use serde::{Deserialize, Serialize};
 
 /// Keypair for Phantom dApp encryption.
@@ -32,8 +37,11 @@ pub fn phantom_generate_keypair() -> Result<PhantomKeypair> {
     })
 }
 
-/// Compute the X25519 shared secret.
-/// All keys are raw X25519 (Curve25519) — no Ed25519 conversion needed.
+/// Compute NaCl box precomputed key (crypto_box_beforenm-compatible).
+///
+/// IMPORTANT: TweetNaCl's `box.before` is NOT raw X25519 output.
+/// It applies HSalsa20(shared_x25519, nonce=0[16]) and uses that 32-byte key
+/// for XSalsa20-Poly1305 (`box.after` / `box.open.after`).
 pub fn phantom_shared_secret(
     my_secret_key_b64: String,
     their_public_key_b64: String,
@@ -53,8 +61,14 @@ pub fn phantom_shared_secret(
     let public_array: [u8; 32] = their_public_bytes.try_into().unwrap();
     let x25519_public = x25519_dalek::PublicKey::from(public_array);
 
+    // Step 1: raw X25519 scalar multiplication
     let shared = x25519_secret.diffie_hellman(&x25519_public);
-    Ok(base64::Engine::encode(&engine, shared.as_bytes()))
+
+    // Step 2: HSalsa20 with 16-byte zero nonce (NaCl beforenm)
+    let hsalsa_input = Array::<u8, U16>::default(); // all zeros
+    let precomputed = hsalsa::<U10>(Array::from_slice(shared.as_bytes()), &hsalsa_input);
+
+    Ok(base64::Engine::encode(&engine, precomputed.as_slice()))
 }
 
 /// NaCl box encrypt using XSalsa20-Poly1305.

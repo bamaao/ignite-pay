@@ -8,12 +8,12 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
 
-/// Generate an Ed25519 keypair for the dApp side of Phantom deep link encryption.
+/// Generate an X25519 keypair for the dApp side of Phantom deep link encryption.
 Future<PhantomKeypair> phantomGenerateKeypair() =>
     RustLib.instance.api.crateApiPhantomCryptoPhantomGenerateKeypair();
 
 /// Compute the X25519 shared secret.
-/// Ed25519 keys are converted to X25519 internally.
+/// All keys are raw X25519 (Curve25519) — no Ed25519 conversion needed.
 Future<String> phantomSharedSecret({
   required String mySecretKeyB64,
   required String theirPublicKeyB64,
@@ -23,6 +23,7 @@ Future<String> phantomSharedSecret({
 );
 
 /// NaCl box encrypt using XSalsa20-Poly1305.
+/// Output format: MAC (16 bytes) + ciphertext (TweetNaCl.js convention).
 Future<String> phantomEncrypt({
   required String sharedSecretB64,
   required String nonceB64,
@@ -34,6 +35,7 @@ Future<String> phantomEncrypt({
 );
 
 /// NaCl box decrypt using XSalsa20-Poly1305.
+/// Input format: MAC (16 bytes) + ciphertext (TweetNaCl.js convention).
 Future<String> phantomDecrypt({
   required String sharedSecretB64,
   required String nonceB64,
@@ -46,10 +48,10 @@ Future<String> phantomDecrypt({
 
 /// Keypair for Phantom dApp encryption.
 class PhantomKeypair {
-  /// Base64url-encoded (no padding) Ed25519 public key (32 bytes).
+  /// Base64url-encoded (no padding) X25519 public key (32 bytes).
   final String publicKeyB64;
 
-  /// Base64url-encoded (no padding) Ed25519 secret key (32 bytes seed).
+  /// Base64url-encoded (no padding) X25519 secret key (32 bytes).
   final String secretKeyB64;
 
   const PhantomKeypair({

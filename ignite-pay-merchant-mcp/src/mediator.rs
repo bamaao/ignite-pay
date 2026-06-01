@@ -91,6 +91,65 @@ fn load_phone_mediator_http_url(db: &sled::Db) -> Option<String> {
         .map(|v| String::from_utf8_lossy(&v).to_string())
 }
 
+fn ws_url_to_http_url(ws_url: &str) -> String {
+    ws_url
+        .replace("wss://", "https://")
+        .replace("ws://", "http://")
+        .trim_end_matches("/ws")
+        .to_string()
+        + "/"
+}
+
+async fn send_mediator_update_to_phone(
+    agent: &Arc<Mutex<DIDCommAgent>>,
+    our_did: &str,
+    phone_did: &str,
+    phone_http_url: &str,
+    our_ws_url: &str,
+) -> Result<()> {
+    let our_http_url = ws_url_to_http_url(our_ws_url);
+    let msg = didcomm::build_mediator_update(
+        our_did,
+        phone_did,
+        &our_http_url,
+        Some(our_ws_url),
+    );
+    let jwe = {
+        let agent_guard = agent.lock().await;
+        didcomm::pack_encrypted(&agent_guard, &msg, our_did, phone_did)
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?
+    };
+
+    merchant_http_forward(phone_did, &jwe, phone_http_url).await
+}
+
+async fn apply_phone_mediator_update(
+    phone_did: &str,
+    phone_http_url: &str,
+    paired_phone: &Arc<tokio::sync::Mutex<Option<String>>>,
+    phone_mediator_http_url: &Arc<tokio::sync::Mutex<Option<String>>>,
+    db: &sled::Db,
+) -> bool {
+    let paired = paired_phone.lock().await.clone();
+    if paired.as_deref() != Some(phone_did) {
+        tracing::warn!(
+            "Ignoring mediator-update from unpaired DID {} (paired: {:?})",
+            phone_did,
+            paired
+        );
+        return false;
+    }
+    let mut guard = phone_mediator_http_url.lock().await;
+    *guard = Some(phone_http_url.to_string());
+    save_phone_mediator_http_url(db, phone_http_url);
+    tracing::info!(
+        "Updated app mediator HTTP URL for {}: {}",
+        phone_did,
+        phone_http_url
+    );
+    true
+}
+
 impl std::fmt::Debug for MerchantMediator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MerchantMediator")
@@ -529,6 +588,24 @@ async fn connect_and_run(
 
     tracing::info!("Merchant mediator handshake complete");
 
+    // Notify paired app of our current mediator (handles MCP mediator URL changes).
+    if let Some(phone_did) = paired_phone.lock().await.clone() {
+        if let Some(phone_http) = phone_mediator_http_url.lock().await.clone() {
+            match send_mediator_update_to_phone(
+                agent,
+                our_did,
+                &phone_did,
+                &phone_http,
+                ws_url,
+            )
+            .await
+            {
+                Ok(()) => tracing::info!("Sent mediator-update to paired app {}", phone_did),
+                Err(e) => tracing::warn!("Failed to send mediator-update to app: {}", e),
+            }
+        }
+    }
+
     // Bidirectional loop
     loop {
         tokio::select! {
@@ -592,6 +669,30 @@ async fn handle_incoming_message(
             return;
         }
     };
+
+    // Plaintext mediator-update (forwarded by mediator)
+    if v
+        .get("type")
+        .and_then(|t| t.as_str())
+        .map(|t| t.contains("mediator-update"))
+        .unwrap_or(false)
+    {
+        let phone_did = v["from"].as_str().unwrap_or("");
+        if let Some(http_url) = v["body"]
+            .get("mediator_http_url")
+            .and_then(|v| v.as_str())
+        {
+            apply_phone_mediator_update(
+                phone_did,
+                http_url,
+                paired_phone,
+                phone_mediator_http_url,
+                db,
+            )
+            .await;
+        }
+        return;
+    }
 
     // Check for connection-request in plaintext (pairing from merchant app)
     if v
@@ -872,6 +973,26 @@ async fn process_inner_message(
         save_paired_phone(db, &phone_did);
 
         tracing::info!("App {} fully paired", phone_did);
+        return;
+    }
+
+    // Mediator endpoint update from already-paired app
+    if msg.typ.contains("mediator-update") {
+        let phone_did = msg.from.clone().unwrap_or_default();
+        if let Some(http_url) = msg
+            .body
+            .get("mediator_http_url")
+            .and_then(|v| v.as_str())
+        {
+            apply_phone_mediator_update(
+                &phone_did,
+                http_url,
+                paired_phone,
+                phone_mediator_http_url,
+                db,
+            )
+            .await;
+        }
         return;
     }
 

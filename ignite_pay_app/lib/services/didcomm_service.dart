@@ -420,11 +420,54 @@ class DidcommService extends ChangeNotifier {
       if (!_isChineseUser) {
         await _initFcm();
       }
+
+      // Tell paired MCPs our new mediator endpoint (keeps routing alive after URL change).
+      await _notifyPeersOfMediatorUpdate();
     } catch (e) {
       AppLogService().error('Mediator', 'Failed to connect: $e');
       _isConnected = false;
       notifyListeners();
     }
+  }
+
+  /// Notify paired MCP peers that our mediator URL changed.
+  Future<void> _notifyPeersOfMediatorUpdate() async {
+    if (!_isConnected || _pairedMcps.isEmpty) return;
+    if (_mediatorHttpUrl.isEmpty && _mediatorWsUrl.isEmpty) return;
+
+    final httpUrl = _mediatorHttpUrl.isNotEmpty
+        ? _mediatorHttpUrl
+        : _mediatorWsUrl.replaceFirst('ws', 'http').replaceAll(RegExp(r'/ws$'), '');
+
+    for (final mcp in _pairedMcps) {
+      try {
+        await rust.sendMediatorUpdate(
+          storagePath: _storagePath,
+          peerDid: mcp.did,
+          mediatorHttpUrl: httpUrl,
+          mediatorWsUrl: _mediatorWsUrl,
+        );
+        AppLogService().info('DID', 'Sent mediator-update to ${mcp.did}: $httpUrl');
+      } catch (e) {
+        AppLogService().warn('DID', 'Failed to notify ${mcp.did} of mediator update: $e');
+      }
+    }
+  }
+
+  Future<void> _updatePairedMcpMediatorUrl(String mcpDid, String newHttpUrl) async {
+    if (newHttpUrl.isEmpty) return;
+    final idx = _pairedMcps.indexWhere((m) => m.did == mcpDid);
+    if (idx < 0) return;
+    final old = _pairedMcps[idx];
+    _pairedMcps[idx] = PairedMcp(
+      did: old.did,
+      didDocJson: old.didDocJson,
+      mediatorHttpUrl: newHttpUrl,
+      pairedAt: old.pairedAt,
+    );
+    await _savePairedMcps();
+    AppLogService().info('DID', 'Updated MCP mediator URL for $mcpDid: $newHttpUrl');
+    notifyListeners();
   }
 
   /// Disconnect from the mediator.
@@ -733,6 +776,16 @@ class DidcommService extends ChangeNotifier {
         for (int i = 0; i < rb.length; i += 500) {
           AppLogService().info('DIDComm', 'rawBody[$i]: ${rb.substring(i, i + 500 > rb.length ? rb.length : i + 500)}');
         }
+      }
+
+      // Mediator endpoint update from paired MCP (after MCP changed its mediator URL).
+      if (msg.msgType.contains('mediator-update')) {
+        final body = jsonDecode(msg.rawBody) as Map<String, dynamic>;
+        final newUrl = body['mediator_http_url'] as String? ?? '';
+        if (newUrl.isNotEmpty && pairedMcp != null) {
+          await _updatePairedMcpMediatorUrl(pairedMcp.did, newUrl);
+        }
+        return;
       }
 
       // Check if it's a connection-response (pairing reply from MCP)
@@ -1080,6 +1133,15 @@ class DidcommService extends ChangeNotifier {
 
         if (msgType.contains('connection-response')) {
           await _handlePlaintextConnectionResponse(v);
+          return;
+        }
+
+        if (msgType.contains('mediator-update')) {
+          final body = v['body'] as Map<String, dynamic>? ?? {};
+          final newUrl = body['mediator_http_url'] as String? ?? '';
+          if (newUrl.isNotEmpty && from.isNotEmpty) {
+            await _updatePairedMcpMediatorUrl(from, newUrl);
+          }
           return;
         }
 

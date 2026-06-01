@@ -8,6 +8,7 @@
 - [业务场景](business-scenarios.md) — 详细步骤描述和异常处理
 - [App 测试计划](ignite-pay-app-test-plan.md) — 手机端 UI 测试用例 (TC-M0x-xx)
 - [E2E Demo](ecom-demo-end-to-end.md) — 电商演示流程
+- [Mediator 地址更新 E2E 测试](mediator-update-e2e-test.md) — 配对后 mediator 热更新
 
 ---
 
@@ -139,6 +140,37 @@ solana airdrop 2 test-merchant.json --url devnet
   - [ ] 商户 MCP 连接活跃
 
 **失败排查**：检查商户 DIDComm Router (:4000)、商户 MCP 日志
+
+---
+
+### T1.5 Mediator 地址更新（配对后热更新）
+
+**流程**：配对完成后 App 或 MCP 更换 mediator，通过 `mediator-update` 保持通信
+**详细步骤**：[Mediator 地址更新 E2E 测试](mediator-update-e2e-test.md)
+
+**前置条件**：T1.3 和/或 T1.4 已完成
+
+**用户链路（MU-A + MU-B）**：
+  1. 准备两个 mediator 实例（如 `:8080` 与 `:8081`）
+  2. 用户 App → Vault → 修改 Mediator WS → 保存
+  3. 验证 App 日志含 `Sent mediator-update`，MCP 日志含 `Updated phone mediator HTTP URL`
+  4. 触发 x402 支付，确认手机仍能收到授权请求
+  5. 修改 `ignite-pay-mcp/config.toml` 的 `mediator.ws_url` 并重启 MCP
+  6. 验证 App 日志含 `Updated MCP mediator URL`
+  7. 完成一次授权回复，确认 MCP 收到响应
+
+**商户链路（MU-C + MU-D）**：
+  1. 商户 App → 设置 → Mediator WS → 保存
+  2. 验证 merchant-mcp 更新 `phone_mediator_http_url`
+  3. 修改 merchant-mcp config 并重启
+  4. 验证商户 App 更新 `PairedMcp.mediatorHttpUrl`
+  5. 触发收款确认推送，验证订单/语音正常
+
+**通过标准**：
+  - [ ] App 换 mediator 后 MCP→App 消息正常
+  - [ ] MCP 换 mediator 后 App→MCP 消息正常
+  - [ ] 商户链路同上
+  - [ ] 未配对 DID 的 mediator-update 被拒绝
 
 ---
 
@@ -816,6 +848,7 @@ solana airdrop 2 test-merchant.json --url devnet
 | T1.2 | 商户 App 首次启动 | | | |
 | T1.3 | 手机-MCP 配对 | | | |
 | T1.4 | 商户-MCP 配对 | | | |
+| T1.5 | Mediator 地址更新 | | | |
 | T2.1 | x402 首次支付 | | | |
 | T2.2 | Session Key 复用 | | | |
 | T2.3 | 余额不足充值 | | | |

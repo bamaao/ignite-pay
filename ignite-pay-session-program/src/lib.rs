@@ -48,7 +48,11 @@ pub mod ignite_pay_session_program {
         pub session: Account<'info, SessionKeyAccount>,
         #[account(mut)]
         pub owner: Signer<'info>,
-        pub ephemeral_signer: Signer<'info>,
+        /// CHECK: Ephemeral pubkey bound at registration; signs only when executing payments (off-chain MCP).
+        #[account(
+            constraint = ephemeral_signer.key() != Pubkey::default() @ SessionError::InvalidScope,
+        )]
+        pub ephemeral_signer: UncheckedAccount<'info>,
         /// CHECK: Target program validated off-chain
         pub target_program: UncheckedAccount<'info>,
         pub system_program: Program<'info, System>,

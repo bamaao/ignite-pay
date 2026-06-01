@@ -42,6 +42,13 @@ class ReownWalletService extends WalletService {
   factory ReownWalletService() => _instance;
   ReownWalletService._internal();
 
+  @override
+  String get walletDisplayName => 'WalletConnect';
+  String? _lastError;
+
+  @override
+  String? get lastError => _lastError;
+
   ReownAppKitModal? _appKit;
   bool _initialized = false;
   String _chainId = _kSolanaDevnet;
@@ -159,6 +166,7 @@ class ReownWalletService extends WalletService {
   @override
   Future<bool> connect() async {
     if (_appKit == null) {
+      _lastError = 'Wallet connector not initialized';
       AppLogService().error('Reown', 'Not initialized — call init() first');
       return false;
     }
@@ -182,11 +190,14 @@ class ReownWalletService extends WalletService {
     try {
       final result = await _connectCompleter!.future
           .timeout(const Duration(minutes: 3));
+      _lastError = result ? null : 'Wallet rejected or closed connection';
       return result;
     } on TimeoutException {
+      _lastError = 'Connection timed out waiting for wallet callback';
       AppLogService().error('Reown', 'Connect timed out');
       return false;
     } catch (e) {
+      _lastError = 'Connect failed: $e';
       AppLogService().error('Reown', 'Connect failed: $e');
       return false;
     }
@@ -226,26 +237,9 @@ class ReownWalletService extends WalletService {
         ),
       );
 
-      // Parse response — solana_signTransaction returns { "transaction": "<signedTxBase64>" }
-      // For WC2 wallets it may also include { "signature": "<base58>" }
-      if (result is Map) {
-        if (result.containsKey('errorCode')) {
-          AppLogService().error(
-              'Reown', 'signTransaction error: ${result['errorMessage']}');
-          return null;
-        }
-        // Some wallets return signed tx in base64 or base58
-        final signedTx = result['transaction'];
-        if (signedTx is String) {
-          // Try to decode: if it's base64, convert to base58
-          try {
-            final bytes = base64Decode(signedTx);
-            return _b58Encode(bytes);
-          } catch (_) {
-            // Already base58
-            return signedTx;
-          }
-        }
+      final signedB58 = _parseSignedTransactionResponse(result);
+      if (signedB58 != null) {
+        return signedB58;
       }
 
       AppLogService().error('Reown', 'Unexpected signTransaction response: $result');
@@ -323,6 +317,43 @@ class ReownWalletService extends WalletService {
     _appKit?.onModalConnect.unsubscribe(_onConnect);
     _appKit?.onModalDisconnect.unsubscribe(_onDisconnect);
     super.dispose();
+  }
+
+  /// Parse WalletConnect `solana_signTransaction` response into base58 signed tx.
+  String? _parseSignedTransactionResponse(dynamic result) {
+    if (result == null) return null;
+
+    if (result is String) {
+      return _decodeSignedTxString(result);
+    }
+
+    if (result is List && result.isNotEmpty) {
+      return _parseSignedTransactionResponse(result.first);
+    }
+
+    if (result is Map) {
+      if (result.containsKey('errorCode')) {
+        AppLogService().error(
+            'Reown', 'signTransaction error: ${result['errorMessage']}');
+        return null;
+      }
+      final signedTx = result['transaction'] ?? result['signedTransaction'];
+      if (signedTx is String) {
+        return _decodeSignedTxString(signedTx);
+      }
+    }
+
+    return null;
+  }
+
+  String? _decodeSignedTxString(String signedTx) {
+    try {
+      final bytes = base64Decode(signedTx);
+      return _b58Encode(bytes);
+    } catch (_) {
+      // Already base58
+      return signedTx;
+    }
   }
 
   // ── Base58 helpers (Bitcoin alphabet, used by Solana) ─────────────────

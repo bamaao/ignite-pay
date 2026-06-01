@@ -81,7 +81,7 @@ fn build_register_ix(
         accounts: vec![
             AccountMeta::new(*session_pda, false),
             AccountMeta::new(*owner, true),
-            AccountMeta::new_readonly(*ephemeral, true),
+            AccountMeta::new_readonly(*ephemeral, false),
             AccountMeta::new_readonly(*target_program, false),
             AccountMeta::new_readonly(system_program::id(), false),
             AccountMeta::new_readonly(sysvar::clock::id(), false),
@@ -284,7 +284,7 @@ async fn test_full_pda_custody_flow() {
     let tx = Transaction::new_signed_with_payer(
         &[register_ix],
         Some(&owner),
-        &[&payer, &ephemeral_keypair],
+        &[&payer],
         recent_blockhash,
     );
 

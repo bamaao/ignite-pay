@@ -171,6 +171,10 @@ class MerchantPushService extends ChangeNotifier {
         _pushChannel = 'fcm';
         await _initFcm();
       }
+
+      // Tell paired MCPs our new mediator endpoint (keeps routing alive after URL change).
+      await _notifyPeersOfMediatorUpdate();
+
       notifyListeners();
     } catch (e) {
       AppLogService().error('Mediator', 'Failed to connect: $e');
@@ -178,6 +182,49 @@ class MerchantPushService extends ChangeNotifier {
       notifyListeners();
       rethrow;
     }
+  }
+
+  /// Notify paired MCP peers that our mediator URL changed.
+  Future<void> _notifyPeersOfMediatorUpdate() async {
+    if (!_isConnected || _pairedMcps.isEmpty) return;
+    if (_mediatorHttpUrl.isEmpty && _mediatorWsUrl.isEmpty) return;
+
+    final httpUrl = _mediatorHttpUrl.isNotEmpty
+        ? _mediatorHttpUrl
+        : _mediatorWsUrl.replaceFirst('ws', 'http').replaceAll(RegExp(r'/ws$'), '');
+
+    for (final mcp in _pairedMcps) {
+      if (mcp.mediatorHttpUrl.isEmpty) continue;
+      try {
+        await rust.sendMediatorUpdate(
+          storagePath: _storagePath,
+          peerDid: mcp.did,
+          peerDidDocJson: mcp.didDocJson,
+          mcpMediatorHttpUrl: mcp.mediatorHttpUrl,
+          mediatorHttpUrl: httpUrl,
+          mediatorWsUrl: _mediatorWsUrl,
+        );
+        AppLogService().info('DID', 'Sent mediator-update to ${mcp.did}: $httpUrl');
+      } catch (e) {
+        AppLogService().warn('DID', 'Failed to notify ${mcp.did} of mediator update: $e');
+      }
+    }
+  }
+
+  Future<void> _updatePairedMcpMediatorUrl(String mcpDid, String newHttpUrl) async {
+    if (newHttpUrl.isEmpty) return;
+    final idx = _pairedMcps.indexWhere((m) => m.did == mcpDid);
+    if (idx < 0) return;
+    final old = _pairedMcps[idx];
+    _pairedMcps[idx] = PairedMcp(
+      did: old.did,
+      didDocJson: old.didDocJson,
+      mediatorHttpUrl: newHttpUrl,
+      pairedAt: old.pairedAt,
+    );
+    await _savePairedMcps();
+    AppLogService().info('DID', 'Updated MCP mediator URL for $mcpDid: $newHttpUrl');
+    notifyListeners();
   }
 
   /// Disconnect from the mediator.
@@ -248,6 +295,17 @@ class MerchantPushService extends ChangeNotifier {
 
       AppLogService().info('DIDComm', 'Decrypted: ${decrypted.msgType} (orderId: ${decrypted.orderId ?? "N/A"})');
 
+      // Mediator endpoint update from paired MCP (after MCP changed its mediator URL).
+      if (decrypted.msgType.contains('mediator-update')) {
+        final body = jsonDecode(decrypted.rawBody) as Map<String, dynamic>;
+        final newUrl = body['mediator_http_url'] as String? ?? '';
+        final fromDid = decrypted.fromDid ?? '';
+        if (newUrl.isNotEmpty && fromDid.isNotEmpty) {
+          await _updatePairedMcpMediatorUrl(fromDid, newUrl);
+        }
+        return;
+      }
+
       // Check if it's a connection-response (pairing reply from MCP)
       if (decrypted.msgType.contains('connection-response')) {
         await _handleConnectionResponseBody(decrypted.rawBody);
@@ -303,6 +361,15 @@ class MerchantPushService extends ChangeNotifier {
         }
         if (msgType.contains('connection-confirm-response')) {
           await _handleConnectionConfirmResponse(jsonEncode(v['body']));
+          return;
+        }
+        if (msgType.contains('mediator-update')) {
+          final body = v['body'] as Map<String, dynamic>? ?? {};
+          final newUrl = body['mediator_http_url'] as String? ?? '';
+          final from = v['from'] as String? ?? '';
+          if (newUrl.isNotEmpty && from.isNotEmpty) {
+            await _updatePairedMcpMediatorUrl(from, newUrl);
+          }
           return;
         }
 

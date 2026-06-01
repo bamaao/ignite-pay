@@ -306,6 +306,7 @@ MCP 收到 connection-confirm 后：
 |---------|------|------|
 | `ignite-pay/1.0/payment-auth-request` | MCP → App | 支付授权请求 |
 | `ignite-pay/1.0/payment-auth-response` | App → MCP | 支付授权响应（含 session key） |
+| `ignite-pay/1.0/mediator-update` | App ↔ MCP | 配对后同步 mediator 地址变更（见 [Mediator 更新 E2E 测试](mediator-update-e2e-test.md)） |
 <!-- State Channel: 探索阶段，暂不启用
 | `ignite-pay/1.0/create-channel-request` | Merchant App → MCP | 建立状态通道请求 |
 | `ignite-pay/1.0/channel-payment-confirm` | MCP → Merchant App | 通道支付确认 |
@@ -333,6 +334,7 @@ MCP 收到 connection-confirm 后：
 - **pending 状态**：MCP 收到 connection-request 后标记为 pending，验证 App 签名后才完成配对
 - **明文 JSON 消息处理**：配对消息通过 mediator 以明文传输，安全性由 Ed25519 签名保证
 - **持久化配对**：App 侧使用 SharedPreferences 存储 PairedMcp，MCP 侧使用 sled 存储
+- **Mediator 热更新**：配对完成后通过 `ignite-pay/1.0/mediator-update` 同步地址变更，无需重新扫码（详见 [Mediator 更新 E2E 测试](mediator-update-e2e-test.md)）
 
 ---
 

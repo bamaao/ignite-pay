@@ -742,9 +742,19 @@ class _MediatorEndpointTileState extends State<_MediatorEndpointTile> {
 
   Future<void> _saveMediatorUrl() async {
     try {
+      final wsUrl = widget.controller.text.trim();
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('mediator_ws_url', widget.controller.text.trim());
-    } catch (_) {}
+      await prefs.setString('mediator_ws_url', wsUrl);
+      final httpUrl = wsUrl.replaceFirst('ws', 'http').replaceAll(RegExp(r'/ws$'), '');
+      await prefs.setString('mediator_http_url', httpUrl);
+
+      // Reconnect and notify paired MCPs of the new endpoint.
+      final svc = DidcommService();
+      await svc.initialize();
+      await svc.connectToMediator(wsUrl, httpUrl: httpUrl);
+    } catch (e) {
+      debugPrint('Failed to save/reconnect mediator: $e');
+    }
   }
 
   @override

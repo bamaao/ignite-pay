@@ -585,7 +585,7 @@ impl IgnitePayClient {
         let tx = Transaction::new_signed_with_payer(
             &[ix],
             Some(&owner.keypair.pubkey()),
-            &[&owner.keypair, &ephemeral.keypair],
+            &[&owner.keypair],
             recent_blockhash,
         );
 

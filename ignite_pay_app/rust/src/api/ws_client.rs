@@ -187,6 +187,36 @@ impl WsClient {
         Ok(())
     }
 
+    /// Notify a paired peer that our mediator endpoint changed.
+    pub async fn send_mediator_update(
+        &self,
+        peer_did: &str,
+        mediator_http_url: &str,
+        mediator_ws_url: &str,
+    ) -> Result<()> {
+        let msg = didcomm::build_mediator_update(
+            &self.our_did,
+            peer_did,
+            mediator_http_url,
+            Some(mediator_ws_url),
+        );
+
+        let jwe = {
+            let agent = self.agent.lock().await;
+            didcomm::pack_encrypted(&agent, &msg, &self.our_did, peer_did)
+                .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?
+        };
+
+        let outgoing_guard = self.outgoing.lock().await;
+        if let Some(sender) = outgoing_guard.as_ref() {
+            sender
+                .send(jwe)
+                .map_err(|_| anyhow::anyhow!("WS channel closed"))?;
+        }
+
+        Ok(())
+    }
+
     /// Register a peer DID in the agent for encryption.
     pub async fn add_peer(&self, peer_did: &str) {
         let peer_identity =

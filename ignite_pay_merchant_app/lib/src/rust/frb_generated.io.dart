@@ -47,9 +47,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
-  ChannelStatusBridge dco_decode_channel_status_bridge(dynamic raw);
-
-  @protected
   DecryptedMessage dco_decode_decrypted_message(dynamic raw);
 
   @protected
@@ -151,11 +148,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
-
-  @protected
-  ChannelStatusBridge sse_decode_channel_status_bridge(
-    SseDeserializer deserializer,
-  );
 
   @protected
   DecryptedMessage sse_decode_decrypted_message(SseDeserializer deserializer);
@@ -282,12 +274,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_channel_status_bridge(
-    ChannelStatusBridge self,
-    SseSerializer serializer,
-  );
 
   @protected
   void sse_encode_decrypted_message(

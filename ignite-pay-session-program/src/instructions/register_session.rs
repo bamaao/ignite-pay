@@ -35,8 +35,8 @@ pub struct RegisterSessionKey<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
 
-    /// The ephemeral signer — must also sign to prove possession of the private key.
-    pub ephemeral_signer: Signer<'info>,
+    /// CHECK: Ephemeral pubkey for PDA seeds; possession proven when executing payments.
+    pub ephemeral_signer: UncheckedAccount<'info>,
 
     /// CHECK: Target program validated off-chain; on-chain we just store it.
     pub target_program: AccountInfo<'info>,

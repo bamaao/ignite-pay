@@ -6,12 +6,13 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `build_raw_transaction`, `build_register_ix_data`, `compact_u64_encode`, `derive_ata`, `derive_session_pda_simple`, `devnet_airdrop`, `get_recent_blockhash`, `get_session_program_id_bytes`, `is_on_curve`, `send_transaction`
+// These functions are ignored because they are not marked as `pub`: `build_raw_transaction`, `build_register_ix_data`, `build_register_message`, `compact_u64_encode`, `derive_ata`, `derive_session_pda_simple`, `devnet_airdrop`, `get_recent_blockhash`, `get_session_program_id_bytes`, `is_on_curve`, `send_transaction`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Create a session key for payment authorization.
-/// This generates an ephemeral Ed25519 keypair locally and stores it in sled.
-/// Returns the session key info without requiring on-chain operations.
+///
+/// Deprecated: session keys are created by MCP; the phone only registers the MCP-provided
+/// ephemeral pubkey on-chain via an external wallet.
 Future<SessionKeyInfo> createSessionKey({
   required String storagePath,
   required String ownerPubkey,
@@ -87,6 +88,8 @@ Future<SessionKeyInfo> registerExternalSessionKey({
 );
 
 /// Fund a session key by transferring SOL (and optionally SPL token) from the owner.
+/// Sends SOL to the session PDA and SPL tokens to the PDA's ATA.
+/// Also sends a small amount of SOL (0.01 SOL) to the ephemeral key for gas fees.
 /// Uses raw JSON-RPC to build System Program transfer (and Token Program transfer) instructions.
 Future<List<String>> fundSessionKey({
   required String rpcUrl,
@@ -162,12 +165,8 @@ Future<UnsignedRegisterTx> buildUnsignedRegisterTx({
   durationSecs: durationSecs,
 );
 
-/// Build an unsigned register-session-key transaction for an external wallet (e.g. Phantom).
-/// Only the owner (Phantom wallet) needs to sign — the ephemeral pubkey is just an account
-/// parameter, NOT a signer. The secret key stays on MCP and never reaches the app.
-///
-/// Transaction layout: 1 signature slot (owner placeholder).
-/// After Phantom signs via `signTransaction`, call `finalize_phantom_session_key` to persist.
+/// Build an unsigned register-session-key transaction for an external wallet (WalletConnect).
+/// Only the owner wallet signs; ephemeral pubkey is a non-signer account parameter.
 Future<UnsignedRegisterTx> buildRegisterTxForPhantom({
   required String storagePath,
   required String rpcUrl,
@@ -207,8 +206,7 @@ Future<String> broadcastSignedTx({
 /// Moves the key from `pending:{pubkey}` to `session:{pubkey}` in sled storage
 /// after the transaction has been successfully broadcast.
 ///
-/// If `real_secret_key` is provided (non-empty, valid 64-byte base58), it replaces
-/// the placeholder zeros from the pending entry so the app can later sign with it.
+/// Phone stores metadata only; ephemeral secret remains on MCP.
 Future<SessionKeyInfo> finalizePhantomSessionKey({
   required String storagePath,
   required String ephemeralPubkey,
@@ -223,11 +221,7 @@ Future<SessionKeyInfo> finalizePhantomSessionKey({
   realSecretKey: realSecretKey,
 );
 
-/// Finalize an already-registered session key by creating a `SessionKeyInfo` from
-/// on-chain data and persisting it to local sled storage (so it becomes the active key).
-///
-/// If `real_secret_key` is provided (non-empty, valid 64-byte base58), it is stored
-/// instead of zeros, allowing the app to sign transactions locally.
+/// Finalize an already-registered session key (pubkey-only local record; secret stays on MCP).
 Future<SessionKeyInfo> finalizeExistingSessionKey({
   required String storagePath,
   required String ownerPubkeyB58,
@@ -269,8 +263,9 @@ Future<String> revokeSessionKeyOnchain({
   rpcUrl: rpcUrl,
 );
 
-/// Withdraw SOL and optionally SPL tokens from an old ephemeral session key to a new one.
-/// Uses the old key's secret key stored in sled to sign locally (no Phantom needed).
+/// Withdraw SOL and optionally SPL tokens from an old session PDA to a new ephemeral key.
+/// Uses the on-chain `withdraw_remaining` / `withdraw_spl_remaining` instructions,
+/// signed by the owner (derived from DID). The old ephemeral key is used as fee payer.
 Future<WithdrawResult> withdrawSessionFunds({
   required String rpcUrl,
   required String storagePath,

@@ -12,7 +12,6 @@
 use anyhow::Result;
 use base64::Engine;
 use once_cell::sync::Lazy;
-use sha2::Digest;
 use tokio::sync::Mutex;
 
 use crate::api::identity::IdentityManager;
@@ -105,6 +104,27 @@ pub async fn disconnect_mediator() -> Result<()> {
     Ok(())
 }
 
+/// Notify paired MCP peers that our mediator endpoint changed.
+pub async fn send_mediator_update(
+    storage_path: String,
+    peer_did: String,
+    mediator_http_url: String,
+    mediator_ws_url: String,
+) -> Result<()> {
+    let global = GLOBAL_WS_CLIENT.lock().await;
+    if let Some(ref client) = *global {
+        client
+            .send_mediator_update(
+                &peer_did,
+                &mediator_http_url,
+                &mediator_ws_url,
+            )
+            .await?;
+    }
+    let _ = storage_path;
+    Ok(())
+}
+
 /// Register an MCP peer in the DIDComm agent using its DID document.
 /// Must be called after pairing so the agent can decrypt authcrypt JWE
 /// messages from this peer.
@@ -163,7 +183,12 @@ pub async fn send_auth_response(
 
     if let Some(info) = &session_key_info {
         response.session_key_pubkey = Some(info.ephemeral_pubkey.clone());
-        response.session_key_secret_key = Some(info.ephemeral_secret_key.clone());
+        // Secret stays on MCP; phone only confirms pubkey + on-chain registration.
+        response.session_key_secret_key = if info.ephemeral_secret_key.is_empty() {
+            None
+        } else {
+            Some(info.ephemeral_secret_key.clone())
+        };
         response.session_key_tx_signature = info.tx_signature.clone();
         response.session_expires_at = Some(info.expires_at);
         response.spending_limit = Some(info.spending_limit);
@@ -528,43 +553,10 @@ pub fn create_session_key_for_payment(
     duration_secs: i64,
     token_mint: Option<String>,
 ) -> Result<SessionKeyInfo> {
-    let identity_mgr = crate::api::identity::IdentityManager::new(&storage_path)?;
-    let did = identity_mgr.did();
-    let owner_seed = sha2::Sha256::digest(did.as_bytes());
-    let owner_seed_bytes: &[u8; 32] = owner_seed
-        .as_slice()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid seed length"))?;
-    let owner_keypair = ed25519_dalek::SigningKey::from_bytes(owner_seed_bytes);
-    let owner_pubkey = owner_keypair.verifying_key();
-    let owner_pubkey_str = bs58::encode(owner_pubkey.to_bytes()).into_string();
-
-    let (target_program_str, scopes) = match &token_mint {
-        Some(_) => {
-            // SPL token session: target = Token program, scope = spl:transfer
-            ("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".to_string(),
-             vec!["spl:transfer".to_string()])
-        }
-        None => {
-            // SOL session: target = System program, scope = sol:transfer
-            ("11111111111111111111111111111111".to_string(),
-             vec!["sol:transfer".to_string()])
-        }
-    };
-
-    // Use session module to create the local session
-    let session_info = crate::api::session::create_session_key(
-        storage_path,
-        owner_pubkey_str,
-        target_program_str,
-        scopes,
-        spending_limit,
-        duration_secs,
-        0, // per_tx_limit: 0 = no limit
-        0, // daily_tx_count_limit: 0 = no limit
-    )?;
-
-    Ok(session_info)
+    let _ = (storage_path, spending_limit, duration_secs, token_mint);
+    Err(anyhow::anyhow!(
+        "Phone must not generate session keys; use MCP PaymentRequest flow"
+    ))
 }
 
 /// Authenticate with the mediator and get a JWT token.

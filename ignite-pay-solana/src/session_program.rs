@@ -82,7 +82,7 @@ pub fn build_register_session_ix(
         accounts: vec![
             AccountMeta::new(*session_pda, false),
             AccountMeta::new(*owner, true),
-            AccountMeta::new_readonly(*ephemeral_signer, true),
+            AccountMeta::new_readonly(*ephemeral_signer, false),
             AccountMeta::new_readonly(*target_program, false),
             AccountMeta::new_readonly(system_program::id(), false),
             AccountMeta::new_readonly(solana_sdk::sysvar::clock::id(), false),

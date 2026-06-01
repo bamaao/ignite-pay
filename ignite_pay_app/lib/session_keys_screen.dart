@@ -15,9 +15,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:ignite_pay_app/theme.dart';
 import 'package:ignite_pay_app/services/didcomm_service.dart';
-import 'package:ignite_pay_app/services/phantom_wallet_service.dart';
-import 'package:ignite_pay_app/services/reown_wallet_service.dart';
 import 'package:ignite_pay_app/services/session_key_service.dart';
+import 'package:ignite_pay_app/services/wallet_picker.dart';
 import 'package:ignite_pay_app/services/wallet_service.dart';
 import 'package:ignite_pay_app/src/rust/api/simple.dart' as rust;
 import 'package:ignite_pay_app/src/rust/api/session.dart' as session;
@@ -254,12 +253,8 @@ class _SessionKeysScreenState extends State<SessionKeysScreen> {
 
       // 3. Connect to wallet
       setState(() => _renewStatus = 'Connecting to wallet...');
-      final wallet = await _selectWalletService();
-      await wallet.loadSession();
-      if (!wallet.isConnected) {
-        final connected = await wallet.connect();
-        if (!connected) throw 'Failed to connect to wallet';
-      }
+      final wallet = await selectWalletService(context);
+      await ensureWalletConnected(wallet, context);
 
       // 4. Check if new key is already registered on-chain
       setState(() => _renewStatus = 'Checking new key status...');
@@ -279,7 +274,6 @@ class _SessionKeysScreenState extends State<SessionKeysScreen> {
           ephemeralPubkey: req.newSessionKeyPubkey!,
           onChainInfo: onChainInfo,
           scopes: scopes,
-          realSecretKey: req.newSessionKeySecretKey,
         );
       } else {
         // Not registered — build register tx and sign via wallet
@@ -319,7 +313,6 @@ class _SessionKeysScreenState extends State<SessionKeysScreen> {
           ephemeralPubkey: unsignedRegister.ephemeralPubkey,
           txSignature: registerSig,
           sessionPda: unsignedRegister.sessionPda,
-          realSecretKey: req.newSessionKeySecretKey,
         );
       }
 
@@ -431,60 +424,6 @@ class _SessionKeysScreenState extends State<SessionKeysScreen> {
     } finally {
       _renewCompleter = null;
     }
-  }
-
-  /// Show a wallet selector and return the chosen WalletService.
-  /// Defaults to Phantom if no selection UI is needed.
-  Future<WalletService> _selectWalletService() async {
-    final choice = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: kSurfaceDark,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'SELECT WALLET',
-                style: GoogleFonts.inter(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: kTextSecondary,
-                  letterSpacing: 1.2,
-                ),
-              ),
-              const SizedBox(height: 16),
-              _WalletOptionTile(
-                icon: LucideIcons.link,
-                label: 'Phantom',
-                subtitle: 'Direct deep link connection',
-                color: const Color(0xFFAB9FF2),
-                onTap: () => Navigator.of(ctx).pop('phantom'),
-              ),
-              const SizedBox(height: 8),
-              _WalletOptionTile(
-                icon: LucideIcons.wallet,
-                label: 'Other Wallets',
-                subtitle: 'WalletConnect (Backpack, Trust, Ledger, etc.)',
-                color: const Color(0xFF06B6D4),
-                onTap: () => Navigator.of(ctx).pop('wc2'),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      ),
-    );
-
-    if (choice == 'wc2') {
-      return ReownWalletService();
-    }
-    return PhantomWalletService();
   }
 
   String _shortenPubkey(String pubkey) {
@@ -915,76 +854,6 @@ class _ActionChip extends StatelessWidget {
                 color: onTap != null ? color : kTextTertiary,
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Wallet Option Tile (for bottom sheet selector)
-// ---------------------------------------------------------------------------
-class _WalletOptionTile extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String subtitle;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _WalletOptionTile({
-    required this.icon,
-    required this.label,
-    required this.subtitle,
-    required this.color,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: kSurfaceMid.withValues(alpha: 0.4),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: kGlassBorder),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: color.withValues(alpha: 0.2)),
-              ),
-              child: Icon(icon, size: 18, color: color),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: kTextPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: GoogleFonts.inter(fontSize: 11, color: kTextSecondary),
-                  ),
-                ],
-              ),
-            ),
-            Icon(LucideIcons.chevronRight, size: 16, color: kTextSecondary),
           ],
         ),
       ),
